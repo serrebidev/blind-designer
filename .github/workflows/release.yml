@@ -69,7 +69,7 @@ jobs:
           $existing = gh release view $tag --json isDraft 2>$null
           if ($existing) {
             if (($existing | ConvertFrom-Json).isDraft) {
-              Write-Host "Resuming $tag: tag and unpublished draft already exist."
+              Write-Host "Resuming ${tag}: tag and unpublished draft already exist."
               "tag=$tag" >> $env:GITHUB_OUTPUT
               exit 0
             }

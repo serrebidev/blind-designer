@@ -13,6 +13,7 @@ use crate::{describe, Srgb};
 pub enum ShapeKind {
 	Rectangle,
 	Ellipse,
+	Stroke,
 }
 
 impl ShapeKind {
@@ -20,6 +21,7 @@ impl ShapeKind {
 		match self {
 			ShapeKind::Rectangle => "rectangle",
 			ShapeKind::Ellipse => "ellipse",
+			ShapeKind::Stroke => "stroke",
 		}
 	}
 }
@@ -32,13 +34,42 @@ pub struct Shape {
 	pub w: u32,
 	pub h: u32,
 	pub fill: Srgb,
+	/// Stroke path points (Stroke kind only; empty otherwise).
+	pub points: Vec<(i32, i32)>,
+	/// Brush width in pixels (Stroke kind only).
+	pub brush: u32,
+	/// Rotation in degrees, clockwise, around the shape's centre.
+	pub angle: f64,
 	/// Hand-written caption, if any. `None` means "generate one for me".
 	pub caption: Option<String>,
 }
 
 impl Shape {
 	pub fn new(kind: ShapeKind, x: i32, y: i32, w: u32, h: u32, fill: Srgb) -> Shape {
-		Shape { kind, x, y, w, h, fill, caption: None }
+		Shape { kind, x, y, w, h, fill, points: Vec::new(), brush: 3, angle: 0.0, caption: None }
+	}
+
+	/// A freehand-style stroke through `points` with a brush of `brush`
+	/// pixels. The bounding box fields follow the points.
+	pub fn stroke(points: Vec<(i32, i32)>, brush: u32, fill: Srgb) -> Shape {
+		let (mut x0, mut y0, mut x1, mut y1) = (i32::MAX, i32::MAX, i32::MIN, i32::MIN);
+		for &(x, y) in &points {
+			x0 = x0.min(x);
+			y0 = y0.min(y);
+			x1 = x1.max(x);
+			y1 = y1.max(y);
+		}
+		let (x, y, w, h) = if points.is_empty() {
+			(0, 0, 0, 0)
+		} else {
+			(x0, y0, (x1 - x0) as u32, (y1 - y0) as u32)
+		};
+		Shape { kind: ShapeKind::Stroke, x, y, w, h, fill, points, brush, angle: 0.0, caption: None }
+	}
+
+	/// Centre the rotation and measurements turn around.
+	pub fn center(&self) -> (f64, f64) {
+		(self.x as f64 + self.w as f64 / 2.0, self.y as f64 + self.h as f64 / 2.0)
 	}
 }
 
@@ -80,15 +111,27 @@ impl Design {
 		if let Some(c) = &shape.caption {
 			return c.clone();
 		}
-		let mut s = format!(
-			"{} filled with {}, {} by {} pixels at {}, {}",
-			shape.kind.name(),
-			describe(shape.fill),
-			shape.w,
-			shape.h,
-			shape.x,
-			shape.y
-		);
+		let mut s = if shape.kind == ShapeKind::Stroke {
+			format!(
+				"stroke through {} points with a {} pixel brush, in {}",
+				shape.points.len(),
+				shape.brush,
+				describe(shape.fill)
+			)
+		} else {
+			format!(
+				"{} filled with {}, {} by {} pixels at {}, {}",
+				shape.kind.name(),
+				describe(shape.fill),
+				shape.w,
+				shape.h,
+				shape.x,
+				shape.y
+			)
+		};
+		if shape.angle != 0.0 {
+			s.push_str(&format!("; rotated {} degrees", shape.angle));
+		}
 		if let Some(rel) = Self::relation(shape.fill, self.background) {
 			s.push_str(&format!("; {} the background {}", rel, describe(self.background)));
 		}
@@ -115,6 +158,8 @@ impl Design {
 	/// Render the design to an image: background fill, then each shape in
 	/// order. Rectangles and ellipses with hard edges (no blending — colors
 	/// in the output are exactly the palette colors, pixel for pixel).
+	/// Strokes are stamped along their points with a square brush; a shape
+	/// with a rotation angle turns around its centre.
 	pub fn render(&self) -> image::RgbImage {
 		let mut img = image::RgbImage::from_pixel(
 			self.width,
@@ -123,34 +168,116 @@ impl Design {
 		);
 		for shape in &self.shapes {
 			let px = image::Rgb([shape.fill.r, shape.fill.g, shape.fill.b]);
+			if shape.kind == ShapeKind::Stroke {
+				Self::paint_stroke(&mut img, shape, px);
+				continue;
+			}
 			let (x0, y0) = (shape.x, shape.y);
 			let (x1, y1) = (shape.x + shape.w as i32, shape.y + shape.h as i32);
-			for y in y0.max(0)..y1.min(self.height as i32) {
-				for x in x0.max(0)..x1.min(self.width as i32) {
-					let inside = match shape.kind {
-						ShapeKind::Rectangle => true,
-						ShapeKind::Ellipse => {
-							let (cx, cy) = (
-								x0 as f32 + shape.w as f32 / 2.0,
-								y0 as f32 + shape.h as f32 / 2.0,
-							);
-							let (rx, ry) = (shape.w as f32 / 2.0, shape.h as f32 / 2.0);
-							if rx <= 0.0 || ry <= 0.0 {
-								false
-							} else {
-								let dx = (x as f32 + 0.5 - cx) / rx;
-								let dy = (y as f32 + 0.5 - cy) / ry;
-								dx * dx + dy * dy <= 1.0
+			if shape.angle == 0.0 {
+				for y in y0.max(0)..y1.min(self.height as i32) {
+					for x in x0.max(0)..x1.min(self.width as i32) {
+						let inside = match shape.kind {
+							ShapeKind::Rectangle => true,
+							_ => {
+								let (cx, cy) = (
+									x0 as f32 + shape.w as f32 / 2.0,
+									y0 as f32 + shape.h as f32 / 2.0,
+								);
+								let (rx, ry) = (shape.w as f32 / 2.0, shape.h as f32 / 2.0);
+								if rx <= 0.0 || ry <= 0.0 {
+									false
+								} else {
+									let dx = (x as f32 + 0.5 - cx) / rx;
+									let dy = (y as f32 + 0.5 - cy) / ry;
+									dx * dx + dy * dy <= 1.0
+								}
 							}
+						};
+						if inside {
+							img.put_pixel(x as u32, y as u32, px);
 						}
-					};
-					if inside {
-						img.put_pixel(x as u32, y as u32, px);
+					}
+				}
+			} else {
+				// Rotated: test each pixel near the shape by un-rotating its
+				// centre around the shape centre, then the plain tests.
+				let (cx, cy) = shape.center();
+				let rad = ((shape.w as f64 / 2.0).powi(2) + (shape.h as f64 / 2.0).powi(2))
+					.sqrt()
+					.ceil() as i32
+					+ 1;
+				let (sin, cos) = (-shape.angle).to_radians().sin_cos();
+				for y in (cy as i32 - rad).max(0)..(cy as i32 + rad).min(self.height as i32) {
+					for x in (cx as i32 - rad).max(0)..(cx as i32 + rad).min(self.width as i32) {
+						let (dx, dy) = (x as f64 + 0.5 - cx, y as f64 + 0.5 - cy);
+						let (lx, ly) = (dx * cos - dy * sin, dx * sin + dy * cos);
+						let inside = match shape.kind {
+							ShapeKind::Rectangle => {
+								lx.abs() <= shape.w as f64 / 2.0 && ly.abs() <= shape.h as f64 / 2.0
+							}
+							_ => {
+								let (rx, ry) = (shape.w as f64 / 2.0, shape.h as f64 / 2.0);
+								rx > 0.0
+									&& ry > 0.0
+									&& (lx / rx) * (lx / rx) + (ly / ry) * (ly / ry) <= 1.0
+							}
+						};
+						if inside {
+							img.put_pixel(x as u32, y as u32, px);
+						}
 					}
 				}
 			}
 		}
 		img
+	}
+
+	/// Stamp a stroke: walk each segment in half-pixel steps and paint a
+	/// square of the brush width at every step. Points rotate around the
+	/// stroke's centre when the shape carries an angle.
+	fn paint_stroke(img: &mut image::RgbImage, shape: &Shape, px: image::Rgb<u8>) {
+		if shape.points.is_empty() {
+			return;
+		}
+		let (cx, cy) = shape.center();
+		let (sin, cos) = shape.angle.to_radians().sin_cos();
+		let pts: Vec<(f64, f64)> = shape
+			.points
+			.iter()
+			.map(|&(x, y)| {
+				if shape.angle == 0.0 {
+					(x as f64, y as f64)
+				} else {
+					let (dx, dy) = (x as f64 - cx, y as f64 - cy);
+					(cx + dx * cos - dy * sin, cy + dx * sin + dy * cos)
+				}
+			})
+			.collect();
+		let half = shape.brush as f64 / 2.0;
+		let stamp = |img: &mut image::RgbImage, sx: f64, sy: f64| {
+			let (w, h) = (img.width() as i32, img.height() as i32);
+			for y in (sy - half).floor() as i32..(sy + half).ceil() as i32 {
+				for x in (sx - half).floor() as i32..(sx + half).ceil() as i32 {
+					if x >= 0 && y >= 0 && x < w && y < h {
+						img.put_pixel(x as u32, y as u32, px);
+					}
+				}
+			}
+		};
+		if pts.len() == 1 {
+			stamp(img, pts[0].0, pts[0].1);
+		}
+		for seg in pts.windows(2) {
+			let (ax, ay) = seg[0];
+			let (bx, by) = seg[1];
+			let len = ((bx - ax).powi(2) + (by - ay).powi(2)).sqrt();
+			let steps = (len / 0.5).ceil().max(1.0) as u32;
+			for i in 0..=steps {
+				let t = i as f64 / steps as f64;
+				stamp(img, ax + (bx - ax) * t, ay + (by - ay) * t);
+			}
+		}
 	}
 
 	/// Export the design's colors (background first, then shape fills,

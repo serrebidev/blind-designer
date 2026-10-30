@@ -1,6 +1,6 @@
 # Changelog
 
-Readable release history for Transversion, newest first. Each release's
+Readable release history for Blind Designer (renamed from Transversion at 0.2.0), newest first. Each release's
 section is its GitHub release note, taken from this file by the release
 workflow.
 

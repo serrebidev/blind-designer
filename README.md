@@ -1,4 +1,4 @@
-# Transversion
+# Blind Designer
 
 An accessible multispectral color creator for web design, built for screen
 reader users first. Free: palette extraction costs nothing, and no color is

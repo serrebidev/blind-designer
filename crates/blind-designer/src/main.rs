@@ -1,7 +1,8 @@
 // Debug builds keep a console, so the log is visible.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-//! Transversion — an accessible multispectral color creator.
+//! Blind Designer — an accessible multispectral color creator and
+//! layered drawing tool.
 //!
 //! Colors live in OKLCH. Nothing is mixed or blended: schemes, shades,
 //! tints and tones are pure parameter transforms (hue angle, lightness
@@ -201,11 +202,13 @@ fn dispatch(win: &Win, shared: &Shared, id: Id) {
 		ID_ABOUT => {
 			MessageDialog::builder(
 				&frame,
-				"Transversion 0.1.0\n\nAn accessible multispectral color creator. \
-				 Colors live in OKLCH and are never mixed or blended: every scheme, \
-				 shade, tint and tone is a pure parameter change you can predict. \
-				 Palettes extract free from any image. Built with wxDragon.",
-				"About Transversion",
+				"Blind Designer\n\nAn accessible multispectral color creator and \
+				 layered drawing tool. Colors live in OKLCH and are never mixed \
+				 or blended: every scheme, shade, tint and tone is a pure \
+				 parameter change you can predict. Palettes extract free from \
+				 any image. Every drawing change is logged, step by step. \
+				 Built with wxDragon.",
+				"About Blind Designer",
 			)
 			.build()
 			.show_modal();
@@ -435,7 +438,7 @@ fn build_menus(frame: &Frame) {
 		.append_item(ID_SET_BACKGROUND, "Set &Background to Selected Color", "")
 		.append_item(ID_REMOVE_SHAPE, "Remove Selected &Shape", "")
 		.build();
-	let help = Menu::builder().append_item(ID_ABOUT, "&About Transversion", "").build();
+	let help = Menu::builder().append_item(ID_ABOUT, "&About Blind Designer", "").build();
 	let bar = MenuBar::builder()
 		.append(file, "&File")
 		.append(palette, "&Palette")
@@ -448,7 +451,7 @@ fn build_menus(frame: &Frame) {
 fn main() {
 	let _ = wxdragon::main(|_| {
 		let frame = Frame::builder()
-			.with_title("Transversion")
+			.with_title("Blind Designer")
 			.with_size(Size::new(760, 640))
 			.build();
 		let panel = Panel::builder(&frame).build();

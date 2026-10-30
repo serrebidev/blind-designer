@@ -91,21 +91,21 @@ jobs:
           $notesText = ($notes -join "`n").Trim()
           if (-not $notesText) { throw "no ## $env:VERSION section in CHANGELOG.md" }
           Set-Content -Path "$env:RUNNER_TEMP\notes.md" -Value $notesText -Encoding utf8
-          $toml = Get-Content crates\transversion\Cargo.toml -Raw
+          $toml = Get-Content crates\blind-designer\Cargo.toml -Raw
           $toml = $toml -replace '(?m)^version = "[^"]+"', "version = `"$env:VERSION`""
-          Set-Content -Path crates\transversion\Cargo.toml -Value $toml -Encoding utf8 -NoNewline
+          Set-Content -Path crates\blind-designer\Cargo.toml -Value $toml -Encoding utf8 -NoNewline
           cargo metadata --format-version 1 > $null
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add crates/transversion/Cargo.toml Cargo.lock
+          git add crates/blind-designer/Cargo.toml Cargo.lock
           git commit -m "chore: release $env:VERSION"
           git tag $tag
           git push origin main $tag
-          gh release create $tag --draft --title "Transversion $env:VERSION" --notes-file "$env:RUNNER_TEMP\notes.md"
+          gh release create $tag --draft --title "Blind Designer $env:VERSION" --notes-file "$env:RUNNER_TEMP\notes.md"
           "tag=$tag" >> $env:GITHUB_OUTPUT
 
       - name: Build the release executable
-        run: cargo build --release -p transversion
+        run: cargo build --release -p blind-designer
 
       - name: Zip and upload
         env:
@@ -113,10 +113,10 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
-          Copy-Item target\release\transversion.exe dist\
+          Copy-Item target\release\blind-designer.exe dist\
           Copy-Item README.md dist\
-          Compress-Archive -Path dist\* -DestinationPath Transversion.zip
-          gh release upload "${{ steps.prep.outputs.tag }}" Transversion.zip --clobber
+          Compress-Archive -Path dist\* -DestinationPath BlindDesigner.zip
+          gh release upload "${{ steps.prep.outputs.tag }}" BlindDesigner.zip --clobber
 
       - name: Publish
         env:

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/chroma-core", "crates/transversion"]
+members = ["crates/chroma-core", "crates/blind-designer"]
 
 [workspace.package]
 edition = "2021"

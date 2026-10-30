@@ -14,7 +14,8 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use chroma_core::design::{css_for_colors, Design, Shape, ShapeKind};
+use chroma_core::design::{css_for_colors, Shape, ShapeKind};
+use chroma_core::drawing::Drawing;
 use chroma_core::{describe, extract_palette, Oklch, Srgb};
 use quiet_list::{QuietList, Select};
 use wxdragon::prelude::*;
@@ -38,12 +39,21 @@ const ID_ADD_RECT: Id = 302;
 const ID_ADD_ELLIPSE: Id = 303;
 const ID_SET_BACKGROUND: Id = 304;
 const ID_REMOVE_SHAPE: Id = 305;
+const ID_ADD_STROKE: Id = 306;
+const ID_MOVE_SHAPE: Id = 307;
+const ID_ROTATE_SHAPE: Id = 308;
+const ID_RECOLOR_SHAPE: Id = 309;
+const ID_LAYERS: Id = 310;
+const ID_RESIZE_SHAPE: Id = 311;
+const ID_EXPORT_SUMMARY: Id = 106;
 const ID_ABOUT: Id = 401;
 
 struct State {
 	/// Palette colors, with image coverage when extracted from an image.
 	palette: Vec<(Srgb, Option<f32>)>,
-	design: Design,
+	drawing: Drawing,
+	/// Index of the layer new shapes land on.
+	layer: usize,
 }
 
 struct Win {
@@ -74,14 +84,44 @@ fn palette_rows(state: &State) -> Vec<(usize, String)> {
 		.collect()
 }
 
+/// Shape rows across all layers, in paint order. The payload is the
+/// flat index over every layer's shapes; `locate` turns it back into
+/// (layer, shape) for the edit actions.
 fn shape_rows(state: &State) -> Vec<(usize, String)> {
-	state
-		.design
-		.shapes
-		.iter()
-		.enumerate()
-		.map(|(i, s)| (i, state.design.caption_for(s)))
-		.collect()
+	let design = state.drawing.flatten();
+	let mut rows = Vec::new();
+	let mut flat = 0;
+	for layer in &state.drawing.layers {
+		for s in &layer.shapes {
+			let mut label = format!("{}: {}", layer.name, design.caption_for(s));
+			if !layer.visible {
+				label.push_str(" (layer hidden)");
+			}
+			rows.push((flat, label));
+			flat += 1;
+		}
+	}
+	rows
+}
+
+/// Flat shape index -> (layer index, shape index within the layer).
+fn locate(state: &State, mut flat: usize) -> Option<(usize, usize)> {
+	for (li, layer) in state.drawing.layers.iter().enumerate() {
+		if flat < layer.shapes.len() {
+			return Some((li, flat));
+		}
+		flat -= layer.shapes.len();
+	}
+	None
+}
+
+/// Speak the newest log entry: every drawing change announces itself
+/// with its exact values.
+fn announce(win: &Win, state: &State) {
+	if let Some(last) = state.drawing.log.last() {
+		let step = last.describe(&state.drawing);
+		win.frame.set_status_text(&step, 0);
+	}
 }
 
 fn wcag(ratio: f32) -> String {
@@ -103,7 +143,7 @@ fn readout_text(state: &State, color: Srgb) -> String {
 		describe(color),
 		comp.to_hex(),
 		chroma_core::hue_family(comp.to_oklch().h),
-		wcag(color.contrast(state.design.background))
+		wcag(color.contrast(state.drawing.background))
 	)
 }
 
@@ -195,6 +235,178 @@ fn file_dialog(parent: &Frame, message: &str, wildcard: &str, save: bool) -> Opt
 	}
 }
 
+/// One line of text, asked modally. `None` on cancel.
+fn text_dialog(parent: &Frame, title: &str, label: &str, value: &str) -> Option<String> {
+	let dialog = Dialog::builder(parent, title).build();
+	let sizer = BoxSizer::builder(Orientation::Vertical).build();
+	let text = StaticText::builder(&dialog).with_label(label).build();
+	let field = TextCtrl::builder(&dialog).build();
+	field.set_value(value);
+	sizer.add(&text, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	sizer.add(&field, 0, SizerFlag::Expand | SizerFlag::All, 5);
+	let ok = Button::builder(&dialog).with_label("OK").build();
+	let cancel = Button::builder(&dialog).with_label("Cancel").build();
+	let buttons = BoxSizer::builder(Orientation::Horizontal).build();
+	buttons.add(&ok, 0, SizerFlag::All, 5);
+	buttons.add(&cancel, 0, SizerFlag::All, 5);
+	sizer.add_sizer(&buttons, 0, SizerFlag::All, 5);
+	dialog.set_sizer(sizer, true);
+	let d = dialog.clone();
+	ok.on_click(move |_| d.end_modal(ID_OK));
+	let d = dialog.clone();
+	cancel.on_click(move |_| d.end_modal(ID_CANCEL));
+	if dialog.show_modal() == ID_OK {
+		Some(field.get_value())
+	} else {
+		None
+	}
+}
+
+/// Parses "x,y x,y …" point lists (commas, spaces and semicolons all
+/// separate). Needs at least one point, whole numbers only.
+fn parse_points(text: &str) -> Option<Vec<(i32, i32)>> {
+	let nums: Result<Vec<i32>, _> = text
+		.split(|c: char| c == ',' || c == ';' || c.is_whitespace())
+		.filter(|t| !t.is_empty())
+		.map(|t| t.parse::<i32>())
+		.collect();
+	let nums = nums.ok()?;
+	if nums.is_empty() || nums.len() % 2 != 0 {
+		return None;
+	}
+	Some(nums.chunks(2).map(|p| (p[0], p[1])).collect())
+}
+
+fn layer_rows(state: &State) -> Vec<(usize, String)> {
+	state
+		.drawing
+		.layers
+		.iter()
+		.enumerate()
+		.map(|(i, l)| {
+			let mut label = format!("{} ({} shapes)", l.name, l.shapes.len());
+			if i == state.layer {
+				label.push_str(" — current");
+			}
+			if !l.visible {
+				label.push_str(" — hidden");
+			}
+			(i, label)
+		})
+		.collect()
+}
+
+/// The Layers dialog: layers are the organizing unit, so they get a
+/// list of their own with the everyday operations as buttons. Every
+/// change is announced from the drawing log, like everywhere else.
+/// The dialog is modal; the caller refreshes the main lists on return.
+fn layers_dialog(win: &Win, shared: &Shared) {
+	let frame = win.frame;
+	let dialog = Dialog::builder(&frame, "Layers").build();
+	let sizer = BoxSizer::builder(Orientation::Vertical).build();
+	let list = QuietList::new(&dialog, "Layers");
+	sizer.add(&list, 1, SizerFlag::Expand | SizerFlag::All, 5);
+	let add = Button::builder(&dialog).with_label("Add Layer\u{2026}").build();
+	let rename = Button::builder(&dialog).with_label("Rename\u{2026}").build();
+	let remove = Button::builder(&dialog).with_label("Remove").build();
+	let toggle = Button::builder(&dialog).with_label("Show / Hide").build();
+	let current = Button::builder(&dialog).with_label("Set Current").build();
+	let close = Button::builder(&dialog).with_label("Close").build();
+	let buttons = BoxSizer::builder(Orientation::Horizontal).build();
+	for b in [&add, &rename, &remove, &toggle, &current, &close] {
+		buttons.add(b, 0, SizerFlag::All, 5);
+	}
+	sizer.add_sizer(&buttons, 0, SizerFlag::All, 5);
+	dialog.set_sizer(sizer, true);
+	let list = Rc::new(list);
+	{
+		let state = shared.borrow();
+		list.update_labelled(layer_rows(&state), Select::Start);
+	}
+	// Refresh the dialog list and speak the newest log entry.
+	let sync = {
+		let (list, shared) = (list.clone(), shared.clone());
+		move || {
+			let state = shared.borrow();
+			list.update_labelled(layer_rows(&state), Select::Keep);
+			if let Some(last) = state.drawing.log.last() {
+				frame.set_status_text(&last.describe(&state.drawing), 0);
+			}
+		}
+	};
+	let sync = Rc::new(sync);
+	{
+		let (shared, sync) = (shared.clone(), sync.clone());
+		add.on_click(move |_| {
+			let next = shared.borrow().drawing.layers.len() + 1;
+			if let Some(name) =
+				text_dialog(&frame, "Add layer", "Layer name", &format!("Layer {next}"))
+			{
+				let mut state = shared.borrow_mut();
+				state.layer = state.drawing.add_layer(name.trim());
+				drop(state);
+				sync();
+			}
+		});
+	}
+	{
+		let (list, shared, sync) = (list.clone(), shared.clone(), sync.clone());
+		rename.on_click(move |_| {
+			let Some(i) = list.selected() else { return };
+			let old = shared.borrow().drawing.layers[i].name.clone();
+			if let Some(name) = text_dialog(&frame, "Rename layer", "Layer name", &old) {
+				shared.borrow_mut().drawing.rename_layer(i, name.trim());
+				sync();
+			}
+		});
+	}
+	{
+		let (list, shared, sync) = (list.clone(), shared.clone(), sync.clone());
+		remove.on_click(move |_| {
+			let Some(i) = list.selected() else { return };
+			let mut state = shared.borrow_mut();
+			if state.drawing.remove_layer(i) {
+				if state.layer >= state.drawing.layers.len() {
+					state.layer = state.drawing.layers.len() - 1;
+				}
+				drop(state);
+				sync();
+			} else {
+				frame.set_status_text("A drawing always keeps one layer.", 0);
+			}
+		});
+	}
+	{
+		let (list, shared, sync) = (list.clone(), shared.clone(), sync.clone());
+		toggle.on_click(move |_| {
+			let Some(i) = list.selected() else { return };
+			let mut state = shared.borrow_mut();
+			let visible = !state.drawing.layers[i].visible;
+			state.drawing.set_layer_visible(i, visible);
+			drop(state);
+			sync();
+		});
+	}
+	{
+		let (list, shared) = (list.clone(), shared.clone());
+		current.on_click(move |_| {
+			let Some(i) = list.selected() else { return };
+			let mut state = shared.borrow_mut();
+			state.layer = i;
+			let name = state.drawing.layers[i].name.clone();
+			drop(state);
+			frame.set_status_text(&format!("New shapes now land on layer \"{name}\"."), 0);
+			let state = shared.borrow();
+			list.update_labelled(layer_rows(&state), Select::Keep);
+		});
+	}
+	{
+		let dialog = dialog.clone();
+		close.on_click(move |_| dialog.end_modal(ID_CANCEL));
+	}
+	dialog.show_modal();
+}
+
 fn dispatch(win: &Win, shared: &Shared, id: Id) {
 	let frame = win.frame;
 	match id {
@@ -227,7 +439,7 @@ fn dispatch(win: &Win, shared: &Shared, id: Id) {
 						state.palette =
 							entries.iter().map(|e| (e.color, Some(e.coverage))).collect();
 						if let Some(first) = entries.first() {
-							state.design.background = first.color;
+							state.drawing.set_background(first.color);
 						}
 						refresh_lists(win, &state);
 						frame.set_status_text(
@@ -250,7 +462,7 @@ fn dispatch(win: &Win, shared: &Shared, id: Id) {
 		ID_EXPORT_PNG => {
 			if let Some(path) = file_dialog(&frame, "Export design as PNG", "PNG image (*.png)|*.png", true) {
 				let state = shared.borrow();
-				match state.design.render().save(&path) {
+				match state.drawing.flatten().render().save(&path) {
 					Ok(()) => frame.set_status_text(&format!("Exported PNG to {path}"), 0),
 					Err(e) => frame.set_status_text(&format!("Export failed: {e}"), 0),
 				}
@@ -261,7 +473,7 @@ fn dispatch(win: &Win, shared: &Shared, id: Id) {
 				file_dialog(&frame, "Export caption sheet", "Text file (*.txt)|*.txt", true)
 			{
 				let state = shared.borrow();
-				match std::fs::write(&path, state.design.caption_sheet()) {
+				match std::fs::write(&path, state.drawing.flatten().caption_sheet()) {
 					Ok(()) => frame.set_status_text(&format!("Exported captions to {path}"), 0),
 					Err(e) => frame.set_status_text(&format!("Export failed: {e}"), 0),
 				}
@@ -273,12 +485,26 @@ fn dispatch(win: &Win, shared: &Shared, id: Id) {
 			{
 				let state = shared.borrow();
 				let colors: Vec<Srgb> = if state.palette.is_empty() {
-					vec![state.design.background]
+					vec![state.drawing.background]
 				} else {
 					state.palette.iter().map(|(c, _)| *c).collect()
 				};
 				match std::fs::write(&path, css_for_colors(&colors, "color")) {
 					Ok(()) => frame.set_status_text(&format!("Exported CSS to {path}"), 0),
+					Err(e) => frame.set_status_text(&format!("Export failed: {e}"), 0),
+				}
+			}
+		}
+		ID_EXPORT_SUMMARY => {
+			if let Some(path) = file_dialog(
+				&frame,
+				"Export recreation file (step-by-step summary)",
+				"Text file (*.txt)|*.txt",
+				true,
+			) {
+				let state = shared.borrow();
+				match std::fs::write(&path, state.drawing.summary()) {
+					Ok(()) => frame.set_status_text(&format!("Exported recreation file to {path}"), 0),
 					Err(e) => frame.set_status_text(&format!("Export failed: {e}"), 0),
 				}
 			}
@@ -324,12 +550,9 @@ fn dispatch(win: &Win, shared: &Shared, id: Id) {
 		ID_SET_BACKGROUND => {
 			let mut state = shared.borrow_mut();
 			if let Some(c) = selected_color(win, &state) {
-				state.design.background = c;
+				state.drawing.set_background(c);
 				refresh_lists(win, &state);
-				frame.set_status_text(
-					&format!("Design background is now {}", describe(c)),
-					0,
-				);
+				announce(win, &state);
 				select_color(win, &state, c);
 			} else {
 				frame.set_status_text("Select a palette color first.", 0);
@@ -338,7 +561,7 @@ fn dispatch(win: &Win, shared: &Shared, id: Id) {
 		ID_CANVAS_SIZE => {
 			let (w, h) = {
 				let state = shared.borrow();
-				(state.design.width, state.design.height)
+				(state.drawing.width, state.drawing.height)
 			};
 			if let Some(v) = numbers_dialog(
 				&frame,
@@ -349,12 +572,8 @@ fn dispatch(win: &Win, shared: &Shared, id: Id) {
 				],
 			) {
 				let mut state = shared.borrow_mut();
-				state.design.width = v[0] as u32;
-				state.design.height = v[1] as u32;
-				frame.set_status_text(
-					&format!("Canvas is now {} by {} pixels.", v[0], v[1]),
-					0,
-				);
+				state.drawing.set_canvas(v[0] as u32, v[1] as u32);
+				announce(win, &state);
 			}
 		}
 		ID_ADD_RECT | ID_ADD_ELLIPSE => {
@@ -382,24 +601,147 @@ fn dispatch(win: &Win, shared: &Shared, id: Id) {
 				],
 			) {
 				let mut state = shared.borrow_mut();
-				state
-					.design
-					.shapes
-					.push(Shape::new(kind, v[0], v[1], v[2] as u32, v[3] as u32, fill));
-				refresh_lists(win, &state);
-				frame.set_status_text(
-					&format!("Added {}", state.design.caption_for(state.design.shapes.last().unwrap())),
-					0,
+				let layer = state.layer;
+				state.drawing.add_shape(
+					layer,
+					Shape::new(kind, v[0], v[1], v[2] as u32, v[3] as u32, fill),
 				);
+				refresh_lists(win, &state);
+				announce(win, &state);
 			}
+		}
+		ID_ADD_STROKE => {
+			let fill = {
+				let state = shared.borrow();
+				selected_color(win, &state)
+			};
+			let Some(fill) = fill else {
+				frame.set_status_text("Select a palette color for the stroke first.", 0);
+				return;
+			};
+			if let Some(text) = text_dialog(
+				&frame,
+				&format!("Add stroke in {}", describe(fill)),
+				"Points as x,y pairs, separated by spaces (for example: 10,20 100,20 100,80)",
+				"10,10 200,10 200,100",
+			) {
+				match parse_points(&text) {
+					Some(points) if points.len() >= 2 => {
+						if let Some(v) = numbers_dialog(
+							&frame,
+							"Brush width",
+							&[("Brush width in pixels", 1, 200, 3)],
+						) {
+							let mut state = shared.borrow_mut();
+							let layer = state.layer;
+							state.drawing.add_shape(layer, Shape::stroke(points, v[0] as u32, fill));
+							refresh_lists(win, &state);
+							announce(win, &state);
+						}
+					}
+					_ => frame.set_status_text(
+						"Points need to be x,y pairs, at least two of them, whole numbers.",
+						0,
+					),
+				}
+			}
+		}
+		ID_MOVE_SHAPE | ID_ROTATE_SHAPE => {
+			let Some(flat) = win.shapes_list.selected() else {
+				frame.set_status_text("Select a shape first.", 0);
+				return;
+			};
+			let at = {
+				let state = shared.borrow();
+				locate(&state, flat)
+			};
+			let Some((li, si)) = at else { return };
+			if id == ID_MOVE_SHAPE {
+				if let Some(v) = numbers_dialog(
+					&frame,
+					"Move shape (shift)",
+					&[
+						("Shift across in pixels (negative moves left)", -8000, 8000, 0),
+						("Shift down in pixels (negative moves up)", -8000, 8000, 0),
+					],
+				) {
+					let mut state = shared.borrow_mut();
+					state.drawing.shift_shape(li, si, v[0], v[1]);
+					refresh_lists(win, &state);
+					announce(win, &state);
+				}
+			} else {
+				let now = {
+					let state = shared.borrow();
+					state.drawing.layers[li].shapes[si].angle
+				};
+				if let Some(v) = numbers_dialog(
+					&frame,
+					"Rotate shape",
+					&[("Angle in degrees, clockwise", -360, 360, now as i32)],
+				) {
+					let mut state = shared.borrow_mut();
+					state.drawing.rotate_shape(li, si, v[0] as f64);
+					refresh_lists(win, &state);
+					announce(win, &state);
+				}
+			}
+		}
+		ID_RESIZE_SHAPE => {
+			let Some(flat) = win.shapes_list.selected() else {
+				frame.set_status_text("Select a shape first.", 0);
+				return;
+			};
+			let at = {
+				let state = shared.borrow();
+				locate(&state, flat)
+			};
+			let Some((li, si)) = at else { return };
+			let (w, h, stroke) = {
+				let state = shared.borrow();
+				let s = &state.drawing.layers[li].shapes[si];
+				(s.w, s.h, s.kind == ShapeKind::Stroke)
+			};
+			if stroke {
+				frame.set_status_text("A stroke's size is its points; move it or add a new one.", 0);
+				return;
+			}
+			if let Some(v) = numbers_dialog(
+				&frame,
+				"Resize shape",
+				&[("Width", 1, 8000, w as i32), ("Height", 1, 8000, h as i32)],
+			) {
+				let mut state = shared.borrow_mut();
+				state.drawing.resize_shape(li, si, v[0] as u32, v[1] as u32);
+				refresh_lists(win, &state);
+				announce(win, &state);
+			}
+		}
+		ID_RECOLOR_SHAPE => {
+			let mut state = shared.borrow_mut();
+			let (Some(flat), Some(c)) = (win.shapes_list.selected(), selected_color(win, &state))
+			else {
+				frame.set_status_text("Select a shape and a palette color first.", 0);
+				return;
+			};
+			if let Some((li, si)) = locate(&state, flat) {
+				state.drawing.recolor_shape(li, si, c);
+				refresh_lists(win, &state);
+				announce(win, &state);
+			}
+		}
+		ID_LAYERS => {
+			layers_dialog(win, shared);
+			let state = shared.borrow();
+			refresh_lists(win, &state);
 		}
 		ID_REMOVE_SHAPE => {
 			let mut state = shared.borrow_mut();
-			if let Some(i) = win.shapes_list.selected() {
-				if i < state.design.shapes.len() {
-					state.design.shapes.remove(i);
+			if let Some(flat) = win.shapes_list.selected() {
+				if let Some((li, si)) = locate(&state, flat) {
+					state.drawing.remove_shape(li, si);
 					refresh_lists(win, &state);
-					frame.set_status_text("Shape removed.", 0);
+					announce(win, &state);
 				}
 			} else {
 				frame.set_status_text("Select a shape first.", 0);
@@ -415,6 +757,7 @@ fn build_menus(frame: &Frame) {
 		.append_item(ID_EXPORT_PNG, "Export &PNG…\tCtrl+E", "")
 		.append_item(ID_EXPORT_CAPTIONS, "Export &Captions…", "")
 		.append_item(ID_EXPORT_CSS, "Export C&SS…", "")
+		.append_item(ID_EXPORT_SUMMARY, "Export &Summary (recreation file)…", "")
 		.append_separator()
 		.append_item(ID_EXIT, "E&xit", "")
 		.build();
@@ -435,8 +778,16 @@ fn build_menus(frame: &Frame) {
 		.append_item(ID_CANVAS_SIZE, "Canvas &Size…", "")
 		.append_item(ID_ADD_RECT, "Add &Rectangle…", "")
 		.append_item(ID_ADD_ELLIPSE, "Add &Ellipse…", "")
+		.append_item(ID_ADD_STROKE, "Add Stro&ke…", "")
 		.append_item(ID_SET_BACKGROUND, "Set &Background to Selected Color", "")
-		.append_item(ID_REMOVE_SHAPE, "Remove Selected &Shape", "")
+		.append_separator()
+		.append_item(ID_MOVE_SHAPE, "&Move Selected Shape…", "")
+		.append_item(ID_ROTATE_SHAPE, "R&otate Selected Shape…", "")
+		.append_item(ID_RESIZE_SHAPE, "Resi&ze Selected Shape…", "")
+		.append_item(ID_RECOLOR_SHAPE, "Set Selected Shape to Palette &Color", "")
+		.append_item(ID_REMOVE_SHAPE, "Remove Selected Sha&pe", "")
+		.append_separator()
+		.append_item(ID_LAYERS, "&Layers…", "")
 		.build();
 	let help = Menu::builder().append_item(ID_ABOUT, "&About Blind Designer", "").build();
 	let bar = MenuBar::builder()
@@ -514,7 +865,8 @@ fn main() {
 		let start = Srgb::new(58, 124, 165);
 		let shared: Shared = Rc::new(RefCell::new(State {
 			palette: vec![(start, None)],
-			design: Design::new(800, 600, Srgb::WHITE),
+			drawing: Drawing::new(800, 600, Srgb::WHITE),
+			layer: 0,
 		}));
 		let win = Rc::new(Win {
 			frame,

@@ -4,6 +4,26 @@ Readable release history for Blind Designer (renamed from Transversion at 0.2.0)
 section is its GitHub release note, taken from this file by the release
 workflow.
 
+## 0.2.0
+
+- Renamed: Transversion is now Blind Designer, the name Elshara chose.
+  Same color engine, same designs — a new name and a bigger job.
+- Drawing core: designs are now layered. Design, Layers adds, renames,
+  removes, shows or hides named layers, and picks the layer new shapes
+  land on. Hidden layers paint nothing.
+- Every change is logged, step by step: canvas, background, layer,
+  shape, shift, angle, brush. Each change is spoken with its exact
+  values as it happens, and File, Export Summary writes the whole log
+  as a recreation file — numbered instructions that rebuild the exact
+  image from nothing.
+- New shape: strokes. Design, Add Stroke takes typed x,y points and a
+  brush width; the stroke paints through its points in the selected
+  palette color.
+- Shapes change by measurement: Design, Move Selected Shape (shift
+  across and down), Rotate Selected Shape (angle in degrees), Resize
+  Selected Shape, Set Selected Shape to Palette Color — all logged.
+  Rectangles, ellipses and strokes all render rotated.
+
 ## 0.1.0
 
 - First release. An accessible multispectral color creator: colors live in

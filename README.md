@@ -32,6 +32,16 @@ and complementary shades are predictable instead of eyeballed.
   hand-written captions where you gave them and generated fill-ins only
   where you didn't), and the palette as CSS custom properties with the
   spoken caption of each color as its comment.
+- **Layered drawing with a full change log** (0.2.0): shapes live on named
+  layers — add, rename, remove, show or hide a layer in Design, Layers.
+  Shapes are placed and changed by measurement, never by dragging: add
+  rectangles, ellipses and strokes (typed x,y points with a brush width),
+  then move (shift), rotate (angle), resize and recolor the selected
+  shape from the Design menu. Every single change is spoken with its
+  exact values and appended to a step-by-step log.
+- **Recreation file**: File, Export Summary writes the log as numbered
+  steps — follow them in order and you rebuild the exact image from
+  nothing. It is the design's memory and its source code in words.
 
 ## Accessibility
 
@@ -43,7 +53,7 @@ action.
 
 ## Status
 
-0.1.0, in development. Ideas and the original request came from Elshara
+0.2.0, in development. Ideas and the original request came from Elshara
 Silverheart.
 
 ## License

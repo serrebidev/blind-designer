@@ -4,6 +4,29 @@ Readable release history for Blind Designer (renamed from Transversion at 0.2.0)
 section is its GitHub release note, taken from this file by the release
 workflow.
 
+## 0.3.0
+
+- Sound cues while drawing: adding, moving, rotating or resizing a shape
+  now plays a gentle tone alongside the spoken values — pitch follows
+  height on the canvas, stereo position follows left-right, and bigger
+  shapes sound longer. The decision Elshara left to our intuition,
+  delivered: cues and speech together.
+- Design dictionary: Help, Design Dictionary opens a searchable list of
+  color and design terms, each with a plain-language definition.
+- Help file: Help, Help and Worked Examples opens a guide with
+  step-by-step examples — make a rectangle, a layered scene, a stroke —
+  written to be followed by ear.
+- Startup warnings fixed (thanks to Elshara's report): the app now
+  carries a proper Windows manifest, and the status bar no longer trips
+  a wxWidgets invalid-ID alert at launch.
+- Web export: File, Export HTML Page writes the design as a standalone
+  web page — palette as CSS variables, every shape positioned and
+  captioned for screen readers.
+- Web import: File, Import CSS Colors brings a stylesheet's colors into
+  the palette, each with a note of where it came from. File, Import
+  HTML Design turns a simple HTML page's styled elements into shapes
+  with captions, so a site design can be explored and reworked by ear.
+
 ## 0.2.0
 
 - Renamed: Transversion is now Blind Designer, the name Elshara chose.

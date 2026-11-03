@@ -31,9 +31,10 @@ THE MENUS
 - Palette: grow the palette from the selected color — complementary,
   split complementary, analogous, triadic, tetradic, 4 shades,
   4 tints, 4 tones — or remove the selected color.
-- Design: canvas size; add a rectangle, ellipse, or stroke; set the
-  background to the selected color; move, rotate, resize, recolor, or
-  remove the selected shape; open the Layers dialog.
+- Design: canvas size; add a rectangle, ellipse, stroke, text, or
+  image; set the background to the selected color; move, rotate,
+  resize, recolor, or remove the selected shape; open the Elements
+  dialog, the Layers dialog, and the brush library.
 - Help: the design-terms Dictionary, this help file, the Sound Cues
   toggle, and About.
 
@@ -187,3 +188,53 @@ many colors to extract: 8 by default, up to 64. Open Image replaces
 the palette and sets the background to the largest color, as
 before. Extract Colors from Image only adds to the palette — use it
 to mine any image for colors without touching your design.
+
+TEXT AND IMAGE ELEMENTS
+
+Design, Add Text places words in the design: type the phrase, name
+a font, pick a point size, then place it by measurement like any
+other shape. Its caption is the phrase itself unless you write a
+different one. In an exported HTML page the phrase is real text with
+real font CSS; in a PNG the app draws it in a built-in block font
+(the named font travels with the design and is used by the HTML
+export).
+
+Design, Add Image places an image file in the design, scaled into
+the box you give it. The design stores the file's path; if the file
+cannot be found when the design is drawn, a framed placeholder in
+the color you chose shows where it belongs, captioned with the
+file's name.
+
+THE ELEMENTS DIALOG
+
+Design, Elements lists everything in the design in plain language:
+what it is, where it sits in words (top left, center, bottom
+right), how big, and what color — plus its written caption when it
+has one. Select an element and Rename Caption, Describe (the full
+description, numbers and all), Move, Resize, Recolor or Delete it,
+without hunting through the canvas.
+
+PLAIN-LANGUAGE INPUT
+
+The add, move and resize dialogs accept words as well as numbers.
+Position can be "top left", "center", "bottom right", or a nudge
+from where the shape is now: "a bit right", "a bit down". Size can
+be "a bit wider", "a bit taller", "a bit smaller". Color fields
+take names: "red", "sky blue", "dark gray" — or a hex code as
+always. Words the app does not understand are refused with an
+explanation, never guessed at.
+
+Every shape also has an automatic plain-language description —
+"long rising stroke from top left to center, dark blue" — used in
+the Elements list, and spoken when a shape is added without a
+caption of its own.
+
+SAVED BRUSHES
+
+A stroke's brush is its width, its color, and its pattern (solid,
+dashed or dotted). When you add a stroke, the brush values prefill
+from the current brush, and whatever you use becomes current.
+Design, Save Current Brush keeps it in the brush library under a
+name; Design, Brush Library lists the saved brushes, and Apply
+makes one current for the next strokes. The library is saved in a
+file beside the app, so your brushes are there next time.

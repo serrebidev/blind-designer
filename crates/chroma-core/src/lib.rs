@@ -9,10 +9,13 @@
 
 use std::fmt;
 
+pub mod brushes;
 pub mod design;
 pub mod dictionary;
 pub mod drawing;
+pub mod font;
 pub mod palette;
+pub mod plain;
 pub mod project;
 pub mod sound;
 pub mod web;
@@ -424,6 +427,35 @@ pub fn describe_in(color: Srgb, format: ColorFormat) -> String {
 		o.c,
 		o.h
 	)
+}
+
+/// A color in two or three plain words — "dark blue", "light gray",
+/// "black" — for descriptions a listener can picture. The full
+/// `describe` caption carries the numbers; this is the short form the
+/// plain-language element descriptions use.
+pub fn color_words(color: Srgb) -> String {
+	let o = color.to_oklch();
+	let light = match o.l {
+		x if x < 0.15 => "black",
+		x if x < 0.30 => "very dark",
+		x if x < 0.45 => "dark",
+		x if x < 0.60 => "medium",
+		x if x < 0.75 => "light",
+		x if x < 0.90 => "very light",
+		_ => "white",
+	};
+	if o.c < 0.02 {
+		return match light {
+			"black" | "white" => light.to_string(),
+			other => format!("{other} gray"),
+		};
+	}
+	let light = match light {
+		"black" => "very dark",
+		"white" => "very light",
+		other => other,
+	};
+	format!("{} {}", light, hue_family(o.h))
 }
 
 /// One palette entry: a color plus the share of the source image it covers.

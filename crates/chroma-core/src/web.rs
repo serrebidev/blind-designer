@@ -97,6 +97,31 @@ impl Design {
 						shape.brush
 					));
 				}
+				ShapeKind::Text => {
+					// The phrase is the element's content, so a screen
+					// reader reads the text itself; the font name and
+					// size become real CSS.
+					out.push_str(&format!(
+						"<div class=\"shape\" style=\"left: {}px; top: {}px; width: {}px; height: {}px; color: {hex}; font-family: {}; font-size: {}px;{rotate}\">{}</div>\n",
+						shape.x,
+						shape.y,
+						shape.w,
+						shape.h,
+						escape_html(&shape.font),
+						shape.font_size,
+						escape_html(&shape.text)
+					));
+				}
+				ShapeKind::Image => {
+					out.push_str(&format!(
+						"<img class=\"shape\" src=\"{}\" alt=\"{caption}\" style=\"left: {}px; top: {}px; width: {}px; height: {}px;{rotate}\">\n",
+						escape_html(&shape.image_path),
+						shape.x,
+						shape.y,
+						shape.w,
+						shape.h
+					));
+				}
 				kind => {
 					let radius = if kind == ShapeKind::Ellipse {
 						" border-radius: 50%;"
@@ -116,7 +141,8 @@ impl Design {
 }
 
 /// The CSS named colors this parser knows (the common, unambiguous set).
-fn named_color(word: &str) -> Option<Srgb> {
+/// Also the name table plain-language color input falls back to.
+pub fn named_color(word: &str) -> Option<Srgb> {
 	let hex = match word.to_ascii_lowercase().as_str() {
 		"black" => "#000000",
 		"white" => "#FFFFFF",
@@ -583,6 +609,21 @@ mod tests {
 		assert!(html.contains("border-radius: 50%"), "{html}");
 		assert!(html.contains("<polyline"), "{html}");
 		assert!(html.contains("stroke=\"#FF8000\""), "{html}");
+	}
+
+	#[test]
+	fn html_export_carries_text_and_image_elements() {
+		let mut d = Design::new(300, 200, Srgb::WHITE);
+		d.shapes.push(Shape::text("Big <Sale>", "Verdana", 32, 10, 10, 200, 40, Srgb::new(200, 0, 0)));
+		d.shapes.push(Shape::image("photos/team day.png", 10, 60, 100, 80, Srgb::new(0, 0, 255)));
+		let html = d.to_html("page");
+		// The phrase is real text content (escaped), with real font CSS.
+		assert!(html.contains("font-family: Verdana; font-size: 32px"), "{html}");
+		assert!(html.contains(">Big &lt;Sale&gt;</div>"), "{html}");
+		assert!(html.contains("color: #C80000"), "{html}");
+		// The image references its file, captioned by its alt text.
+		assert!(html.contains("<img class=\"shape\" src=\"photos/team day.png\""), "{html}");
+		assert!(html.contains("alt=\"image from file team day.png"), "{html}");
 	}
 
 	#[test]

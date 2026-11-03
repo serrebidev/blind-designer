@@ -15,10 +15,12 @@ use std::cell::RefCell;
 use std::path::Path;
 use std::rc::Rc;
 
+use chroma_core::brushes::{Brush, BrushLibrary, PATTERNS};
 use chroma_core::design::{css_for_colors, Shape, ShapeKind};
 use chroma_core::dictionary;
 use chroma_core::drawing::{Drawing, Event};
 use chroma_core::palette::{PaletteColor, Provenance};
+use chroma_core::plain::{parse_color, parse_position, parse_size};
 use chroma_core::project::Project;
 use chroma_core::sound::{cue_at, cue_for_shape, tone_wav, Cue};
 use chroma_core::web::{import_html, parse_css_colors};
@@ -51,6 +53,11 @@ const ID_ROTATE_SHAPE: Id = 308;
 const ID_RECOLOR_SHAPE: Id = 309;
 const ID_LAYERS: Id = 310;
 const ID_RESIZE_SHAPE: Id = 311;
+const ID_ADD_TEXT: Id = 312;
+const ID_ADD_IMAGE: Id = 313;
+const ID_ELEMENTS: Id = 314;
+const ID_SAVE_BRUSH: Id = 315;
+const ID_BRUSHES: Id = 316;
 const ID_EXPORT_SUMMARY: Id = 106;
 const ID_EXPORT_HTML: Id = 107;
 const ID_IMPORT_CSS: Id = 108;
@@ -108,6 +115,11 @@ const MENU_IDS: &[Id] = &[
 	ID_RECOLOR_SHAPE,
 	ID_LAYERS,
 	ID_RESIZE_SHAPE,
+	ID_ADD_TEXT,
+	ID_ADD_IMAGE,
+	ID_ELEMENTS,
+	ID_SAVE_BRUSH,
+	ID_BRUSHES,
 	ID_ABOUT,
 	ID_DICTIONARY,
 	ID_HELP_FILE,
@@ -145,6 +157,11 @@ struct State {
 	sound_cues: bool,
 	/// How color values are spoken and displayed (View menu).
 	color_format: ColorFormat,
+	/// The current stroke brush: width, color and pattern new strokes
+	/// are painted with. Applying a saved brush replaces it.
+	brush: Brush,
+	/// The saved-brush library, persisted beside the executable.
+	brushes: BrushLibrary,
 }
 
 struct Win {
@@ -391,6 +408,138 @@ fn text_dialog(parent: &Frame, title: &str, label: &str, value: &str) -> Option<
 	}
 }
 
+/// Several labelled one-line text fields in one modal dialog, each
+/// prefilled. Returns the field values in order, `None` on cancel.
+/// The labels are the fields' accessible names: each label says what
+/// the field accepts, in numbers or words.
+fn fields_dialog(
+	parent: &Frame,
+	title: &str,
+	fields: &[(&str, &str)],
+) -> Option<Vec<String>> {
+	let dialog = Dialog::builder(parent, title).build();
+	let sizer = BoxSizer::builder(Orientation::Vertical).build();
+	let mut inputs: Vec<TextCtrl> = Vec::new();
+	for (label, value) in fields {
+		let text = StaticText::builder(&dialog).with_label(label).build();
+		let field = TextCtrl::builder(&dialog).build();
+		field.set_value(value);
+		sizer.add(&text, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+		sizer.add(&field, 0, SizerFlag::Expand | SizerFlag::All, 5);
+		inputs.push(field);
+	}
+	let ok = Button::builder(&dialog).with_label("OK").build();
+	let cancel = Button::builder(&dialog).with_label("Cancel").build();
+	let buttons = BoxSizer::builder(Orientation::Horizontal).build();
+	buttons.add(&ok, 0, SizerFlag::All, 5);
+	buttons.add(&cancel, 0, SizerFlag::All, 5);
+	sizer.add_sizer(&buttons, 0, SizerFlag::All, 5);
+	dialog.set_sizer(sizer, true);
+	let d = dialog.clone();
+	ok.on_click(move |_| d.end_modal(ID_OK));
+	let d = dialog.clone();
+	cancel.on_click(move |_| d.end_modal(ID_CANCEL));
+	if dialog.show_modal() == ID_OK {
+		Some(inputs.iter().map(|f| f.get_value()).collect())
+	} else {
+		None
+	}
+}
+
+/// Ask where an element goes, how big it is, and what color — each
+/// field accepting numbers or plain words (core `plain` parsers):
+/// position "120, 80", "top left", "center" or a nudge like "a bit
+/// right" from the current position; size "200 by 100" or "a bit
+/// wider" from the current size; color a name like "sky blue" or a
+/// hex code. A field that does not parse is reported on the status
+/// line and nothing is placed.
+fn place_dialog(
+	win: &Win,
+	title: &str,
+	current_pos: (i32, i32),
+	current_size: (u32, u32),
+	default_color: Srgb,
+	canvas: (u32, u32),
+) -> Option<(i32, i32, u32, u32, Srgb)> {
+	let frame = win.frame;
+	let v = fields_dialog(
+		&frame,
+		title,
+		&[
+			(
+				"Position: numbers like 120, 80, or words like top left, center, a bit right",
+				&format!("{}, {}", current_pos.0, current_pos.1),
+			),
+			(
+				"Size: numbers like 200 by 100, or words like a bit wider, a bit taller",
+				&format!("{} by {}", current_size.0, current_size.1),
+			),
+			("Color: a name like sky blue, or a hex code", &default_color.to_hex()),
+		],
+	)?;
+	let Some((x, y)) = parse_position(&v[0], canvas.0, canvas.1, Some(current_pos)) else {
+		frame.set_status_text(
+			"I could not understand that position. Use numbers like 120, 80, or words like top left, center, a bit right.",
+			0,
+		);
+		return None;
+	};
+	let Some((w, h)) = parse_size(&v[1], Some(current_size)) else {
+		frame.set_status_text(
+			"I could not understand that size. Use numbers like 200 by 100, or words like a bit wider.",
+			0,
+		);
+		return None;
+	};
+	let Some(color) = parse_color(&v[2]) else {
+		frame.set_status_text(
+			"I could not understand that color. Use a name like sky blue, or a hex code like 87CEEB.",
+			0,
+		);
+		return None;
+	};
+	Some((x, y, w, h, color))
+}
+
+/// Speak a freshly added shape with its automatic plain-language
+/// description (item: auto-describe on creation), and sound its cue.
+fn speak_added(win: &Win, state: &State, layer: usize, index: usize) {
+	let Some(shape) =
+		state.drawing.layers.get(layer).and_then(|l| l.shapes.get(index)).cloned()
+	else {
+		return;
+	};
+	win.frame.set_status_text(
+		&format!("Added {}.", state.drawing.plain_of(&shape)),
+		0,
+	);
+	if state.sound_cues {
+		play_cue(cue_for_shape(&shape, state.drawing.width, state.drawing.height));
+	}
+}
+
+/// The brush library's file: beside the executable, so it travels
+/// with the app and survives design files coming and going.
+fn brush_file_path() -> std::path::PathBuf {
+	match std::env::current_exe() {
+		Ok(exe) => exe.with_file_name("blind-designer-brushes.txt"),
+		Err(_) => std::path::PathBuf::from("blind-designer-brushes.txt"),
+	}
+}
+
+fn load_brushes() -> BrushLibrary {
+	std::fs::read_to_string(brush_file_path())
+		.ok()
+		.and_then(|text| BrushLibrary::from_text(&text).ok())
+		.unwrap_or_default()
+}
+
+fn persist_brushes(win: &Win, state: &State) {
+	if let Err(e) = std::fs::write(brush_file_path(), state.brushes.to_text()) {
+		win.frame.set_status_text(&format!("The brush library could not be saved: {e}"), 0);
+	}
+}
+
 /// Parses "x,y x,y …" point lists (commas, spaces and semicolons all
 /// separate). Needs at least one point, whole numbers only.
 fn parse_points(text: &str) -> Option<Vec<(i32, i32)>> {
@@ -527,6 +676,297 @@ fn layers_dialog(win: &Win, shared: &Shared) {
 			frame.set_status_text(&format!("New shapes now land on layer \"{name}\"."), 0);
 			let state = shared.borrow();
 			list.update_labelled(layer_rows(&state), Select::Keep);
+		});
+	}
+	{
+		let dialog = dialog.clone();
+		close.on_click(move |_| dialog.end_modal(ID_CANCEL));
+	}
+	dialog.show_modal();
+}
+
+/// Element rows across all layers, in paint order: each element in
+/// plain language (kind, position in words, size, color), with its
+/// written caption when it has one. The payload is the flat index
+/// `locate` understands.
+fn element_rows(state: &State) -> Vec<(usize, String)> {
+	let mut rows = Vec::new();
+	let mut flat = 0;
+	for layer in &state.drawing.layers {
+		for s in &layer.shapes {
+			let mut label = format!("{}: {}", layer.name, state.drawing.plain_of(s));
+			if let Some(c) = &s.caption {
+				label.push_str(&format!(" Caption: {c}"));
+			}
+			if !layer.visible {
+				label.push_str(" (layer hidden)");
+			}
+			rows.push((flat, label));
+			flat += 1;
+		}
+	}
+	rows
+}
+
+/// The Elements dialog (Design menu): every element in the design,
+/// named in plain language, with the everyday operations as buttons —
+/// rename its caption, hear its full description, move, resize,
+/// recolor or delete it — without hunting through the canvas. The
+/// list is labelled "Elements"; every change goes through the
+/// drawing, so it is logged and announced like everywhere else.
+fn elements_dialog(win: &Win, shared: &Shared) {
+	let frame = win.frame;
+	let dialog = Dialog::builder(&frame, "Elements").build();
+	let sizer = BoxSizer::builder(Orientation::Vertical).build();
+	let list = QuietList::new(&dialog, "Elements");
+	sizer.add(&list, 1, SizerFlag::Expand | SizerFlag::All, 5);
+	let caption_btn = Button::builder(&dialog).with_label("Rename Caption\u{2026}").build();
+	let describe_btn = Button::builder(&dialog).with_label("Describe").build();
+	let move_btn = Button::builder(&dialog).with_label("Move\u{2026}").build();
+	let resize_btn = Button::builder(&dialog).with_label("Resize\u{2026}").build();
+	let recolor_btn = Button::builder(&dialog).with_label("Recolor\u{2026}").build();
+	let delete_btn = Button::builder(&dialog).with_label("Delete").build();
+	let close = Button::builder(&dialog).with_label("Close").build();
+	let buttons = BoxSizer::builder(Orientation::Horizontal).build();
+	for b in [&caption_btn, &describe_btn, &move_btn, &resize_btn, &recolor_btn, &delete_btn, &close] {
+		buttons.add(b, 0, SizerFlag::All, 5);
+	}
+	sizer.add_sizer(&buttons, 0, SizerFlag::All, 5);
+	dialog.set_sizer(sizer, true);
+	let list = Rc::new(list);
+	{
+		let state = shared.borrow();
+		list.update_labelled(element_rows(&state), Select::Start);
+	}
+	// Refresh the list and speak the newest log entry.
+	let sync = {
+		let (list, shared) = (list.clone(), shared.clone());
+		move || {
+			let state = shared.borrow();
+			list.update_labelled(element_rows(&state), Select::Keep);
+			if let Some(last) = state.drawing.log.last() {
+				frame.set_status_text(&last.describe(&state.drawing), 0);
+			}
+		}
+	};
+	let sync = Rc::new(sync);
+	// The selected element as (layer, shape), if any.
+	let picked = {
+		let (list, shared) = (list.clone(), shared.clone());
+		move || -> Option<(usize, usize)> {
+			let flat = list.selected()?;
+			locate(&shared.borrow(), flat)
+		}
+	};
+	let picked = Rc::new(picked);
+	{
+		let (shared, sync, picked) = (shared.clone(), sync.clone(), picked.clone());
+		caption_btn.on_click(move |_| {
+			let Some((li, si)) = picked() else { return };
+			let now = shared.borrow().drawing.layers[li].shapes[si]
+				.caption
+				.clone()
+				.unwrap_or_default();
+			if let Some(text) =
+				text_dialog(&frame, "Rename caption", "Caption for this element", &now)
+			{
+				if text.trim().is_empty() {
+					frame.set_status_text(
+						"Caption unchanged: an empty caption keeps the automatic description.",
+						0,
+					);
+					return;
+				}
+				shared.borrow_mut().drawing.caption_shape(li, si, text.trim().to_string());
+				sync();
+			}
+		});
+	}
+	{
+		let (shared, picked) = (shared.clone(), picked.clone());
+		describe_btn.on_click(move |_| {
+			let Some((li, si)) = picked() else { return };
+			let state = shared.borrow();
+			let shape = &state.drawing.layers[li].shapes[si];
+			frame.set_status_text(
+				&format!(
+					"{}. Full description: {}",
+					state.drawing.plain_of(shape),
+					state.drawing.description_of(shape)
+				),
+				0,
+			);
+		});
+	}
+	{
+		let (shared, sync, picked) = (shared.clone(), sync.clone(), picked.clone());
+		move_btn.on_click(move |_| {
+			let Some((li, si)) = picked() else { return };
+			let (cur, canvas) = {
+				let state = shared.borrow();
+				let s = &state.drawing.layers[li].shapes[si];
+				((s.x, s.y), (state.drawing.width, state.drawing.height))
+			};
+			let Some(v) = fields_dialog(
+				&frame,
+				"Move element",
+				&[(
+					"New position: numbers like 120, 80, or words like top left, center, a bit right",
+					&format!("{}, {}", cur.0, cur.1),
+				)],
+			) else {
+				return;
+			};
+			match parse_position(&v[0], canvas.0, canvas.1, Some(cur)) {
+				Some((nx, ny)) => {
+					shared.borrow_mut().drawing.shift_shape(li, si, nx - cur.0, ny - cur.1);
+					sync();
+				}
+				None => frame.set_status_text(
+					"I could not understand that position. Use numbers like 120, 80, or words like top left, center, a bit right.",
+					0,
+				),
+			}
+		});
+	}
+	{
+		let (shared, sync, picked) = (shared.clone(), sync.clone(), picked.clone());
+		resize_btn.on_click(move |_| {
+			let Some((li, si)) = picked() else { return };
+			let cur = {
+				let state = shared.borrow();
+				let s = &state.drawing.layers[li].shapes[si];
+				if s.kind == ShapeKind::Stroke {
+					frame.set_status_text(
+						"A stroke's size is its points; move it or add a new one.",
+						0,
+					);
+					return;
+				}
+				(s.w, s.h)
+			};
+			let Some(v) = fields_dialog(
+				&frame,
+				"Resize element",
+				&[(
+					"New size: numbers like 200 by 100, or words like a bit wider, a bit taller",
+					&format!("{} by {}", cur.0, cur.1),
+				)],
+			) else {
+				return;
+			};
+			match parse_size(&v[0], Some(cur)) {
+				Some((w, h)) => {
+					shared.borrow_mut().drawing.resize_shape(li, si, w, h);
+					sync();
+				}
+				None => frame.set_status_text(
+					"I could not understand that size. Use numbers like 200 by 100, or words like a bit wider.",
+					0,
+				),
+			}
+		});
+	}
+	{
+		let (shared, sync, picked) = (shared.clone(), sync.clone(), picked.clone());
+		recolor_btn.on_click(move |_| {
+			let Some((li, si)) = picked() else { return };
+			let now = shared.borrow().drawing.layers[li].shapes[si].fill;
+			let Some(v) = fields_dialog(
+				&frame,
+				"Recolor element",
+				&[("New color: a name like sky blue, or a hex code", &now.to_hex())],
+			) else {
+				return;
+			};
+			match parse_color(&v[0]) {
+				Some(color) => {
+					shared.borrow_mut().drawing.recolor_shape(li, si, color);
+					sync();
+				}
+				None => frame.set_status_text(
+					"I could not understand that color. Use a name like sky blue, or a hex code like 87CEEB.",
+					0,
+				),
+			}
+		});
+	}
+	{
+		let (shared, sync, picked) = (shared.clone(), sync.clone(), picked.clone());
+		delete_btn.on_click(move |_| {
+			let Some((li, si)) = picked() else { return };
+			shared.borrow_mut().drawing.remove_shape(li, si);
+			sync();
+		});
+	}
+	{
+		let dialog = dialog.clone();
+		close.on_click(move |_| dialog.end_modal(ID_CANCEL));
+	}
+	dialog.show_modal();
+}
+
+/// The Brush Library dialog (Design menu): the saved brushes by
+/// name, each spoken in full (width, color, pattern). Apply makes a
+/// brush the current one — new strokes are painted with it; Delete
+/// removes it from the library file.
+fn brushes_dialog(win: &Win, shared: &Shared) {
+	let frame = win.frame;
+	let dialog = Dialog::builder(&frame, "Brush Library").build();
+	let sizer = BoxSizer::builder(Orientation::Vertical).build();
+	let list = QuietList::new(&dialog, "Brush library");
+	sizer.add(&list, 1, SizerFlag::Expand | SizerFlag::All, 5);
+	let apply = Button::builder(&dialog).with_label("Apply").build();
+	let delete = Button::builder(&dialog).with_label("Delete").build();
+	let close = Button::builder(&dialog).with_label("Close").build();
+	let buttons = BoxSizer::builder(Orientation::Horizontal).build();
+	for b in [&apply, &delete, &close] {
+		buttons.add(b, 0, SizerFlag::All, 5);
+	}
+	sizer.add_sizer(&buttons, 0, SizerFlag::All, 5);
+	dialog.set_sizer(sizer, true);
+	let list = Rc::new(list);
+	let rows = |state: &State| -> Vec<(usize, String)> {
+		state.brushes.brushes.iter().enumerate().map(|(i, b)| (i, b.spoken())).collect()
+	};
+	{
+		let state = shared.borrow();
+		list.update_labelled(rows(&state), Select::Start);
+	}
+	{
+		let (list, shared) = (list.clone(), shared.clone());
+		apply.on_click(move |_| {
+			let Some(i) = list.selected() else { return };
+			let mut state = shared.borrow_mut();
+			let Some(brush) = state.brushes.brushes.get(i).cloned() else { return };
+			let spoken = brush.spoken();
+			state.brush = brush;
+			frame.set_status_text(
+				&format!("Brush applied: {spoken}. New strokes will use it."),
+				0,
+			);
+		});
+	}
+	{
+		let (list, shared) = (list.clone(), shared.clone());
+		delete.on_click(move |_| {
+			let Some(i) = list.selected() else { return };
+			let mut state = shared.borrow_mut();
+			let Some(brush) = state.brushes.brushes.get(i).cloned() else { return };
+			let name = brush.name.clone();
+			state.brushes.remove(&name);
+			if let Err(e) = std::fs::write(brush_file_path(), state.brushes.to_text()) {
+				frame.set_status_text(&format!("The brush library could not be saved: {e}"), 0);
+				return;
+			}
+			let rows_now = state.brushes.brushes
+				.iter()
+				.enumerate()
+				.map(|(j, b)| (j, b.spoken()))
+				.collect::<Vec<(usize, String)>>();
+			drop(state);
+			list.update_labelled(rows_now, Select::Keep);
+			frame.set_status_text(&format!("Deleted brush \"{name}\" from the library."), 0);
 		});
 	}
 	{
@@ -1077,68 +1517,176 @@ fn dispatch(win: &Win, shared: &Shared, id: Id) {
 			} else {
 				ShapeKind::Ellipse
 			};
-			let fill = {
+			let setup = {
 				let state = shared.borrow();
-				selected_color(win, &state).map(|c| (c, state.color_format))
+				selected_color(win, &state)
+					.map(|c| (c, state.color_format, (state.drawing.width, state.drawing.height)))
 			};
-			let Some((fill, format)) = fill else {
+			let Some((fill, format, canvas)) = setup else {
 				frame.set_status_text("Select a palette color to fill the shape first.", 0);
 				return;
 			};
-			if let Some(v) = numbers_dialog(
-				&frame,
+			if let Some((x, y, w, h, color)) = place_dialog(
+				win,
 				&format!("Add {} filled with {}", kind.name(), describe_in(fill, format)),
-				&[
-					("X position", 0, 8000, 0),
-					("Y position", 0, 8000, 0),
-					("Width", 1, 8000, 200),
-					("Height", 1, 8000, 120),
-				],
+				(0, 0),
+				(200, 120),
+				fill,
+				canvas,
 			) {
 				let mut state = shared.borrow_mut();
 				let layer = state.layer;
-				state.drawing.add_shape(
+				let index = state.drawing.add_shape(layer, Shape::new(kind, x, y, w, h, color));
+				refresh_lists(win, &state);
+				if let Some(index) = index {
+					speak_added(win, &state, layer, index);
+				}
+			}
+		}
+		ID_ADD_TEXT => {
+			let Some(phrase) = text_dialog(&frame, "Add text", "Text to place in the design", "")
+			else {
+				return;
+			};
+			if phrase.trim().is_empty() {
+				frame.set_status_text("The text was empty; nothing was added.", 0);
+				return;
+			}
+			let Some(font) = text_dialog(&frame, "Add text", "Font name", "Arial") else {
+				return;
+			};
+			let Some(v) = numbers_dialog(
+				&frame,
+				"Add text",
+				&[("Font size in points", 6, 200, 24)],
+			) else {
+				return;
+			};
+			let size = v[0] as u32;
+			let setup = {
+				let state = shared.borrow();
+				(
+					selected_color(win, &state).unwrap_or(Srgb::BLACK),
+					(state.drawing.width, state.drawing.height),
+				)
+			};
+			// The prefilled box hugs the phrase at the chosen size.
+			let est = (
+				(phrase.chars().count() as u32 * size * 3 / 5).max(10),
+				(size * 7 / 5).max(10),
+			);
+			if let Some((x, y, w, h, color)) = place_dialog(
+				win,
+				&format!("Add text \"{}\"", phrase.trim()),
+				(0, 0),
+				est,
+				setup.0,
+				setup.1,
+			) {
+				let mut state = shared.borrow_mut();
+				let layer = state.layer;
+				let index = state.drawing.add_shape(
 					layer,
-					Shape::new(kind, v[0], v[1], v[2] as u32, v[3] as u32, fill),
+					Shape::text(phrase.trim(), font.trim(), size, x, y, w, h, color),
 				);
 				refresh_lists(win, &state);
-				announce(win, &state);
+				if let Some(index) = index {
+					speak_added(win, &state, layer, index);
+				}
+			}
+		}
+		ID_ADD_IMAGE => {
+			let Some(path) = file_dialog(
+				&frame,
+				"Choose an image to place in the design",
+				"Image files (*.png;*.jpg;*.jpeg;*.webp)|*.png;*.jpg;*.jpeg;*.webp",
+				false,
+			) else {
+				return;
+			};
+			let setup = {
+				let state = shared.borrow();
+				(
+					selected_color(win, &state).unwrap_or(Srgb::new(128, 128, 128)),
+					(state.drawing.width, state.drawing.height),
+				)
+			};
+			if let Some((x, y, w, h, color)) = place_dialog(
+				win,
+				"Add image (the color is its placeholder, shown when the file is missing)",
+				(0, 0),
+				(200, 150),
+				setup.0,
+				setup.1,
+			) {
+				let mut state = shared.borrow_mut();
+				let layer = state.layer;
+				let index =
+					state.drawing.add_shape(layer, Shape::image(&path, x, y, w, h, color));
+				refresh_lists(win, &state);
+				if let Some(index) = index {
+					speak_added(win, &state, layer, index);
+				}
 			}
 		}
 		ID_ADD_STROKE => {
-			let fill = {
-				let state = shared.borrow();
-				selected_color(win, &state).map(|c| (c, state.color_format))
-			};
-			let Some((fill, format)) = fill else {
-				frame.set_status_text("Select a palette color for the stroke first.", 0);
-				return;
-			};
-			if let Some(text) = text_dialog(
+			// The stroke is painted with the current brush: its width,
+			// color and pattern prefill the dialog, and whatever is
+			// used becomes the current brush for the next stroke.
+			let brush = shared.borrow().brush.clone();
+			let Some(text) = text_dialog(
 				&frame,
-				&format!("Add stroke in {}", describe_in(fill, format)),
+				"Add stroke",
 				"Points as x,y pairs, separated by spaces (for example: 10,20 100,20 100,80)",
 				"10,10 200,10 200,100",
-			) {
-				match parse_points(&text) {
-					Some(points) if points.len() >= 2 => {
-						if let Some(v) = numbers_dialog(
-							&frame,
-							"Brush width",
-							&[("Brush width in pixels", 1, 200, 3)],
-						) {
-							let mut state = shared.borrow_mut();
-							let layer = state.layer;
-							state.drawing.add_shape(layer, Shape::stroke(points, v[0] as u32, fill));
-							refresh_lists(win, &state);
-							announce(win, &state);
-						}
-					}
-					_ => frame.set_status_text(
-						"Points need to be x,y pairs, at least two of them, whole numbers.",
-						0,
-					),
-				}
+			) else {
+				return;
+			};
+			let Some(points) = parse_points(&text).filter(|p| p.len() >= 2) else {
+				frame.set_status_text(
+					"Points need to be x,y pairs, at least two of them, whole numbers.",
+					0,
+				);
+				return;
+			};
+			let Some(v) = fields_dialog(
+				&frame,
+				"Stroke brush",
+				&[
+					("Brush width in pixels", &brush.width.to_string()),
+					("Color: a name like sky blue, or a hex code", &brush.color.to_hex()),
+					("Pattern: solid, dashed or dotted", &brush.pattern),
+				],
+			) else {
+				return;
+			};
+			let Some(width) = v[0].trim().parse::<u32>().ok().filter(|w| (1..=200).contains(w))
+			else {
+				frame.set_status_text("The brush width needs to be a whole number from 1 to 200.", 0);
+				return;
+			};
+			let Some(color) = parse_color(&v[1]) else {
+				frame.set_status_text(
+					"I could not understand that color. Use a name like sky blue, or a hex code like 87CEEB.",
+					0,
+				);
+				return;
+			};
+			let pattern = v[2].trim().to_lowercase();
+			if !PATTERNS.contains(&pattern.as_str()) {
+				frame.set_status_text("The pattern needs to be solid, dashed or dotted.", 0);
+				return;
+			}
+			let mut state = shared.borrow_mut();
+			let brush_name = state.brush.name.clone();
+			state.brush = Brush::new(&brush_name, width, color, &pattern);
+			let layer = state.layer;
+			let mut shape = Shape::stroke(points, width, color);
+			shape.pattern = pattern;
+			let index = state.drawing.add_shape(layer, shape);
+			refresh_lists(win, &state);
+			if let Some(index) = index {
+				speak_added(win, &state, layer, index);
 			}
 		}
 		ID_MOVE_SHAPE | ID_ROTATE_SHAPE => {
@@ -1152,18 +1700,31 @@ fn dispatch(win: &Win, shared: &Shared, id: Id) {
 			};
 			let Some((li, si)) = at else { return };
 			if id == ID_MOVE_SHAPE {
-				if let Some(v) = numbers_dialog(
+				let (cur, canvas) = {
+					let state = shared.borrow();
+					let s = &state.drawing.layers[li].shapes[si];
+					((s.x, s.y), (state.drawing.width, state.drawing.height))
+				};
+				if let Some(v) = fields_dialog(
 					&frame,
-					"Move shape (shift)",
-					&[
-						("Shift across in pixels (negative moves left)", -8000, 8000, 0),
-						("Shift down in pixels (negative moves up)", -8000, 8000, 0),
-					],
+					"Move shape",
+					&[(
+						"New position: numbers like 120, 80, or words like top left, center, a bit right",
+						&format!("{}, {}", cur.0, cur.1),
+					)],
 				) {
-					let mut state = shared.borrow_mut();
-					state.drawing.shift_shape(li, si, v[0], v[1]);
-					refresh_lists(win, &state);
-					announce(win, &state);
+					match parse_position(&v[0], canvas.0, canvas.1, Some(cur)) {
+						Some((nx, ny)) => {
+							let mut state = shared.borrow_mut();
+							state.drawing.shift_shape(li, si, nx - cur.0, ny - cur.1);
+							refresh_lists(win, &state);
+							announce(win, &state);
+						}
+						None => frame.set_status_text(
+							"I could not understand that position. Use numbers like 120, 80, or words like top left, center, a bit right.",
+							0,
+						),
+					}
 				}
 			} else {
 				let now = {
@@ -1201,15 +1762,26 @@ fn dispatch(win: &Win, shared: &Shared, id: Id) {
 				frame.set_status_text("A stroke's size is its points; move it or add a new one.", 0);
 				return;
 			}
-			if let Some(v) = numbers_dialog(
+			if let Some(v) = fields_dialog(
 				&frame,
 				"Resize shape",
-				&[("Width", 1, 8000, w as i32), ("Height", 1, 8000, h as i32)],
+				&[(
+					"New size: numbers like 200 by 100, or words like a bit wider, a bit taller",
+					&format!("{w} by {h}"),
+				)],
 			) {
-				let mut state = shared.borrow_mut();
-				state.drawing.resize_shape(li, si, v[0] as u32, v[1] as u32);
-				refresh_lists(win, &state);
-				announce(win, &state);
+				match parse_size(&v[0], Some((w, h))) {
+					Some((nw, nh)) => {
+						let mut state = shared.borrow_mut();
+						state.drawing.resize_shape(li, si, nw, nh);
+						refresh_lists(win, &state);
+						announce(win, &state);
+					}
+					None => frame.set_status_text(
+						"I could not understand that size. Use numbers like 200 by 100, or words like a bit wider.",
+						0,
+					),
+				}
 			}
 		}
 		ID_RECOLOR_SHAPE => {
@@ -1230,6 +1802,43 @@ fn dispatch(win: &Win, shared: &Shared, id: Id) {
 			let state = shared.borrow();
 			refresh_lists(win, &state);
 		}
+		ID_ELEMENTS => {
+			elements_dialog(win, shared);
+			let state = shared.borrow();
+			refresh_lists(win, &state);
+		}
+		ID_SAVE_BRUSH => {
+			let current = shared.borrow().brush.clone();
+			let default = if current.name.is_empty() {
+				"My brush".to_string()
+			} else {
+				current.name.clone()
+			};
+			if let Some(name) = text_dialog(
+				&frame,
+				"Save current brush",
+				&format!(
+					"Name for this brush ({} pixel, {}, {} pattern)",
+					current.width,
+					chroma_core::color_words(current.color),
+					current.pattern
+				),
+				&default,
+			) {
+				if name.trim().is_empty() {
+					frame.set_status_text("The brush was not saved: it needs a name.", 0);
+					return;
+				}
+				let mut state = shared.borrow_mut();
+				let brush = Brush::new(name.trim(), current.width, current.color, &current.pattern);
+				let spoken = brush.spoken();
+				state.brush = brush.clone();
+				state.brushes.save(brush);
+				persist_brushes(win, &state);
+				frame.set_status_text(&format!("Saved brush: {spoken}."), 0);
+			}
+		}
+		ID_BRUSHES => brushes_dialog(win, shared),
 		ID_REMOVE_SHAPE => {
 			let mut state = shared.borrow_mut();
 			if let Some(flat) = win.shapes_list.selected() {
@@ -1282,6 +1891,8 @@ fn build_menus(frame: &Frame) {
 		.append_item(ID_ADD_RECT, "Add &Rectangle…", "")
 		.append_item(ID_ADD_ELLIPSE, "Add &Ellipse…", "")
 		.append_item(ID_ADD_STROKE, "Add Stro&ke…", "")
+		.append_item(ID_ADD_TEXT, "Add &Text…", "")
+		.append_item(ID_ADD_IMAGE, "Add &Image…", "")
 		.append_item(ID_SET_BACKGROUND, "Set &Background to Selected Color", "")
 		.append_separator()
 		.append_item(ID_MOVE_SHAPE, "&Move Selected Shape…", "")
@@ -1290,7 +1901,11 @@ fn build_menus(frame: &Frame) {
 		.append_item(ID_RECOLOR_SHAPE, "Set Selected Shape to Palette &Color", "")
 		.append_item(ID_REMOVE_SHAPE, "Remove Selected Sha&pe", "")
 		.append_separator()
+		.append_item(ID_ELEMENTS, "E&lements…", "")
 		.append_item(ID_LAYERS, "&Layers…", "")
+		.append_separator()
+		.append_item(ID_SAVE_BRUSH, "Save Current Br&ush…", "")
+		.append_item(ID_BRUSHES, "Brush Li&brary…", "")
 		.build();
 	let view = Menu::builder()
 		.append_check_item(ID_FORMAT_HEX, "Color Values as &Hex", "")
@@ -1392,6 +2007,8 @@ fn main() {
 			layer: 0,
 			sound_cues: true,
 			color_format: ColorFormat::Hex,
+			brush: Brush::new("", 3, start, "solid"),
+			brushes: load_brushes(),
 		}));
 		let win = Rc::new(Win {
 			frame,

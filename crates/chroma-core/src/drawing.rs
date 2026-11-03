@@ -120,6 +120,20 @@ impl Drawing {
 			.caption_for(shape)
 	}
 
+	/// The shape's caption as the flat design computes it (its own
+	/// caption when it has one, else the generated one).
+	pub fn description_of(&self, shape: &Shape) -> String {
+		self.caption_of(shape)
+	}
+
+	/// The shape's automatic plain-language description (see
+	/// `Design::describe_plain`): what the elements list shows and the
+	/// app speaks when a shape is created without a caption.
+	pub fn plain_of(&self, shape: &Shape) -> String {
+		Design { width: self.width, height: self.height, background: self.background, shapes: Vec::new() }
+			.describe_plain(shape)
+	}
+
 	pub fn set_canvas(&mut self, width: u32, height: u32) {
 		self.width = width;
 		self.height = height;
@@ -363,6 +377,27 @@ mod tests {
 		let img = d.flatten().render();
 		assert_eq!(img.get_pixel(10, 5), &image::Rgb([200, 40, 30]));
 		assert_eq!(img.get_pixel(10, 10), &image::Rgb([255, 255, 255]));
+	}
+
+	#[test]
+	fn text_and_image_shapes_live_in_layers_and_the_log() {
+		let mut d = Drawing::new(800, 600, Srgb::WHITE);
+		d.add_shape(0, Shape::text("Title", "Arial", 32, 10, 10, 200, 40, Srgb::BLACK));
+		d.add_shape(0, Shape::image("photo.png", 0, 100, 100, 80, red()));
+		// Both kinds resize by their box and shift like other shapes.
+		assert!(d.resize_shape(0, 0, 300, 50));
+		assert!(d.shift_shape(0, 1, 5, 5));
+		let steps: Vec<String> = d.log.iter().map(|e| e.describe(&d)).collect();
+		// The text shape's log line reads its phrase (its caption).
+		assert!(steps[3].contains("Title"), "{}", steps[3]);
+		assert!(steps[4].contains("image from file photo.png"), "{}", steps[4]);
+		let plain = d.plain_of(&d.layers[0].shapes[0]);
+		assert!(plain.contains("text \"Title\""), "{plain}");
+		assert!(plain.contains("32 point"), "{plain}");
+		// The flat design carries both kinds to the renderers.
+		let flat = d.flatten();
+		assert_eq!(flat.shapes.len(), 2);
+		assert_eq!(flat.shapes[1].kind, ShapeKind::Image);
 	}
 
 	#[test]

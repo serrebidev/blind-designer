@@ -28,7 +28,7 @@ pub struct Project {
 }
 
 /// A string as a quoted, escaped token.
-fn quote(s: &str) -> String {
+pub(crate) fn quote(s: &str) -> String {
 	let mut out = String::from("\"");
 	for c in s.chars() {
 		match c {
@@ -45,7 +45,7 @@ fn quote(s: &str) -> String {
 
 /// Split one line into tokens; a double-quoted token may contain
 /// spaces and backslash escapes.
-fn tokens(line: &str) -> Result<Vec<String>, String> {
+pub(crate) fn tokens(line: &str) -> Result<Vec<String>, String> {
 	let mut out = Vec::new();
 	let mut chars = line.chars().peekable();
 	loop {
@@ -98,11 +98,20 @@ fn hex(toks: &[String], i: usize) -> Result<Srgb, String> {
 
 /// The fields of one shape, in file order. Shared by the layer shape
 /// lines and the shape-added / shape-removed log events.
+///
+/// The first ten fields are the original format — every file written
+/// before text, image and patterned-brush shapes existed has exactly
+/// those ten, and still loads. The new kinds append their extra
+/// fields after them, only when they carry any: text appends the
+/// phrase, the font name and the point size; image appends the file
+/// path; a stroke appends its pattern name unless it is solid.
 fn shape_fields(s: &Shape) -> String {
 	let kind = match s.kind {
 		ShapeKind::Rectangle => "rectangle",
 		ShapeKind::Ellipse => "ellipse",
 		ShapeKind::Stroke => "stroke",
+		ShapeKind::Text => "text",
+		ShapeKind::Image => "image",
 	};
 	let points = if s.points.is_empty() {
 		"-".to_string()
@@ -113,7 +122,7 @@ fn shape_fields(s: &Shape) -> String {
 		None => "-".to_string(),
 		Some(c) => quote(c),
 	};
-	format!(
+	let mut out = format!(
 		"{kind} {} {} {} {} {} {:?} {} {points} {caption}",
 		s.x,
 		s.y,
@@ -122,17 +131,37 @@ fn shape_fields(s: &Shape) -> String {
 		s.fill.to_hex(),
 		s.angle,
 		s.brush
-	)
+	);
+	match s.kind {
+		ShapeKind::Text => {
+			out.push_str(&format!(
+				" {} {} {}",
+				quote(&s.text),
+				quote(&s.font),
+				s.font_size
+			));
+		}
+		ShapeKind::Image => {
+			out.push_str(&format!(" {}", quote(&s.image_path)));
+		}
+		ShapeKind::Stroke if !s.pattern.is_empty() && s.pattern != "solid" => {
+			out.push_str(&format!(" {}", quote(&s.pattern)));
+		}
+		_ => {}
+	}
+	out
 }
 
 fn parse_shape(toks: &[String]) -> Result<Shape, String> {
-	if toks.len() != 10 {
-		return Err(format!("a shape needs 10 fields, got {}", toks.len()));
+	if toks.len() < 10 {
+		return Err(format!("a shape needs at least 10 fields, got {}", toks.len()));
 	}
 	let kind = match toks[0].as_str() {
 		"rectangle" => ShapeKind::Rectangle,
 		"ellipse" => ShapeKind::Ellipse,
 		"stroke" => ShapeKind::Stroke,
+		"text" => ShapeKind::Text,
+		"image" => ShapeKind::Image,
 		other => return Err(format!("unknown shape kind: {other}")),
 	};
 	let points = if toks[8] == "-" {
@@ -149,7 +178,7 @@ fn parse_shape(toks: &[String]) -> Result<Shape, String> {
 			})
 			.collect::<Result<Vec<(i32, i32)>, String>>()?
 	};
-	Ok(Shape {
+	let mut shape = Shape {
 		kind,
 		x: num(&toks, 1, "shape x")?,
 		y: num(&toks, 2, "shape y")?,
@@ -160,7 +189,43 @@ fn parse_shape(toks: &[String]) -> Result<Shape, String> {
 		brush: num(&toks, 7, "brush width")?,
 		angle: num(&toks, 6, "angle")?,
 		caption: if toks[9] == "-" { None } else { Some(toks[9].clone()) },
-	})
+		pattern: String::new(),
+		text: String::new(),
+		font: String::new(),
+		font_size: 0,
+		image_path: String::new(),
+	};
+	// The appended fields of the newer kinds; absent in old files.
+	match kind {
+		ShapeKind::Text => {
+			if toks.len() != 13 {
+				return Err(format!("a text shape needs 13 fields, got {}", toks.len()));
+			}
+			shape.text = toks[10].clone();
+			shape.font = toks[11].clone();
+			shape.font_size = num(&toks, 12, "font size")?;
+		}
+		ShapeKind::Image => {
+			if toks.len() != 11 {
+				return Err(format!("an image shape needs 11 fields, got {}", toks.len()));
+			}
+			shape.image_path = toks[10].clone();
+		}
+		ShapeKind::Stroke => {
+			if toks.len() > 11 {
+				return Err(format!("a stroke needs at most 11 fields, got {}", toks.len()));
+			}
+			if toks.len() == 11 {
+				shape.pattern = toks[10].clone();
+			}
+		}
+		_ => {
+			if toks.len() != 10 {
+				return Err(format!("a shape needs 10 fields, got {}", toks.len()));
+			}
+		}
+	}
+	Ok(shape)
 }
 
 fn provenance_fields(p: &Provenance) -> String {
@@ -509,6 +574,55 @@ mod tests {
 		assert_eq!(back.to_text(), project.to_text());
 		assert_eq!(back.drawing.layers.len(), 1);
 		assert_eq!(back.drawing.log.len(), 3);
+	}
+
+	#[test]
+	fn text_image_and_patterned_shapes_round_trip() {
+		let mut d = Drawing::new(800, 600, Srgb::WHITE);
+		d.add_shape(0, Shape::text("Hello world", "Comic Sans MS", 28, 10, 20, 300, 40, Srgb::BLACK));
+		d.add_shape(0, Shape::image("/pics/my photo.png", 50, 60, 200, 100, Srgb::new(255, 0, 0)));
+		let mut dashed = Shape::stroke(vec![(1, 1), (90, 90)], 5, Srgb::new(0, 0, 255));
+		dashed.pattern = "dashed".to_string();
+		d.add_shape(0, dashed);
+		let project = Project { drawing: d, palette: Vec::new() };
+		let text = project.to_text();
+		let back = Project::from_text(&text).expect("the new kinds read back");
+		assert_eq!(back.to_text(), text);
+		let shapes = &back.drawing.layers[0].shapes;
+		assert_eq!(shapes[0].kind, ShapeKind::Text);
+		assert_eq!(shapes[0].text, "Hello world");
+		assert_eq!(shapes[0].font, "Comic Sans MS");
+		assert_eq!(shapes[0].font_size, 28);
+		assert_eq!(shapes[1].kind, ShapeKind::Image);
+		assert_eq!(shapes[1].image_path, "/pics/my photo.png");
+		assert_eq!(shapes[2].pattern, "dashed");
+	}
+
+	#[test]
+	fn files_written_before_the_new_kinds_still_load() {
+		// A hand-written project in the original ten-field shape
+		// format: one rectangle, one plain stroke, one log event.
+		let legacy = "\
+blind-designer-project 1
+canvas 100 80
+background #FFFFFF
+palette 0
+layers 1
+layer \"Layer 1\" visible 2
+shape rectangle 1 2 30 40 #FF0000 0 3 - -
+shape stroke 5 5 10 10 #0000FF 0 2 5,5;15,15 \"a stroke\"
+log 1
+event canvas 100 80
+end
+";
+		let project = Project::from_text(legacy).expect("a legacy file loads");
+		let shapes = &project.drawing.layers[0].shapes;
+		assert_eq!(shapes.len(), 2);
+		assert_eq!(shapes[0].kind, ShapeKind::Rectangle);
+		assert_eq!(shapes[0].pattern, "");
+		assert_eq!(shapes[1].kind, ShapeKind::Stroke);
+		assert_eq!(shapes[1].points, vec![(5, 5), (15, 15)]);
+		assert_eq!(shapes[1].caption.as_deref(), Some("a stroke"));
 	}
 
 	#[test]

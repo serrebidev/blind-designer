@@ -24,6 +24,9 @@ use chroma_core::palette::{PaletteColor, Provenance};
 use chroma_core::plain::{parse_color, parse_position, parse_size};
 use chroma_core::project::Project;
 use chroma_core::sound::{cue_at, cue_for_shape, tone_wav, Cue};
+use chroma_core::symbols;
+use chroma_core::tactile::{compare_images, tactile_grid};
+use chroma_core::templates;
 use chroma_core::web::{import_html, parse_css_colors};
 use chroma_core::{describe_in, extract_palette, ColorFormat, Oklch, Srgb};
 use quiet_list::{QuietList, Select};
@@ -70,6 +73,14 @@ const ID_EXTRACT_IMAGE: Id = 112;
 const ID_EXPORT_GIF: Id = 113;
 const ID_EXPORT_ANIM_HTML: Id = 114;
 const ID_EXPORT_ANIM_DESC: Id = 115;
+const ID_TEMPLATES: Id = 116;
+const ID_EXPORT_TACTILE_SVG: Id = 117;
+const ID_EXPORT_TACTILE_SHEET: Id = 118;
+const ID_EXPORT_BRAILLE: Id = 119;
+const ID_COMPARE_IMAGES: Id = 120;
+const ID_TACTILE_GRID: Id = 121;
+const ID_DESCRIBE_AREA: Id = 318;
+const ID_ADD_SYMBOL: Id = 319;
 const ID_ABOUT: Id = 401;
 const ID_DICTIONARY: Id = 402;
 const ID_HELP_FILE: Id = 403;
@@ -102,6 +113,12 @@ const MENU_IDS: &[Id] = &[
 	ID_EXPORT_GIF,
 	ID_EXPORT_ANIM_HTML,
 	ID_EXPORT_ANIM_DESC,
+	ID_TEMPLATES,
+	ID_EXPORT_TACTILE_SVG,
+	ID_EXPORT_TACTILE_SHEET,
+	ID_EXPORT_BRAILLE,
+	ID_COMPARE_IMAGES,
+	ID_TACTILE_GRID,
 	ID_EXIT,
 	ID_COMPLEMENTARY,
 	ID_SPLIT,
@@ -129,6 +146,8 @@ const MENU_IDS: &[Id] = &[
 	ID_SAVE_BRUSH,
 	ID_BRUSHES,
 	ID_ANIMATION,
+	ID_DESCRIBE_AREA,
+	ID_ADD_SYMBOL,
 	ID_ABOUT,
 	ID_DICTIONARY,
 	ID_HELP_FILE,
@@ -1272,6 +1291,183 @@ fn help_dialog(win: &Win) {
 	dialog.show_modal();
 }
 
+/// A read-only report in a modal dialog: image comparisons and
+/// tactile grids land here, in a labelled multi-line text field a
+/// screen reader can read through at leisure. The dialog is modal,
+/// focus moves only by the user's own keys, and Close returns to
+/// the main window.
+fn report_dialog(win: &Win, title: &str, label: &str, text: &str) {
+	let frame = win.frame;
+	let dialog = Dialog::builder(&frame, title).with_size(680, 540).build();
+	let sizer = BoxSizer::builder(Orientation::Vertical).build();
+	let caption = StaticText::builder(&dialog).with_label(label).build();
+	sizer.add(&caption, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	let body = TextCtrl::builder(&dialog)
+		.with_style(TextCtrlStyle::MultiLine | TextCtrlStyle::ReadOnly)
+		.build();
+	body.set_value(text);
+	sizer.add(&body, 1, SizerFlag::Expand | SizerFlag::All, 5);
+	let close = Button::builder(&dialog).with_label("Close").build();
+	sizer.add(&close, 0, SizerFlag::All, 5);
+	dialog.set_sizer(sizer, true);
+	{
+		let dialog = dialog.clone();
+		close.on_click(move |_| dialog.end_modal(ID_CANCEL));
+	}
+	dialog.show_modal();
+}
+
+fn template_rows() -> Vec<(usize, String)> {
+	templates::TEMPLATE_NAMES
+		.iter()
+		.enumerate()
+		.map(|(i, name)| {
+			let count = templates::template(name)
+				.map(|d| d.layers.iter().map(|l| l.shapes.len()).sum::<usize>())
+				.unwrap_or(0);
+			(i, format!("{name}: {count} elements on an 800 by 600 canvas"))
+		})
+		.collect()
+}
+
+/// The Templates dialog (File, New from Template): the built-in
+/// starter designs, listed with their element counts. Loading one
+/// replaces the current drawing — the template is an ordinary
+/// design from then on: it edits, saves and exports like anything
+/// drawn by hand. The list is labelled "Templates".
+fn templates_dialog(win: &Win, shared: &Shared) {
+	let frame = win.frame;
+	let dialog = Dialog::builder(&frame, "New from Template").build();
+	let sizer = BoxSizer::builder(Orientation::Vertical).build();
+	let list = QuietList::new(&dialog, "Templates");
+	sizer.add(&list, 1, SizerFlag::Expand | SizerFlag::All, 5);
+	let load = Button::builder(&dialog).with_label("Load Template").build();
+	let close = Button::builder(&dialog).with_label("Close").build();
+	let buttons = BoxSizer::builder(Orientation::Horizontal).build();
+	buttons.add(&load, 0, SizerFlag::All, 5);
+	buttons.add(&close, 0, SizerFlag::All, 5);
+	sizer.add_sizer(&buttons, 0, SizerFlag::All, 5);
+	dialog.set_sizer(sizer, true);
+	let list = Rc::new(list);
+	list.update_labelled(template_rows(), Select::Start);
+	{
+		let (list, shared, dialog) = (list.clone(), shared.clone(), dialog.clone());
+		load.on_click(move |_| {
+			let Some(i) = list.selected() else { return };
+			let name = templates::TEMPLATE_NAMES[i];
+			if let Some(design) = templates::template(name) {
+				let mut state = shared.borrow_mut();
+				state.drawing = design;
+				state.layer = 0;
+				drop(state);
+				frame.set_status_text(
+					&format!("Started a new design from the {name} template. It is a normal design now: edit it, then Save Design to keep it."),
+					0,
+				);
+				dialog.end_modal(ID_OK);
+			}
+		});
+	}
+	{
+		let dialog = dialog.clone();
+		close.on_click(move |_| dialog.end_modal(ID_CANCEL));
+	}
+	dialog.show_modal();
+}
+
+/// The Symbols dialog (Design, Add Symbol): the starter symbol
+/// stamps. Adding one asks where it goes and how big, in numbers or
+/// plain words like every other element, then stamps its strokes
+/// onto the current layer under one shared caption. The list is
+/// labelled "Symbols"; the dialog stays open so several symbols can
+/// be added in one visit.
+fn symbols_dialog(win: &Win, shared: &Shared) {
+	let frame = win.frame;
+	let dialog = Dialog::builder(&frame, "Add Symbol").build();
+	let sizer = BoxSizer::builder(Orientation::Vertical).build();
+	let list = QuietList::new(&dialog, "Symbols");
+	sizer.add(&list, 1, SizerFlag::Expand | SizerFlag::All, 5);
+	let add = Button::builder(&dialog).with_label("Add Symbol\u{2026}").build();
+	let close = Button::builder(&dialog).with_label("Close").build();
+	let buttons = BoxSizer::builder(Orientation::Horizontal).build();
+	buttons.add(&add, 0, SizerFlag::All, 5);
+	buttons.add(&close, 0, SizerFlag::All, 5);
+	sizer.add_sizer(&buttons, 0, SizerFlag::All, 5);
+	dialog.set_sizer(sizer, true);
+	let rows: Vec<(usize, String)> = symbols::SYMBOL_NAMES
+		.iter()
+		.enumerate()
+		.map(|(i, name)| (i, format!("{name} symbol")))
+		.collect();
+	let list = Rc::new(list);
+	list.update_labelled(rows, Select::Start);
+	{
+		let (list, shared) = (list.clone(), shared.clone());
+		add.on_click(move |_| {
+			let Some(i) = list.selected() else { return };
+			let name = symbols::SYMBOL_NAMES[i];
+			let (canvas, color) = {
+				let state = shared.borrow();
+				((state.drawing.width, state.drawing.height), state.brush.color)
+			};
+			// The same three questions place_dialog asks, in the
+			// fields form dialogs can use: numbers or plain words.
+			let Some(v) = fields_dialog(
+				&frame,
+				&format!("Add {name} symbol"),
+				&[
+					(
+						"Position: numbers like 120, 80, or words like top left, center, a bit right",
+						"60, 60",
+					),
+					("Size: numbers like 200 by 100, or words like a bit wider, a bit taller", "100 by 100"),
+					("Color: a name like sky blue, or a hex code", &color.to_hex()),
+				],
+			) else {
+				return;
+			};
+			let (Some((x, y)), Some((w, h)), Some(color)) = (
+				parse_position(&v[0], canvas.0, canvas.1, Some((60, 60))),
+				parse_size(&v[1], Some((100, 100))),
+				parse_color(&v[2]),
+			) else {
+				frame.set_status_text(
+					"One of those fields did not parse. Position and size take numbers or plain words; color takes a name like sky blue or a hex code.",
+					0,
+				);
+				return;
+			};
+			let Some(paths) = symbols::symbol_paths(name, x, y, w, h) else { return };
+			let mut state = shared.borrow_mut();
+			let layer = state.layer;
+			let mut added = 0;
+			for path in paths {
+				let mut shape = Shape::stroke(path, 3, color);
+				shape.caption = Some(format!("{name} symbol"));
+				if state.drawing.add_shape(layer, shape).is_some() {
+					added += 1;
+				}
+			}
+			drop(state);
+			if added > 0 {
+				frame.set_status_text(
+					&format!(
+						"Added {name} symbol ({} stroke{}).",
+						added,
+						if added == 1 { "" } else { "s" }
+					),
+					0,
+				);
+			}
+		});
+	}
+	{
+		let dialog = dialog.clone();
+		close.on_click(move |_| dialog.end_modal(ID_CANCEL));
+	}
+	dialog.show_modal();
+}
+
 /// Extract a palette from an image the user picks: they choose how
 /// many colors (default 8, up to 64). With `set_background` the palette
 /// is replaced and the largest color becomes the design background
@@ -2057,6 +2253,143 @@ fn dispatch(win: &Win, shared: &Shared, id: Id) {
 			let state = shared.borrow();
 			refresh_lists(win, &state);
 		}
+		ID_TEMPLATES => {
+			templates_dialog(win, shared);
+			let state = shared.borrow();
+			refresh_lists(win, &state);
+		}
+		ID_ADD_SYMBOL => {
+			symbols_dialog(win, shared);
+			let state = shared.borrow();
+			refresh_lists(win, &state);
+		}
+		ID_DESCRIBE_AREA => {
+			if let Some(area) = text_dialog(
+				&frame,
+				"Describe area",
+				"Area: a name like top left, center, bottom right — or a box as across, down, width, height",
+				"center",
+			) {
+				let state = shared.borrow();
+				match state.drawing.describe_area_text(&area) {
+					Some(text) => report_dialog(
+						win,
+						"Describe area",
+						&format!("Elements in the {area} area"),
+						&text,
+					),
+					None => frame.set_status_text(
+						"I could not understand that area. Name a part of the canvas, like top left or center, or give a box as four numbers.",
+						0,
+					),
+				}
+			}
+		}
+		ID_EXPORT_TACTILE_SVG => {
+			if let Some(path) = file_dialog(
+				&frame,
+				"Export raised-line SVG (one line style per layer)",
+				"SVG drawing (*.svg)|*.svg",
+				true,
+			) {
+				let state = shared.borrow();
+				match std::fs::write(&path, state.drawing.to_tactile_svg()) {
+					Ok(()) => frame
+						.set_status_text(&format!("Exported raised-line SVG to {path}"), 0),
+					Err(e) => frame.set_status_text(&format!("Export failed: {e}"), 0),
+				}
+			}
+		}
+		ID_EXPORT_TACTILE_SHEET => {
+			if let Some(path) = file_dialog(
+				&frame,
+				"Export tactile sheet (element by element, in reading order)",
+				"Text file (*.txt)|*.txt",
+				true,
+			) {
+				let state = shared.borrow();
+				match std::fs::write(&path, state.drawing.tactile_sheet()) {
+					Ok(()) => frame
+						.set_status_text(&format!("Exported tactile sheet to {path}"), 0),
+					Err(e) => frame.set_status_text(&format!("Export failed: {e}"), 0),
+				}
+			}
+		}
+		ID_EXPORT_BRAILLE => {
+			if let Some(path) = file_dialog(
+				&frame,
+				"Export braille labels (Grade 1)",
+				"Braille labels (*.brf)|*.brf",
+				true,
+			) {
+				let state = shared.borrow();
+				match std::fs::write(&path, state.drawing.braille_labels()) {
+					Ok(()) => frame
+						.set_status_text(&format!("Exported braille labels to {path}"), 0),
+					Err(e) => frame.set_status_text(&format!("Export failed: {e}"), 0),
+				}
+			}
+		}
+		ID_COMPARE_IMAGES => {
+			let images = "Image files (*.png;*.jpg;*.jpeg;*.webp)|*.png;*.jpg;*.jpeg;*.webp";
+			if let Some(first_path) = file_dialog(&frame, "Choose the first image", images, false) {
+				if let Some(second_path) =
+					file_dialog(&frame, "Choose the second image", images, false)
+				{
+					let name = |p: &str| {
+						Path::new(p)
+							.file_name()
+							.map(|n| n.to_string_lossy().into_owned())
+							.unwrap_or_else(|| p.to_string())
+					};
+					match (image::open(&first_path), image::open(&second_path)) {
+						(Ok(a), Ok(b)) => report_dialog(
+							win,
+							"Image comparison",
+							"How the two images compare",
+							&compare_images(&a, &b).report(&name(&first_path), &name(&second_path)),
+						),
+						_ => frame.set_status_text(
+							"One of those files could not be read as an image.",
+							0,
+						),
+					}
+				}
+			}
+		}
+		ID_TACTILE_GRID => {
+			let images = "Image files (*.png;*.jpg;*.jpeg;*.webp)|*.png;*.jpg;*.jpeg;*.webp";
+			if let Some(path) = file_dialog(
+				&frame,
+				"Choose an image to feel as a tactile grid",
+				images,
+				false,
+			) {
+				if let Some(v) = numbers_dialog(
+					&frame,
+					"Tactile grid size",
+					&[("Columns", 1, 80, 24), ("Rows", 1, 60, 12)],
+				) {
+					match image::open(&path) {
+						Ok(img) => {
+							let grid = tactile_grid(&img, v[0] as u32, v[1] as u32);
+							let name = Path::new(&path)
+								.file_name()
+								.map(|n| n.to_string_lossy().into_owned())
+								.unwrap_or_else(|| path.clone());
+							report_dialog(
+								win,
+								"Tactile grid",
+								"The picture as a grid of shades",
+								&grid.sheet(&name),
+							);
+						}
+						Err(e) => frame
+							.set_status_text(&format!("Could not open that image: {e}"), 0),
+					}
+				}
+			}
+		}
 		ID_SAVE_BRUSH => {
 			let current = shared.borrow().brush.clone();
 			let default = if current.name.is_empty() {
@@ -2109,11 +2442,14 @@ fn build_menus(frame: &Frame) {
 	let file = Menu::builder()
 		.append_item(ID_OPEN_DESIGN, "Open &Design…", "")
 		.append_item(ID_SAVE_DESIGN, "&Save Design…", "")
+		.append_item(ID_TEMPLATES, "New from &Template…", "")
 		.append_separator()
 		.append_item(ID_OPEN_IMAGE, "&Open Image…\tCtrl+O", "")
 		.append_item(ID_EXTRACT_IMAGE, "&Extract Colors from Image…", "")
 		.append_item(ID_IMPORT_CSS, "Import &CSS Colors…", "")
 		.append_item(ID_IMPORT_HTML, "Import &HTML Design…", "")
+		.append_item(ID_COMPARE_IMAGES, "Compare I&mages…", "")
+		.append_item(ID_TACTILE_GRID, "Describe Image as &Tactile Grid…", "")
 		.append_separator()
 		.append_item(ID_EXPORT_PNG, "Export &PNG…\tCtrl+E", "")
 		.append_item(ID_EXPORT_CAPTIONS, "Export &Captions…", "")
@@ -2123,6 +2459,9 @@ fn build_menus(frame: &Frame) {
 		.append_item(ID_EXPORT_GIF, "Export Animated &GIF…", "")
 		.append_item(ID_EXPORT_ANIM_HTML, "Export Animated HTML…", "")
 		.append_item(ID_EXPORT_ANIM_DESC, "Export Animation &Description…", "")
+		.append_item(ID_EXPORT_TACTILE_SVG, "Export &Raised-Line SVG…", "")
+		.append_item(ID_EXPORT_TACTILE_SHEET, "Export Tactile &Sheet…", "")
+		.append_item(ID_EXPORT_BRAILLE, "Export &Braille Labels…", "")
 		.append_separator()
 		.append_item(ID_EXIT, "E&xit", "")
 		.build();
@@ -2146,6 +2485,7 @@ fn build_menus(frame: &Frame) {
 		.append_item(ID_ADD_STROKE, "Add Stro&ke…", "")
 		.append_item(ID_ADD_TEXT, "Add &Text…", "")
 		.append_item(ID_ADD_IMAGE, "Add &Image…", "")
+		.append_item(ID_ADD_SYMBOL, "Add S&ymbol…", "")
 		.append_item(ID_SET_BACKGROUND, "Set &Background to Selected Color", "")
 		.append_separator()
 		.append_item(ID_MOVE_SHAPE, "&Move Selected Shape…", "")
@@ -2157,6 +2497,7 @@ fn build_menus(frame: &Frame) {
 		.append_item(ID_ELEMENTS, "E&lements…", "")
 		.append_item(ID_LAYERS, "&Layers…", "")
 		.append_item(ID_ANIMATION, "Anim&ation…", "")
+		.append_item(ID_DESCRIBE_AREA, "&Describe Area…", "")
 		.append_separator()
 		.append_item(ID_SAVE_BRUSH, "Save Current Br&ush…", "")
 		.append_item(ID_BRUSHES, "Brush Li&brary…", "")

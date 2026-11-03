@@ -10,6 +10,7 @@
 use std::fmt;
 
 pub mod animation;
+pub mod braille;
 pub mod brushes;
 pub mod design;
 pub mod dictionary;
@@ -19,6 +20,9 @@ pub mod palette;
 pub mod plain;
 pub mod project;
 pub mod sound;
+pub mod symbols;
+pub mod tactile;
+pub mod templates;
 pub mod web;
 
 /// How a color value is written when it is spoken or displayed: the

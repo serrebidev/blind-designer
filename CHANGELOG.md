@@ -6,6 +6,29 @@ workflow.
 
 ## Unreleased
 
+- Tactile output (issue #2): File, Export Raised-Line SVG writes the
+  design as stroked outlines with a different line style per layer
+  and text elements as braille labels; File, Export Tactile Sheet
+  walks the design element by element in reading order with each
+  element's plain-language description, caption and braille label;
+  File, Export Braille Labels writes the elements' captions in
+  Grade 1 (uncontracted) braille, one numbered label per element.
+- Describe Area: Design, Describe Area names only the elements in
+  one part of the canvas — a named region (top left, center, …) or
+  a typed box — marking elements that are only partly inside.
+- Symbols: Design, Add Symbol stamps star, heart, arrow, check,
+  cross, sun and moon as ordinary strokes under one caption, placed
+  in numbers or plain words like any other element.
+- Templates: File, New from Template starts a design from a
+  birthday card, a simple house, a face, or a chart; a template is
+  an ordinary design that edits, saves and exports as usual.
+- Image comparison: File, Compare Images reports two pictures'
+  sizes, shared and unique palette colors, which is brighter, and
+  which is sharper (the blurrier one is named).
+- Tactile grid: File, Describe Image as Tactile Grid renders any
+  picture (a screenshot, say) as a coarse grid of shades — braille
+  shade patterns plus the same grid in words, row by row — with the
+  darkest and brightest parts named.
 - Animation: a design can be a short film of frames, each a full
   copy of the canvas with its own duration in milliseconds.
   Design, Animation lists the frames in plain language — what

@@ -6,6 +6,17 @@ workflow.
 
 ## Unreleased
 
+- Animation: a design can be a short film of frames, each a full
+  copy of the canvas with its own duration in milliseconds.
+  Design, Animation lists the frames in plain language — what
+  frame 1 shows, and what changed in each later frame ("the red
+  ellipse moves right 20 pixels") — and adds, duplicates, deletes,
+  reorders and re-times them, with Load into Canvas / Replace with
+  Canvas as the edit loop. Frames save inside .bdd files (older
+  files still open, as still designs). File gains three exports:
+  a looping animated GIF, an animated HTML page (CSS animation
+  plus the frame-by-frame description as readable text), and a
+  spoken-style animation description file.
 - Save and open designs: File, Save Design writes the whole design —
   canvas, background, layers, shapes, palette and the full step log —
   to a .bdd project file; File, Open Design reads it back.

@@ -15,6 +15,7 @@ use std::cell::RefCell;
 use std::path::Path;
 use std::rc::Rc;
 
+use chroma_core::animation::{MAX_FRAME_MS, MIN_FRAME_MS};
 use chroma_core::brushes::{Brush, BrushLibrary, PATTERNS};
 use chroma_core::design::{css_for_colors, Shape, ShapeKind};
 use chroma_core::dictionary;
@@ -58,6 +59,7 @@ const ID_ADD_IMAGE: Id = 313;
 const ID_ELEMENTS: Id = 314;
 const ID_SAVE_BRUSH: Id = 315;
 const ID_BRUSHES: Id = 316;
+const ID_ANIMATION: Id = 317;
 const ID_EXPORT_SUMMARY: Id = 106;
 const ID_EXPORT_HTML: Id = 107;
 const ID_IMPORT_CSS: Id = 108;
@@ -65,6 +67,9 @@ const ID_IMPORT_HTML: Id = 109;
 const ID_SAVE_DESIGN: Id = 110;
 const ID_OPEN_DESIGN: Id = 111;
 const ID_EXTRACT_IMAGE: Id = 112;
+const ID_EXPORT_GIF: Id = 113;
+const ID_EXPORT_ANIM_HTML: Id = 114;
+const ID_EXPORT_ANIM_DESC: Id = 115;
 const ID_ABOUT: Id = 401;
 const ID_DICTIONARY: Id = 402;
 const ID_HELP_FILE: Id = 403;
@@ -94,6 +99,9 @@ const MENU_IDS: &[Id] = &[
 	ID_SAVE_DESIGN,
 	ID_OPEN_DESIGN,
 	ID_EXTRACT_IMAGE,
+	ID_EXPORT_GIF,
+	ID_EXPORT_ANIM_HTML,
+	ID_EXPORT_ANIM_DESC,
 	ID_EXIT,
 	ID_COMPLEMENTARY,
 	ID_SPLIT,
@@ -120,6 +128,7 @@ const MENU_IDS: &[Id] = &[
 	ID_ELEMENTS,
 	ID_SAVE_BRUSH,
 	ID_BRUSHES,
+	ID_ANIMATION,
 	ID_ABOUT,
 	ID_DICTIONARY,
 	ID_HELP_FILE,
@@ -676,6 +685,182 @@ fn layers_dialog(win: &Win, shared: &Shared) {
 			frame.set_status_text(&format!("New shapes now land on layer \"{name}\"."), 0);
 			let state = shared.borrow();
 			list.update_labelled(layer_rows(&state), Select::Keep);
+		});
+	}
+	{
+		let dialog = dialog.clone();
+		close.on_click(move |_| dialog.end_modal(ID_CANCEL));
+	}
+	dialog.show_modal();
+}
+
+/// Animation frame rows, in play order: frame number, how long it
+/// shows, and its one-line description — what frame 1 shows, or what
+/// changed since the previous frame for every later frame (the
+/// descriptions core computes from the frames themselves).
+fn frame_rows(state: &State) -> Vec<(usize, String)> {
+	state
+		.drawing
+		.frames
+		.iter()
+		.enumerate()
+		.map(|(i, f)| {
+			(
+				i,
+				format!(
+					"Frame {}: {} milliseconds. {}",
+					i + 1,
+					f.duration_ms,
+					state.drawing.frame_change_description(i).unwrap_or_default()
+				),
+			)
+		})
+		.collect()
+}
+
+/// The Animation dialog (Design menu): the design's frames in play
+/// order, each described in plain language. The canvas is the
+/// working copy: Add Frame captures it as a new frame, Load brings
+/// a stored frame back onto the canvas for editing, and Replace
+/// stores the edited canvas back into the frame. Every change goes
+/// through the drawing, so it is logged and announced like
+/// everywhere else. The list is labelled "Animation frames"; the
+/// dialog is modal and closing it returns to the main window.
+fn animation_dialog(win: &Win, shared: &Shared) {
+	let frame = win.frame;
+	let dialog = Dialog::builder(&frame, "Animation").build();
+	let sizer = BoxSizer::builder(Orientation::Vertical).build();
+	let list = QuietList::new(&dialog, "Animation frames");
+	sizer.add(&list, 1, SizerFlag::Expand | SizerFlag::All, 5);
+	let add = Button::builder(&dialog).with_label("Add Frame (Copy of Canvas)").build();
+	let duplicate = Button::builder(&dialog).with_label("Duplicate").build();
+	let remove = Button::builder(&dialog).with_label("Delete").build();
+	let up = Button::builder(&dialog).with_label("Move Up").build();
+	let down = Button::builder(&dialog).with_label("Move Down").build();
+	let duration = Button::builder(&dialog).with_label("Set Duration\u{2026}").build();
+	let load = Button::builder(&dialog).with_label("Load into Canvas").build();
+	let replace = Button::builder(&dialog).with_label("Replace with Canvas").build();
+	let close = Button::builder(&dialog).with_label("Close").build();
+	let buttons = BoxSizer::builder(Orientation::Horizontal).build();
+	for b in [&add, &duplicate, &remove, &up, &down, &duration, &load, &replace, &close] {
+		buttons.add(b, 0, SizerFlag::All, 5);
+	}
+	sizer.add_sizer(&buttons, 0, SizerFlag::All, 5);
+	dialog.set_sizer(sizer, true);
+	let list = Rc::new(list);
+	{
+		let state = shared.borrow();
+		list.update_labelled(frame_rows(&state), Select::Start);
+		if state.drawing.frames.is_empty() {
+			frame.set_status_text(
+				"No animation frames yet. Add Frame captures the canvas as frame 1; change the canvas and capture again to build the film.",
+				0,
+			);
+		}
+	}
+	// Refresh the dialog list and speak the newest log entry.
+	let sync = {
+		let (list, shared) = (list.clone(), shared.clone());
+		move || {
+			let state = shared.borrow();
+			list.update_labelled(frame_rows(&state), Select::Keep);
+			if let Some(last) = state.drawing.log.last() {
+				frame.set_status_text(&last.describe(&state.drawing), 0);
+			}
+		}
+	};
+	let sync = Rc::new(sync);
+	{
+		let (shared, sync) = (shared.clone(), sync.clone());
+		add.on_click(move |_| {
+			shared.borrow_mut().drawing.add_frame();
+			sync();
+		});
+	}
+	{
+		let (list, shared, sync) = (list.clone(), shared.clone(), sync.clone());
+		duplicate.on_click(move |_| {
+			let Some(i) = list.selected() else { return };
+			shared.borrow_mut().drawing.duplicate_frame(i);
+			sync();
+		});
+	}
+	{
+		let (list, shared, sync) = (list.clone(), shared.clone(), sync.clone());
+		remove.on_click(move |_| {
+			let Some(i) = list.selected() else { return };
+			shared.borrow_mut().drawing.remove_frame(i);
+			sync();
+		});
+	}
+	{
+		let (list, shared, sync) = (list.clone(), shared.clone(), sync.clone());
+		up.on_click(move |_| {
+			let Some(i) = list.selected() else { return };
+			if shared.borrow_mut().drawing.move_frame(i, true) {
+				sync();
+			} else {
+				frame.set_status_text("That frame is already first.", 0);
+			}
+		});
+	}
+	{
+		let (list, shared, sync) = (list.clone(), shared.clone(), sync.clone());
+		down.on_click(move |_| {
+			let Some(i) = list.selected() else { return };
+			if shared.borrow_mut().drawing.move_frame(i, false) {
+				sync();
+			} else {
+				frame.set_status_text("That frame is already last.", 0);
+			}
+		});
+	}
+	{
+		let (list, shared, sync) = (list.clone(), shared.clone(), sync.clone());
+		duration.on_click(move |_| {
+			let Some(i) = list.selected() else { return };
+			let current = {
+				let state = shared.borrow();
+				let Some(f) = state.drawing.frames.get(i) else { return };
+				f.duration_ms
+			};
+			if let Some(v) = numbers_dialog(
+				&frame,
+				"Frame duration",
+				&[(
+					"Duration in milliseconds",
+					MIN_FRAME_MS as i32,
+					MAX_FRAME_MS as i32,
+					current as i32,
+				)],
+			) {
+				shared.borrow_mut().drawing.set_frame_duration(i, v[0] as u32);
+				sync();
+			}
+		});
+	}
+	{
+		let (list, shared, sync) = (list.clone(), shared.clone(), sync.clone());
+		load.on_click(move |_| {
+			let Some(i) = list.selected() else { return };
+			let mut state = shared.borrow_mut();
+			if state.drawing.load_frame(i) {
+				// The loaded frame may have fewer layers than the
+				// canvas had: keep the current-layer index in range.
+				if state.layer >= state.drawing.layers.len() {
+					state.layer = state.drawing.layers.len() - 1;
+				}
+				drop(state);
+				sync();
+			}
+		});
+	}
+	{
+		let (list, shared, sync) = (list.clone(), shared.clone(), sync.clone());
+		replace.on_click(move |_| {
+			let Some(i) = list.selected() else { return };
+			shared.borrow_mut().drawing.update_frame(i);
+			sync();
 		});
 	}
 	{
@@ -1352,6 +1537,66 @@ fn dispatch(win: &Win, shared: &Shared, id: Id) {
 				}
 			}
 		}
+		ID_EXPORT_GIF => {
+			if let Some(path) = file_dialog(
+				&frame,
+				"Export animation as a GIF",
+				"GIF image (*.gif)|*.gif",
+				true,
+			) {
+				let state = shared.borrow();
+				let count =
+					if state.drawing.frames.is_empty() { 1 } else { state.drawing.frames.len() };
+				match state.drawing.to_gif() {
+					Ok(bytes) => match std::fs::write(&path, &bytes) {
+						Ok(()) => frame.set_status_text(
+							&format!("Exported animated GIF ({count} frames) to {path}"),
+							0,
+						),
+						Err(e) => {
+							frame.set_status_text(&format!("Export failed: {e}"), 0)
+						}
+					},
+					Err(e) => frame.set_status_text(&format!("Export failed: {e}"), 0),
+				}
+			}
+		}
+		ID_EXPORT_ANIM_HTML => {
+			if let Some(path) = file_dialog(
+				&frame,
+				"Export animation as an HTML page",
+				"HTML page (*.html)|*.html",
+				true,
+			) {
+				let state = shared.borrow();
+				match std::fs::write(
+					&path,
+					state.drawing.to_html_animated("Blind Designer animation"),
+				) {
+					Ok(()) => {
+						frame.set_status_text(&format!("Exported animated HTML page to {path}"), 0)
+					}
+					Err(e) => frame.set_status_text(&format!("Export failed: {e}"), 0),
+				}
+			}
+		}
+		ID_EXPORT_ANIM_DESC => {
+			if let Some(path) = file_dialog(
+				&frame,
+				"Export animation description (frame by frame)",
+				"Text file (*.txt)|*.txt",
+				true,
+			) {
+				let state = shared.borrow();
+				match std::fs::write(&path, state.drawing.animation_description()) {
+					Ok(()) => frame.set_status_text(
+						&format!("Exported animation description to {path}"),
+						0,
+					),
+					Err(e) => frame.set_status_text(&format!("Export failed: {e}"), 0),
+				}
+			}
+		}
 		ID_IMPORT_CSS => {
 			if let Some(path) = file_dialog(
 				&frame,
@@ -1802,6 +2047,11 @@ fn dispatch(win: &Win, shared: &Shared, id: Id) {
 			let state = shared.borrow();
 			refresh_lists(win, &state);
 		}
+		ID_ANIMATION => {
+			animation_dialog(win, shared);
+			let state = shared.borrow();
+			refresh_lists(win, &state);
+		}
 		ID_ELEMENTS => {
 			elements_dialog(win, shared);
 			let state = shared.borrow();
@@ -1870,6 +2120,9 @@ fn build_menus(frame: &Frame) {
 		.append_item(ID_EXPORT_CSS, "Export C&SS…", "")
 		.append_item(ID_EXPORT_SUMMARY, "Export &Summary (recreation file)…", "")
 		.append_item(ID_EXPORT_HTML, "Export HT&ML Page…", "")
+		.append_item(ID_EXPORT_GIF, "Export Animated &GIF…", "")
+		.append_item(ID_EXPORT_ANIM_HTML, "Export Animated HTML…", "")
+		.append_item(ID_EXPORT_ANIM_DESC, "Export Animation &Description…", "")
 		.append_separator()
 		.append_item(ID_EXIT, "E&xit", "")
 		.build();
@@ -1903,6 +2156,7 @@ fn build_menus(frame: &Frame) {
 		.append_separator()
 		.append_item(ID_ELEMENTS, "E&lements…", "")
 		.append_item(ID_LAYERS, "&Layers…", "")
+		.append_item(ID_ANIMATION, "Anim&ation…", "")
 		.append_separator()
 		.append_item(ID_SAVE_BRUSH, "Save Current Br&ush…", "")
 		.append_item(ID_BRUSHES, "Brush Li&brary…", "")

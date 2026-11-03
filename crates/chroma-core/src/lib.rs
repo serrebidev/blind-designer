@@ -9,6 +9,7 @@
 
 use std::fmt;
 
+pub mod animation;
 pub mod brushes;
 pub mod design;
 pub mod dictionary;

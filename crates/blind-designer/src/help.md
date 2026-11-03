@@ -238,3 +238,43 @@ Design, Save Current Brush keeps it in the brush library under a
 name; Design, Brush Library lists the saved brushes, and Apply
 makes one current for the next strokes. The library is saved in a
 file beside the app, so your brushes are there next time.
+
+ANIMATION
+
+Design, Animation turns the design into a short film made of
+frames. A frame is a full copy of the canvas — layers, shapes and
+background — plus how long it shows, in milliseconds (500 to
+start). Build a film like this:
+
+1. Draw the first pose on the canvas.
+2. Open Design, Animation and choose Add Frame (Copy of Canvas).
+   Frame 1 is captured, and the list reads what it shows.
+3. Close the dialog, change the canvas — move a shape, recolor
+   it, add the next pose — then capture again.
+
+Each row of the Animation list says the frame's number, its
+duration, and in plain words what it shows (frame 1) or what
+changed since the frame before it: "the red ellipse moves right
+20 pixels", "a new shape appears", "the background changes from
+white to black". Duplicate copies a frame, Delete removes one,
+Move Up and Move Down reorder the film, and Set Duration changes
+how long the selected frame shows (20 to 60000 milliseconds).
+
+To edit a stored frame, select it and choose Load into Canvas:
+the canvas becomes that frame. Change it, open the dialog again
+and choose Replace with Canvas to store the edit back (the frame
+keeps its duration). Until you replace it, canvas edits never
+touch a stored frame. Every frame step is written into the
+design's log, and frames are saved inside .bdd design files —
+designs saved before animation existed open as still designs.
+
+Three exports play or tell the film, all under File:
+
+- Export Animated GIF writes a looping animated GIF, one picture
+  per frame, each shown for its own duration.
+- Export Animated HTML writes a standalone web page that steps
+  through the frames with a CSS animation — and lists the
+  frame-by-frame description as readable text under the stage.
+- Export Animation Description writes the film as words: every
+  frame in order, with its duration and what it shows or what
+  changed, ready to read or send.

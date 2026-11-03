@@ -7,6 +7,7 @@
 //! is the design's memory: read top to bottom, it is the recipe that
 //! recreates the image exactly, and it is what the summary export writes.
 
+use crate::animation::Frame;
 use crate::design::{Design, Shape, ShapeKind};
 use crate::{describe, Srgb};
 
@@ -40,6 +41,13 @@ pub enum Event {
 	ShapeRotated { layer: String, index: usize, angle: f64 },
 	ShapeRecolored { layer: String, index: usize, color: Srgb },
 	ShapeCaptioned { layer: String, index: usize },
+	FrameAdded { index: usize, duration_ms: u32 },
+	FrameDuplicated { index: usize },
+	FrameRemoved { index: usize },
+	FrameMoved { from: usize, to: usize },
+	FrameDurationSet { index: usize, duration_ms: u32 },
+	FrameLoaded { index: usize },
+	FrameUpdated { index: usize },
 }
 
 impl Event {
@@ -85,6 +93,33 @@ impl Event {
 				"On layer \"{layer}\", set the caption of shape {}.",
 				index + 1
 			),
+			Event::FrameAdded { index, duration_ms } => format!(
+				"Add animation frame {}: a copy of the canvas as it is now, shown for {duration_ms} milliseconds.",
+				index + 1
+			),
+			Event::FrameDuplicated { index } => {
+				format!("Duplicate animation frame {}.", index + 1)
+			}
+			Event::FrameRemoved { index } => {
+				format!("Remove animation frame {}.", index + 1)
+			}
+			Event::FrameMoved { from, to } => format!(
+				"Move animation frame {} to position {}.",
+				from + 1,
+				to + 1
+			),
+			Event::FrameDurationSet { index, duration_ms } => format!(
+				"Set animation frame {} to show for {duration_ms} milliseconds.",
+				index + 1
+			),
+			Event::FrameLoaded { index } => format!(
+				"Load animation frame {} onto the canvas for editing.",
+				index + 1
+			),
+			Event::FrameUpdated { index } => format!(
+				"Replace animation frame {} with the canvas as it is now.",
+				index + 1
+			),
 		}
 	}
 }
@@ -96,6 +131,11 @@ pub struct Drawing {
 	pub background: Srgb,
 	pub layers: Vec<Layer>,
 	pub log: Vec<Event>,
+	/// The animation frames, in play order: full snapshots of the
+	/// layers and background, captured by `add_frame` and friends
+	/// (see `crate::animation`). Empty means a static design — the
+	/// canvas itself is the only picture.
+	pub frames: Vec<Frame>,
 }
 
 impl Drawing {
@@ -108,6 +148,7 @@ impl Drawing {
 			background,
 			layers: vec![Layer::new("Layer 1")],
 			log: Vec::new(),
+			frames: Vec::new(),
 		};
 		d.log.push(Event::CanvasSet { width, height });
 		d.log.push(Event::BackgroundSet { color: background });

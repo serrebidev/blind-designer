@@ -3,8 +3,11 @@
 //! The file holds everything the app state holds: the canvas, the
 //! background, every layer with its shapes (captions, angles, brush
 //! widths, stroke points), the palette with each color's provenance,
-//! and the full event log — so an opened design is the same design,
-//! history included, not just the same picture.
+//! the full event log, and — when the design is animated — every
+//! frame (duration, background, layers) in an optional section after
+//! the log. Files written before animation existed have no such
+//! section and still load, with zero frames — so an opened design
+//! is the same design, history included, not just the same picture.
 //!
 //! The format is hand-rolled line-oriented text in the recreation
 //! file's spirit (serde is not a workspace dependency, and one design
@@ -15,6 +18,7 @@
 //! ponytail: hand-rolled format by design — upgrade path is serde_json
 //! if designs ever need to be read by other tools.
 
+use crate::animation::Frame;
 use crate::design::{Shape, ShapeKind};
 use crate::drawing::{Drawing, Event, Layer};
 use crate::palette::{PaletteColor, Provenance};
@@ -94,6 +98,22 @@ fn num<T: std::str::FromStr>(toks: &[String], i: usize, what: &str) -> Result<T,
 fn hex(toks: &[String], i: usize) -> Result<Srgb, String> {
 	let t = toks.get(i).ok_or("missing color")?;
 	Srgb::from_hex(t).ok_or_else(|| format!("bad color: {t}"))
+}
+
+/// The layer lines of the file format: a "layer" header plus one
+/// "shape" line per shape. Shared by the drawing's own layers and by
+/// each animation frame's layers.
+fn layer_lines(layer: &Layer) -> String {
+	let mut out = format!(
+		"layer {} {} {}\n",
+		quote(&layer.name),
+		if layer.visible { "visible" } else { "hidden" },
+		layer.shapes.len()
+	);
+	for shape in &layer.shapes {
+		out.push_str(&format!("shape {}\n", shape_fields(shape)));
+	}
+	out
 }
 
 /// The fields of one shape, in file order. Shared by the layer shape
@@ -290,6 +310,17 @@ fn event_line(e: &Event) -> String {
 		Event::ShapeCaptioned { layer, index } => {
 			format!("event shape-captioned {} {index}", quote(layer))
 		}
+		Event::FrameAdded { index, duration_ms } => {
+			format!("event frame-added {index} {duration_ms}")
+		}
+		Event::FrameDuplicated { index } => format!("event frame-duplicated {index}"),
+		Event::FrameRemoved { index } => format!("event frame-removed {index}"),
+		Event::FrameMoved { from, to } => format!("event frame-moved {from} {to}"),
+		Event::FrameDurationSet { index, duration_ms } => {
+			format!("event frame-duration {index} {duration_ms}")
+		}
+		Event::FrameLoaded { index } => format!("event frame-loaded {index}"),
+		Event::FrameUpdated { index } => format!("event frame-updated {index}"),
 	}
 }
 
@@ -347,8 +378,62 @@ fn parse_event(toks: &[String]) -> Result<Event, String> {
 			layer: name(2)?,
 			index: num(toks, 3, "shape index")?,
 		}),
+		Some("frame-added") => Ok(Event::FrameAdded {
+			index: num(toks, 2, "frame index")?,
+			duration_ms: num(toks, 3, "frame duration")?,
+		}),
+		Some("frame-duplicated") => Ok(Event::FrameDuplicated {
+			index: num(toks, 2, "frame index")?,
+		}),
+		Some("frame-removed") => Ok(Event::FrameRemoved {
+			index: num(toks, 2, "frame index")?,
+		}),
+		Some("frame-moved") => Ok(Event::FrameMoved {
+			from: num(toks, 2, "frame index")?,
+			to: num(toks, 3, "frame index")?,
+		}),
+		Some("frame-duration") => Ok(Event::FrameDurationSet {
+			index: num(toks, 2, "frame index")?,
+			duration_ms: num(toks, 3, "frame duration")?,
+		}),
+		Some("frame-loaded") => Ok(Event::FrameLoaded {
+			index: num(toks, 2, "frame index")?,
+		}),
+		Some("frame-updated") => Ok(Event::FrameUpdated {
+			index: num(toks, 2, "frame index")?,
+		}),
 		_ => Err("unknown event kind".to_string()),
 	}
+}
+
+/// One layer block (header + shape lines), read through the same
+/// line source as the rest of the file. Used for the drawing's own
+/// layers and for each animation frame's layers.
+fn parse_layer(
+	next: &mut impl FnMut(&str) -> Result<Vec<String>, String>,
+) -> Result<Layer, String> {
+	let toks = next("a layer")?;
+	if toks.first().map(String::as_str) != Some("layer") {
+		return Err("missing layer line".to_string());
+	}
+	let mut layer = Layer {
+		name: toks.get(1).ok_or("missing layer name")?.clone(),
+		visible: match toks.get(2).map(String::as_str) {
+			Some("visible") => true,
+			Some("hidden") => false,
+			_ => return Err("bad layer visibility".to_string()),
+		},
+		shapes: Vec::new(),
+	};
+	let shapes: usize = num(&toks, 3, "shape count")?;
+	for _ in 0..shapes {
+		let toks = next("a shape")?;
+		if toks.first().map(String::as_str) != Some("shape") {
+			return Err("missing shape line".to_string());
+		}
+		layer.shapes.push(parse_shape(&toks[1..])?);
+	}
+	Ok(layer)
 }
 
 impl Project {
@@ -373,20 +458,30 @@ impl Project {
 		}
 		out.push_str(&format!("layers {}\n", d.layers.len()));
 		for layer in &d.layers {
-			out.push_str(&format!(
-				"layer {} {} {}\n",
-				quote(&layer.name),
-				if layer.visible { "visible" } else { "hidden" },
-				layer.shapes.len()
-			));
-			for shape in &layer.shapes {
-				out.push_str(&format!("shape {}\n", shape_fields(shape)));
-			}
+			out.push_str(&layer_lines(layer));
 		}
 		out.push_str(&format!("log {}\n", d.log.len()));
 		for event in &d.log {
 			out.push_str(&event_line(event));
 			out.push('\n');
+		}
+		// The animation section is written only when the design has
+		// frames, so files for static designs keep the exact shape
+		// they had before animation existed (and old readers are not
+		// the concern — old FILES are: see from_text).
+		if !d.frames.is_empty() {
+			out.push_str(&format!("frames {}\n", d.frames.len()));
+			for frame in &d.frames {
+				out.push_str(&format!(
+					"frame {} {} {}\n",
+					frame.duration_ms,
+					frame.background.to_hex(),
+					frame.layers.len()
+				));
+				for layer in &frame.layers {
+					out.push_str(&layer_lines(layer));
+				}
+			}
 		}
 		out.push_str("end\n");
 		out
@@ -395,9 +490,15 @@ impl Project {
 	/// Read a project file back. Anything malformed is an `Err` with
 	/// a plain-words reason; a partial project is never returned.
 	pub fn from_text(text: &str) -> Result<Project, String> {
-		let mut lines = text.lines();
+		// Lines are indexed through a Cell so the parser can also
+		// peek at the upcoming line (the optional animation section
+		// is detected that way) without fighting the borrow checker.
+		let all: Vec<&str> = text.lines().collect();
+		let pos = std::cell::Cell::new(0usize);
 		let mut next = |what: &str| -> Result<Vec<String>, String> {
-			let line = lines.next().ok_or_else(|| format!("file ends before {what}"))?;
+			let line =
+				all.get(pos.get()).ok_or_else(|| format!("file ends before {what}"))?;
+			pos.set(pos.get() + 1);
 			tokens(line)
 		};
 		let head = next("the header")?;
@@ -445,28 +546,7 @@ impl Project {
 		let count: usize = num(&head, 1, "layer count")?;
 		let mut layers = Vec::with_capacity(count);
 		for _ in 0..count {
-			let toks = next("a layer")?;
-			if toks.first().map(String::as_str) != Some("layer") {
-				return Err("missing layer line".to_string());
-			}
-			let mut layer = Layer {
-				name: toks.get(1).ok_or("missing layer name")?.clone(),
-				visible: match toks.get(2).map(String::as_str) {
-					Some("visible") => true,
-					Some("hidden") => false,
-					_ => return Err("bad layer visibility".to_string()),
-				},
-				shapes: Vec::new(),
-			};
-			let shapes: usize = num(&toks, 3, "shape count")?;
-			for _ in 0..shapes {
-				let toks = next("a shape")?;
-				if toks.first().map(String::as_str) != Some("shape") {
-					return Err("missing shape line".to_string());
-				}
-				layer.shapes.push(parse_shape(&toks[1..])?);
-			}
-			layers.push(layer);
+			layers.push(parse_layer(&mut next)?);
 		}
 
 		let head = next("the event log")?;
@@ -482,12 +562,42 @@ impl Project {
 			}
 			log.push(parse_event(&toks)?);
 		}
+		// The animation section is optional and comes after the log:
+		// every project file written before animation existed goes
+		// straight from the log to the end marker, and loads with
+		// zero frames.
+		let has_frames = all
+			.get(pos.get())
+			.and_then(|line| tokens(line).ok())
+			.and_then(|toks| toks.first().map(|t| t == "frames"))
+			.unwrap_or(false);
+		let mut frames: Vec<Frame> = Vec::new();
+		if has_frames {
+			let head = next("the animation frames")?;
+			let count: usize = num(&head, 1, "frame count")?;
+			for _ in 0..count {
+				let toks = next("an animation frame")?;
+				if toks.first().map(String::as_str) != Some("frame") {
+					return Err("missing frame line".to_string());
+				}
+				let layer_count: usize = num(&toks, 3, "frame layer count")?;
+				let mut frame_layers = Vec::with_capacity(layer_count);
+				for _ in 0..layer_count {
+					frame_layers.push(parse_layer(&mut next)?);
+				}
+				frames.push(Frame {
+					duration_ms: num(&toks, 1, "frame duration")?,
+					background: hex(&toks, 2)?,
+					layers: frame_layers,
+				});
+			}
+		}
 		let tail = next("the end marker")?;
 		if tail.first().map(String::as_str) != Some("end") {
 			return Err("missing end marker".to_string());
 		}
 		Ok(Project {
-			drawing: Drawing { width, height, background, layers, log },
+			drawing: Drawing { width, height, background, layers, log, frames },
 			palette,
 		})
 	}
@@ -623,6 +733,64 @@ end
 		assert_eq!(shapes[1].kind, ShapeKind::Stroke);
 		assert_eq!(shapes[1].points, vec![(5, 5), (15, 15)]);
 		assert_eq!(shapes[1].caption.as_deref(), Some("a stroke"));
+	}
+
+	#[test]
+	fn animation_frames_round_trip() {
+		let mut d = Drawing::new(100, 100, Srgb::WHITE);
+		d.add_shape(0, Shape::new(ShapeKind::Ellipse, 40, 40, 20, 20, Srgb::new(200, 40, 30)));
+		d.add_frame();
+		d.set_frame_duration(0, 250);
+		d.shift_shape(0, 0, 20, 0);
+		d.set_background(Srgb::BLACK);
+		d.add_layer("Back");
+		d.add_frame();
+		let project = Project { drawing: d, palette: Vec::new() };
+		let text = project.to_text();
+		assert!(text.contains("frames 2\n"), "{text}");
+		let back = Project::from_text(&text).expect("a project with frames reads back");
+		assert_eq!(back.to_text(), text);
+		assert_eq!(back.drawing.frames.len(), 2);
+		assert_eq!(back.drawing.frames[0].duration_ms, 250);
+		assert_eq!(back.drawing.frames[0].background, Srgb::WHITE);
+		assert_eq!(back.drawing.frames[0].layers.len(), 1);
+		assert_eq!(back.drawing.frames[0].layers[0].shapes[0].x, 40);
+		assert_eq!(back.drawing.frames[1].background, Srgb::BLACK);
+		assert_eq!(back.drawing.frames[1].layers.len(), 2);
+		assert_eq!(back.drawing.frames[1].layers[0].shapes[0].x, 60);
+		// The frame operations are log events and round-trip too
+		// (byte-for-byte equality above covers it; say it out loud).
+		let steps: Vec<String> =
+			back.drawing.log.iter().map(|e| e.describe(&back.drawing)).collect();
+		assert!(steps.iter().any(|s| s.contains("Add animation frame 1")), "{steps:?}");
+		assert!(steps.iter().any(|s| s.contains("Set animation frame 1 to show for 250")), "{steps:?}");
+	}
+
+	#[test]
+	fn files_written_before_animation_still_load() {
+		// The pre-animation file shape ends at the end marker right
+		// after the log: no frames section at all.
+		let legacy = "\
+blind-designer-project 1
+canvas 100 80
+background #FFFFFF
+palette 0
+layers 1
+layer \"Layer 1\" visible 1
+shape ellipse 40 40 20 20 #C8281E 0 3 - -
+log 3
+event canvas 100 80
+event background #FFFFFF
+event layer-added \"Layer 1\"
+end
+";
+		let project = Project::from_text(legacy).expect("a pre-animation file loads");
+		assert!(project.drawing.frames.is_empty());
+		// And re-saving it does not invent an animation section.
+		assert!(!project.to_text().contains("frames"));
+		// The existing legacy test's file is the same story.
+		let back = Project::from_text(&rich_project().to_text()).unwrap();
+		assert!(back.drawing.frames.is_empty());
 	}
 
 	#[test]

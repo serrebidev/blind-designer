@@ -18,6 +18,7 @@
 //! parser crate if imports ever need cascade, classes or relative units.
 
 use crate::design::{Design, Shape, ShapeKind};
+use crate::drawing::Drawing;
 use crate::{describe, Srgb};
 
 /// One color found in a CSS or HTML source, with where it came from.
@@ -65,6 +66,17 @@ impl Design {
 			self.height,
 			self.background.to_hex()
 		));
+		out.push_str(&self.shapes_markup());
+		out.push_str("</main>\n</body>\n</html>\n");
+		out
+	}
+
+	/// One absolutely positioned element per shape, each carrying
+	/// its caption as its accessible name — the markup `to_html`
+	/// puts inside the page, shared with the animated export, which
+	/// stacks one such group per frame.
+	pub(crate) fn shapes_markup(&self) -> String {
+		let mut out = String::new();
 		for shape in &self.shapes {
 			let caption = escape_html(&self.caption_for(shape));
 			let hex = shape.fill.to_hex();
@@ -135,7 +147,98 @@ impl Design {
 				}
 			}
 		}
-		out.push_str("</main>\n</body>\n</html>\n");
+
+		out
+	}
+
+}
+
+impl Drawing {
+	/// The animation as a standalone HTML page: the frames stacked
+	/// on one stage, stepped through by a generated CSS animation —
+	/// each frame is visible only during its own slice of the total
+	/// running time, then the film loops. Every frame's shapes are
+	/// the same accessible elements the static export writes, and
+	/// the page also carries the frame-by-frame description as a
+	/// readable list, so the film can be followed by ear as well as
+	/// by eye. (No sprite sheet and no script: stacked elements and
+	/// keyframes are all a browser needs.) A static design exports
+	/// as a one-frame page with no animation rules. Readers who
+	/// prefer reduced motion get the frames stacked statically.
+	pub fn to_html_animated(&self, title: &str) -> String {
+		let designs = self.frame_designs();
+		let durations = self.frame_durations();
+		let total: u32 = durations.iter().sum();
+		let mut out = String::new();
+		out.push_str("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n");
+		out.push_str(&format!("<title>{}</title>\n<style>\n", escape_html(title)));
+		out.push_str(&self.flatten().to_css("design"));
+		out.push_str(".stage { position: relative; }\n.shape { position: absolute; }\n.frame { position: absolute; left: 0; top: 0; width: 100%; height: 100%; opacity: 0; }\n");
+		if designs.len() > 1 {
+			// Each frame gets its own keyframes: hidden until its
+			// slice starts, visible through it, hidden after. The
+			// small epsilon step (a hundredth of a percent, or half
+			// the slice when the slice is thinner) makes the switch
+			// instant rather than a fade.
+			let mut start = 0u32;
+			for (i, ms) in durations.iter().enumerate() {
+				let s = start as f64 * 100.0 / total.max(1) as f64;
+				let e = (start + ms) as f64 * 100.0 / total.max(1) as f64;
+				let eps = ((e - s) / 2.0).min(0.01);
+				out.push_str(&format!("@keyframes frame{i} {{\n"));
+				if s <= 0.0 {
+					out.push_str("0% { opacity: 1; }\n");
+				} else {
+					out.push_str("0% { opacity: 0; }\n");
+					out.push_str(&format!("{s:.2}% {{ opacity: 0; }}\n"));
+					out.push_str(&format!("{:.2}% {{ opacity: 1; }}\n", s + eps));
+				}
+				if e >= 100.0 {
+					out.push_str("100% { opacity: 1; }\n");
+				} else {
+					out.push_str(&format!("{e:.2}% {{ opacity: 1; }}\n"));
+					out.push_str(&format!("{:.2}% {{ opacity: 0; }}\n", e + eps));
+					out.push_str("100% { opacity: 0; }\n");
+				}
+				out.push_str("}\n");
+				out.push_str(&format!(
+					".frame{i} {{ animation: frame{i} {total}ms linear infinite; }}\n"
+				));
+				start += ms;
+			}
+		} else {
+			out.push_str(".frame0 { opacity: 1; }\n");
+		}
+		out.push_str("@media (prefers-reduced-motion: reduce) {\n.frame { animation: none; position: static; opacity: 1; }\n}\n</style>\n</head>\n<body>\n");
+		out.push_str(&format!(
+			"<main>\n<div class=\"stage\" role=\"img\" aria-label=\"{}\" style=\"width: {}px; height: {}px;\">\n",
+			escape_html(&format!(
+				"Animated design, {} frames, total running time {} milliseconds",
+				designs.len(),
+				total
+			)),
+			self.width,
+			self.height
+		));
+		for (i, design) in designs.iter().enumerate() {
+			out.push_str(&format!(
+				"<div class=\"frame frame{i}\" style=\"background: {};\">",
+				design.background.to_hex()
+			));
+			out.push_str(&design.shapes_markup());
+			out.push_str("</div>\n");
+		}
+		out.push_str("</div>\n<section>\n<h2>Frame by frame description</h2>\n<ol>\n");
+		for i in 0..designs.len() {
+			let what = self.frame_change_description(i).unwrap_or_default();
+			out.push_str(&format!(
+				"<li>Frame {} ({} milliseconds): {}</li>\n",
+				i + 1,
+				durations[i],
+				escape_html(&what)
+			));
+		}
+		out.push_str("</ol>\n</section>\n</main>\n</body>\n</html>\n");
 		out
 	}
 }
@@ -624,6 +727,43 @@ mod tests {
 		// The image references its file, captioned by its alt text.
 		assert!(html.contains("<img class=\"shape\" src=\"photos/team day.png\""), "{html}");
 		assert!(html.contains("alt=\"image from file team day.png"), "{html}");
+	}
+
+	#[test]
+	fn animated_html_steps_through_the_frames() {
+		let mut d = Drawing::new(100, 100, Srgb::WHITE);
+		d.add_shape(
+			0,
+			Shape::new(ShapeKind::Ellipse, 40, 40, 20, 20, Srgb::new(200, 40, 30)),
+		);
+		d.add_frame();
+		d.set_frame_duration(0, 400);
+		d.shift_shape(0, 0, 20, 0);
+		d.add_frame();
+		d.set_frame_duration(1, 600);
+		let html = d.to_html_animated("Film");
+		assert!(html.starts_with("<!DOCTYPE html>"), "{html}");
+		// One keyframed class per frame, timed on the total (1000 ms).
+		assert!(html.contains("@keyframes frame0"), "{html}");
+		assert!(html.contains("@keyframes frame1"), "{html}");
+		assert!(html.contains("animation: frame0 1000ms linear infinite"), "{html}");
+		assert!(html.contains("animation: frame1 1000ms linear infinite"), "{html}");
+		// Frame 2 starts where frame 1 ends: 40 percent of the film.
+		assert!(html.contains("40.00% { opacity: 0; }"), "{html}");
+		// Both frames are stacked on the stage, shapes included.
+		assert_eq!(html.matches("class=\"frame frame").count(), 2, "{html}");
+		assert!(html.contains("Animated design, 2 frames, total running time 1000 milliseconds"), "{html}");
+		// The film can be followed by ear: the description list is in
+		// the page, with the diff wording for frame 2.
+		assert!(html.contains("<h2>Frame by frame description</h2>"), "{html}");
+		assert!(html.contains("Frame 2 (600 milliseconds):"), "{html}");
+		assert!(html.contains("moves right 20 pixels"), "{html}");
+		// Reduced motion stacks the frames statically instead.
+		assert!(html.contains("prefers-reduced-motion"), "{html}");
+		// A static design exports as one still frame, no keyframes.
+		let still = Drawing::new(10, 10, Srgb::WHITE).to_html_animated("Still");
+		assert!(!still.contains("@keyframes"), "{still}");
+		assert!(still.contains(".frame0 { opacity: 1; }"), "{still}");
 	}
 
 	#[test]

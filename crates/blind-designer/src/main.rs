@@ -18,6 +18,7 @@ use chroma_core::design::{css_for_colors, Shape, ShapeKind};
 use chroma_core::dictionary;
 use chroma_core::drawing::{Drawing, Event};
 use chroma_core::sound::{cue_at, cue_for_shape, tone_wav, Cue};
+use chroma_core::web::{import_html, parse_css_colors};
 use chroma_core::{describe, extract_palette, Oklch, Srgb};
 use quiet_list::{QuietList, Select};
 use wxdragon::prelude::*;
@@ -48,10 +49,71 @@ const ID_RECOLOR_SHAPE: Id = 309;
 const ID_LAYERS: Id = 310;
 const ID_RESIZE_SHAPE: Id = 311;
 const ID_EXPORT_SUMMARY: Id = 106;
+const ID_EXPORT_HTML: Id = 107;
+const ID_IMPORT_CSS: Id = 108;
+const ID_IMPORT_HTML: Id = 109;
 const ID_ABOUT: Id = 401;
 const ID_DICTIONARY: Id = 402;
 const ID_HELP_FILE: Id = 403;
 const ID_SOUND_CUES: Id = 404;
+
+/// Every custom menu ID in the app. wxWidgets window IDs: a custom ID
+/// must be positive and at or below wxID_HIGHEST (5999); the only
+/// negative ID a window may carry is wxID_ANY (-1). Anything else —
+/// wxID_SEPARATOR (-2) included — trips the wincmn.cpp CreateBase()
+/// "invalid id value" assert at startup (issue #4). The const block
+/// below checks this list at compile time, so an out-of-range or
+/// duplicated ID fails the build instead of asserting on a user's
+/// machine.
+const MENU_IDS: &[Id] = &[
+	ID_OPEN_IMAGE,
+	ID_EXPORT_PNG,
+	ID_EXPORT_CAPTIONS,
+	ID_EXPORT_CSS,
+	ID_EXPORT_SUMMARY,
+	ID_EXPORT_HTML,
+	ID_IMPORT_CSS,
+	ID_IMPORT_HTML,
+	ID_EXIT,
+	ID_COMPLEMENTARY,
+	ID_SPLIT,
+	ID_ANALOGOUS,
+	ID_TRIADIC,
+	ID_TETRADIC,
+	ID_SHADES,
+	ID_TINTS,
+	ID_TONES,
+	ID_REMOVE_COLOR,
+	ID_CANVAS_SIZE,
+	ID_ADD_RECT,
+	ID_ADD_ELLIPSE,
+	ID_SET_BACKGROUND,
+	ID_REMOVE_SHAPE,
+	ID_ADD_STROKE,
+	ID_MOVE_SHAPE,
+	ID_ROTATE_SHAPE,
+	ID_RECOLOR_SHAPE,
+	ID_LAYERS,
+	ID_RESIZE_SHAPE,
+	ID_ABOUT,
+	ID_DICTIONARY,
+	ID_HELP_FILE,
+	ID_SOUND_CUES,
+];
+
+const _: () = {
+	let mut i = 0;
+	while i < MENU_IDS.len() {
+		let id = MENU_IDS[i];
+		assert!(id > 0 && id <= ID_HIGHEST, "menu ID out of the valid wx range");
+		let mut j = i + 1;
+		while j < MENU_IDS.len() {
+			assert!(MENU_IDS[j] != id, "duplicate menu ID");
+			j += 1;
+		}
+		i += 1;
+	}
+};
 
 /// The help file, shipped inside the app: worked examples included.
 const HELP_TEXT: &str = include_str!("help.md");
@@ -684,6 +746,101 @@ fn dispatch(win: &Win, shared: &Shared, id: Id) {
 				}
 			}
 		}
+		ID_EXPORT_HTML => {
+			if let Some(path) = file_dialog(
+				&frame,
+				"Export design as an HTML page",
+				"HTML page (*.html)|*.html",
+				true,
+			) {
+				let state = shared.borrow();
+				match std::fs::write(&path, state.drawing.flatten().to_html("Blind Designer design")) {
+					Ok(()) => frame.set_status_text(&format!("Exported HTML page to {path}"), 0),
+					Err(e) => frame.set_status_text(&format!("Export failed: {e}"), 0),
+				}
+			}
+		}
+		ID_IMPORT_CSS => {
+			if let Some(path) = file_dialog(
+				&frame,
+				"Import colors from a CSS file",
+				"CSS file (*.css)|*.css",
+				false,
+			) {
+				match std::fs::read_to_string(&path) {
+					Ok(text) => {
+						let found = parse_css_colors(&text);
+						if found.is_empty() {
+							frame.set_status_text("No colors found in that CSS file.", 0);
+						} else {
+							let mut state = shared.borrow_mut();
+							for c in &found {
+								state.palette.push((c.color, None));
+							}
+							refresh_lists(win, &state);
+							let notes: Vec<String> = found
+								.iter()
+								.take(6)
+								.map(|c| format!("{} ({})", c.color.to_hex(), c.source))
+								.collect();
+							frame.set_status_text(
+								&format!(
+									"Imported {} colors from CSS: {}",
+									found.len(),
+									notes.join("; ")
+								),
+								0,
+							);
+						}
+					}
+					Err(e) => {
+						frame.set_status_text(&format!("Could not read that CSS file: {e}"), 0)
+					}
+				}
+			}
+		}
+		ID_IMPORT_HTML => {
+			if let Some(path) = file_dialog(
+				&frame,
+				"Import an HTML page as a design",
+				"HTML file (*.html;*.htm)|*.html;*.htm",
+				false,
+			) {
+				match std::fs::read_to_string(&path) {
+					Ok(text) => {
+						let imp = import_html(&text);
+						let mut drawing = Drawing::new(
+							imp.design.width,
+							imp.design.height,
+							imp.design.background,
+						);
+						for shape in imp.design.shapes {
+							drawing.add_shape(0, shape);
+						}
+						let shapes = drawing.layers[0].shapes.len();
+						let mut state = shared.borrow_mut();
+						state.drawing = drawing;
+						state.layer = 0;
+						state.palette = imp.colors.iter().map(|c| (c.color, None)).collect();
+						if state.palette.is_empty() {
+							let bg = state.drawing.background;
+							state.palette.push((bg, None));
+						}
+						let colors = state.palette.len();
+						refresh_lists(win, &state);
+						frame.set_status_text(
+							&format!(
+								"Imported {path}: {shapes} shapes on the canvas, {colors} colors in the palette. The imported design replaces the previous one."
+							),
+							0,
+						);
+					}
+					Err(e) => {
+						frame.set_status_text(&format!("Could not read that HTML file: {e}"), 0)
+					}
+				}
+			}
+		}
 		ID_COMPLEMENTARY | ID_SPLIT | ID_ANALOGOUS | ID_TRIADIC | ID_TETRADIC | ID_SHADES
 		| ID_TINTS | ID_TONES => {
 			let mut state = shared.borrow_mut();
@@ -929,10 +1086,14 @@ fn dispatch(win: &Win, shared: &Shared, id: Id) {
 fn build_menus(frame: &Frame) {
 	let file = Menu::builder()
 		.append_item(ID_OPEN_IMAGE, "&Open Image…\tCtrl+O", "")
+		.append_item(ID_IMPORT_CSS, "Import &CSS Colors…", "")
+		.append_item(ID_IMPORT_HTML, "Import &HTML Design…", "")
+		.append_separator()
 		.append_item(ID_EXPORT_PNG, "Export &PNG…\tCtrl+E", "")
 		.append_item(ID_EXPORT_CAPTIONS, "Export &Captions…", "")
 		.append_item(ID_EXPORT_CSS, "Export C&SS…", "")
 		.append_item(ID_EXPORT_SUMMARY, "Export &Summary (recreation file)…", "")
+		.append_item(ID_EXPORT_HTML, "Export HT&ML Page…", "")
 		.append_separator()
 		.append_item(ID_EXIT, "E&xit", "")
 		.build();
@@ -1041,7 +1202,12 @@ fn main() {
 		sizer.add(&shapes_list, 1, SizerFlag::Expand | SizerFlag::All, 5);
 		panel.set_sizer(sizer, true);
 
-		frame.create_status_bar(1, 0, -2, "Status"); // -2 is wxID_ANY
+		// wxID_ANY (-1): "assign an ID for me". This call used to pass -2
+		// under a comment claiming it was wxID_ANY — in wx, -2 is
+		// wxID_SEPARATOR, "invalid for normal items", and it trips the
+		// wincmn.cpp CreateBase() "invalid id value" assert at startup
+		// (issue #4).
+		frame.create_status_bar(1, 0, ID_ANY as i32, "Status");
 		build_menus(&frame);
 
 		let start = Srgb::new(58, 124, 165);
@@ -1135,4 +1301,29 @@ fn main() {
 		frame.show(true);
 		frame.centre();
 	});
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	/// Issue #4 regression guard: every custom menu ID is a positive
+	/// value inside the valid wx range and appears exactly once. (The
+	/// const block beside MENU_IDS enforces the same at compile time;
+	/// this test keeps the rule visible in the suite's output.)
+	#[test]
+	fn menu_ids_are_unique_and_in_wx_range() {
+		for (i, id) in MENU_IDS.iter().enumerate() {
+			assert!(*id > 0 && *id <= ID_HIGHEST, "menu ID {id} out of the valid wx range");
+			assert!(!MENU_IDS[i + 1..].contains(id), "duplicate menu ID {id}");
+		}
+	}
+
+	/// The status bar's ID is wxID_ANY — the only negative ID wx allows
+	/// a window to carry. Passing -2 (wxID_SEPARATOR) here was the
+	/// startup assert in issue #4.
+	#[test]
+	fn id_any_is_the_assign_for_me_value() {
+		assert_eq!(ID_ANY, -1);
+	}
 }

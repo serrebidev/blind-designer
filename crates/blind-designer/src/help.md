@@ -23,9 +23,11 @@ THE MAIN WINDOW
 
 THE MENUS
 
-- File: open an image to extract its palette; export the design as
-  PNG, as a caption sheet, as CSS variables, or as a summary
-  (recreation file); exit.
+- File: open an image to extract its palette; import colors from a
+  CSS file, or import a simple HTML page (inline styles) as a design;
+  export the design as PNG, as a caption sheet, as CSS variables, as
+  a summary (recreation file), or as a standalone HTML page whose
+  shapes carry their captions as accessible names; exit.
 - Palette: grow the palette from the selected color — complementary,
   split complementary, analogous, triadic, tetradic, 4 shades,
   4 tints, 4 tones — or remove the selected color.

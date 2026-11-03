@@ -13,6 +13,7 @@ pub mod design;
 pub mod dictionary;
 pub mod drawing;
 pub mod sound;
+pub mod web;
 
 /// An sRGB color, 8 bits per channel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

@@ -25,16 +25,20 @@ THE MENUS
 
 - File: open an image to extract its palette; import colors from a
   CSS file, or import a simple HTML page (inline styles) as a design;
-  export the design as PNG, as a caption sheet, as CSS variables, as
-  a summary (recreation file), or as a standalone HTML page whose
-  shapes carry their captions as accessible names; exit.
+  start a new design from a template; compare two images, or describe
+  an image as a tactile grid; export the design as PNG, as a caption
+  sheet, as CSS variables, as a summary (recreation file), or as a
+  standalone HTML page whose shapes carry their captions as
+  accessible names; export it for touch as a raised-line SVG, a
+  tactile sheet, or braille labels; exit.
 - Palette: grow the palette from the selected color — complementary,
   split complementary, analogous, triadic, tetradic, 4 shades,
   4 tints, 4 tones — or remove the selected color.
-- Design: canvas size; add a rectangle, ellipse, stroke, text, or
-  image; set the background to the selected color; move, rotate,
-  resize, recolor, or remove the selected shape; open the Elements
-  dialog, the Layers dialog, and the brush library.
+- Design: canvas size; add a rectangle, ellipse, stroke, text,
+  image, or symbol; set the background to the selected color; move,
+  rotate, resize, recolor, or remove the selected shape; describe
+  one area of the canvas; open the Elements dialog, the Layers
+  dialog, and the brush library.
 - Help: the design-terms Dictionary, this help file, the Sound Cues
   toggle, and About.
 
@@ -278,3 +282,65 @@ Three exports play or tell the film, all under File:
 - Export Animation Description writes the film as words: every
   frame in order, with its duration and what it shows or what
   changed, ready to read or send.
+
+TACTILE: FEELING A DESIGN
+
+A design can be read by touch as well as by ear. Four tools, all
+under File except Describe Area:
+
+- Export Raised-Line SVG writes the design as outlines only —
+  every shape a black stroked outline on white, nothing filled.
+  Each layer gets its own line style (solid, long dashes, short
+  dashes, dots), so layers can be told apart by hand. Print it on
+  swell paper or emboss it and the lines rise. A text element is
+  drawn as its braille translation inside an outline box: the
+  braille is what rises, not the letter shapes.
+- Export Tactile Sheet writes the design as a text walk: layer by
+  layer, element by element in reading order (top to bottom, left
+  to right), each element with its plain-language description, its
+  caption, and its caption again as a braille label. Hidden layers
+  are left out and noted.
+- Export Braille Labels writes just the labels: one numbered line
+  per element, its caption in uncontracted (Grade 1) braille,
+  ready to emboss or stick beside the raised lines.
+- Design, Describe Area names only the elements inside one part
+  of the canvas. Type a name — top left, center, bottom right, or
+  just top or left for a whole strip — or a box as four numbers
+  (across, down, width, height). Elements only partly inside are
+  marked "partly in this area".
+
+Worked example: draw the Simple house template (File, New from
+Template) and export the tactile sheet. The walk starts with the
+sun (top right), then the walls, the roof stroke, the door, the
+windows, and the grass along the bottom — the order your hand
+would meet them.
+
+SYMBOLS AND TEMPLATES
+
+Design, Add Symbol stamps a ready-made symbol — star, heart,
+arrow, check, cross, sun, moon — wherever you place it, at
+whatever size. A symbol is ordinary strokes under one caption, so
+it moves, resizes, recolors and exports like anything else.
+
+File, New from Template starts a design from a layout: a birthday
+card, a simple house, a face, or a chart. Loading a template
+replaces the design you have open, and the template is a normal
+design from then on — change anything, then Save Design.
+
+PICTURES BY TOUCH AND COMPARISON
+
+File, Describe Image as Tactile Grid turns any picture into a
+grid you can feel cell by cell: 24 by 12 cells by default (you
+choose the size). Each cell is the picture's average shade there,
+shown two ways — as a braille shade pattern (more dots means
+darker, the scale is printed at the top) and in words, row by
+row: "columns 1 to 6 bright; column 7 dark". The sheet ends with
+where the darkest and brightest parts sit. A screenshot becomes
+readable this way: dark text blocks and bright backgrounds show
+up as shade shapes.
+
+File, Compare Images sets two pictures side by side and reports,
+in plain sentences: whether they are the same size; which palette
+colors they share and which belong to only one of them; which is
+brighter overall; and which is sharper — the blurrier one is
+named, so you can tell an original from a soft copy.

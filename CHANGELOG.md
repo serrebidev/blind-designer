@@ -20,6 +20,34 @@ workflow.
   of a fixed cap; Extract adds to the palette from any image without
   touching the design.
 
+## 0.4.0
+
+- Save and open your designs: File, Save Design and Open Design keep the
+  whole design — canvas, layers, shapes, palette, and the step-by-step
+  log — in one file you can reopen and keep working on.
+- Every palette color remembers where it came from: typed in, extracted
+  from an image (with the image's name), generated from another color,
+  or imported — and the palette reads that memory out.
+- Your choice of color format: View menu picks hex, rgb, hsl or hsv,
+  and everything the app speaks follows it.
+- Extract colors from any image, as many as you ask for (up to 64),
+  not just eight from a background.
+- Text elements: add a phrase in a chosen font and size, placed by
+  measurement like any other shape, captioned with the phrase itself.
+- Image elements: place an image file into the design with a caption;
+  it draws scaled into its box, and a missing file shows a captioned
+  placeholder instead of failing.
+- Saved brushes: keep named brushes (width, color, solid/dashed/dotted)
+  and reuse them for strokes instead of rebuilding them each time.
+- Elements dialog: Design, Elements lists every piece of the design in
+  plain language — rename its caption, hear a full description, move,
+  resize, recolor or delete it from one place.
+- Plain-language input: position and size fields take words as well as
+  numbers ("top left", "center", "a bit wider"), and color fields take
+  names ("sky blue", "forest green").
+- Everything you add is described as it lands: "long rising stroke from
+  top left to center, dark blue."
+
 ## 0.3.0
 
 - Sound cues while drawing: adding, moving, rotating or resizing a shape

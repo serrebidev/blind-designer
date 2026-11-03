@@ -31,6 +31,19 @@ workflow.
   of a fixed cap; Extract adds to the palette from any image without
   touching the design.
 
+## 0.5.0
+
+- Animation: Design, Animation turns your design into a film, pose by
+  pose. Draw a pose, capture it as a frame, change the canvas, capture
+  again. Frames can be duplicated, reordered, deleted, and given their
+  own durations, and each frame is listed with what changed from the
+  one before it, in plain words ("the red ellipse moves right 20
+  pixels").
+- Export the film three ways: an animated GIF, an animated HTML page,
+  and a spoken frame-by-frame description you can read or share.
+- Animations save inside your design files; older design files still
+  open exactly as before.
+
 ## 0.4.0
 
 - Save and open your designs: File, Save Design and Open Design keep the

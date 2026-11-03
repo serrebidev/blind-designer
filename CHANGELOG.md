@@ -54,6 +54,25 @@ workflow.
   of a fixed cap; Extract adds to the palette from any image without
   touching the design.
 
+## 0.6.0
+
+- Feel your designs: File, Export Raised-Line SVG writes the design as
+  outlines for swell-paper and embosser workflows — one line style per
+  layer, text as braille. File, Export Tactile Sheet walks the design
+  piece by piece in reading order, with braille labels. File, Export
+  Braille Labels writes the labels on their own.
+- Describe any area: Design, Describe Area hears only what is in one
+  part of the canvas — "top left", "center", or your own box.
+- Symbols: Design, Add Symbol stamps a star, heart, arrow, check,
+  cross, sun or moon at any size, in any color.
+- Templates: File, New from Template starts you from a birthday card,
+  a simple house, a face, or a chart — then it is yours to change.
+- Compare two images: File, Compare Images reports their sizes,
+  shared and unshared colors, which is brighter, and which is blurrier.
+- Any picture as touch: File, Describe Image as Tactile Grid turns a
+  photo or screenshot into a grid of braille shades with the same grid
+  in words, so you can feel where things are, cell by cell.
+
 ## 0.5.0
 
 - Animation: Design, Animation turns your design into a film, pose by

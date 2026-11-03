@@ -12,14 +12,17 @@
 //! captions generated only where a shape has none of its own.
 
 use std::cell::RefCell;
+use std::path::Path;
 use std::rc::Rc;
 
 use chroma_core::design::{css_for_colors, Shape, ShapeKind};
 use chroma_core::dictionary;
 use chroma_core::drawing::{Drawing, Event};
+use chroma_core::palette::{PaletteColor, Provenance};
+use chroma_core::project::Project;
 use chroma_core::sound::{cue_at, cue_for_shape, tone_wav, Cue};
 use chroma_core::web::{import_html, parse_css_colors};
-use chroma_core::{describe, extract_palette, Oklch, Srgb};
+use chroma_core::{describe_in, extract_palette, ColorFormat, Oklch, Srgb};
 use quiet_list::{QuietList, Select};
 use wxdragon::prelude::*;
 
@@ -52,10 +55,17 @@ const ID_EXPORT_SUMMARY: Id = 106;
 const ID_EXPORT_HTML: Id = 107;
 const ID_IMPORT_CSS: Id = 108;
 const ID_IMPORT_HTML: Id = 109;
+const ID_SAVE_DESIGN: Id = 110;
+const ID_OPEN_DESIGN: Id = 111;
+const ID_EXTRACT_IMAGE: Id = 112;
 const ID_ABOUT: Id = 401;
 const ID_DICTIONARY: Id = 402;
 const ID_HELP_FILE: Id = 403;
 const ID_SOUND_CUES: Id = 404;
+const ID_FORMAT_HEX: Id = 501;
+const ID_FORMAT_RGB: Id = 502;
+const ID_FORMAT_HSL: Id = 503;
+const ID_FORMAT_HSV: Id = 504;
 
 /// Every custom menu ID in the app. wxWidgets window IDs: a custom ID
 /// must be positive and at or below wxID_HIGHEST (5999); the only
@@ -74,6 +84,9 @@ const MENU_IDS: &[Id] = &[
 	ID_EXPORT_HTML,
 	ID_IMPORT_CSS,
 	ID_IMPORT_HTML,
+	ID_SAVE_DESIGN,
+	ID_OPEN_DESIGN,
+	ID_EXTRACT_IMAGE,
 	ID_EXIT,
 	ID_COMPLEMENTARY,
 	ID_SPLIT,
@@ -99,6 +112,10 @@ const MENU_IDS: &[Id] = &[
 	ID_DICTIONARY,
 	ID_HELP_FILE,
 	ID_SOUND_CUES,
+	ID_FORMAT_HEX,
+	ID_FORMAT_RGB,
+	ID_FORMAT_HSL,
+	ID_FORMAT_HSV,
 ];
 
 const _: () = {
@@ -119,13 +136,15 @@ const _: () = {
 const HELP_TEXT: &str = include_str!("help.md");
 
 struct State {
-	/// Palette colors, with image coverage when extracted from an image.
-	palette: Vec<(Srgb, Option<f32>)>,
+	/// Palette colors, each stamped with where it came from.
+	palette: Vec<PaletteColor>,
 	drawing: Drawing,
 	/// Index of the layer new shapes land on.
 	layer: usize,
 	/// Sound cues while drawing (Help menu toggle, on by default).
 	sound_cues: bool,
+	/// How color values are spoken and displayed (View menu).
+	color_format: ColorFormat,
 }
 
 struct Win {
@@ -146,13 +165,7 @@ fn palette_rows(state: &State) -> Vec<(usize, String)> {
 		.palette
 		.iter()
 		.enumerate()
-		.map(|(i, (c, cov))| {
-			let mut label = describe(*c);
-			if let Some(cov) = cov {
-				label.push_str(&format!(", {:.0} percent of the image", cov * 100.0));
-			}
-			(i, label)
-		})
+		.map(|(i, pc)| (i, pc.spoken(state.color_format)))
 		.collect()
 }
 
@@ -252,8 +265,8 @@ fn readout_text(state: &State, color: Srgb) -> String {
 	let comp = o.complementary().to_srgb();
 	format!(
 		"{}. Complementary: {} ({}). {}",
-		describe(color),
-		comp.to_hex(),
+		describe_in(color, state.color_format),
+		comp.format(state.color_format),
 		chroma_core::hue_family(comp.to_oklch().h),
 		wcag(color.contrast(state.drawing.background))
 	)
@@ -271,24 +284,28 @@ fn select_color(win: &Win, state: &State, color: Srgb) {
 	win.l_spin.set_value(o.l as f64);
 	win.c_spin.set_value(o.c as f64);
 	win.h_spin.set_value(o.h as f64);
-	win.frame
-		.set_status_text(&format!("Selected: {}", describe(color)), 0);
+	win.frame.set_status_text(
+		&format!("Selected: {}", describe_in(color, state.color_format)),
+		0,
+	);
 }
 
 fn selected_color(win: &Win, state: &State) -> Option<Srgb> {
 	win.palette_list
 		.selected()
 		.and_then(|i| state.palette.get(i))
-		.map(|(c, _)| *c)
+		.map(|pc| pc.color)
 }
 
-/// Append colors to the palette and say what was added.
-fn add_colors(win: &Win, state: &mut State, colors: &[Srgb], what: &str) {
+/// Append colors to the palette, stamped with their provenance, and
+/// say what was added.
+fn add_colors(win: &Win, state: &mut State, colors: &[Srgb], what: &str, provenance: &Provenance) {
 	for c in colors {
-		state.palette.push((*c, None));
+		state.palette.push(PaletteColor::new(*c, provenance.clone()));
 	}
 	refresh_lists(win, state);
-	let names: Vec<String> = colors.iter().map(|c| describe(*c)).collect();
+	let names: Vec<String> =
+		colors.iter().map(|c| describe_in(*c, state.color_format)).collect();
 	win.frame.set_status_text(
 		&format!("Added {} ({}): {}", what, colors.len(), names.join("; ")),
 		0,
@@ -630,6 +647,75 @@ fn help_dialog(win: &Win) {
 	dialog.show_modal();
 }
 
+/// Extract a palette from an image the user picks: they choose how
+/// many colors (default 8, up to 64). With `set_background` the palette
+/// is replaced and the largest color becomes the design background
+/// (File, Open Image); without it the colors are simply appended,
+/// stamped with the image they came from (File, Extract Colors from
+/// Image) — any image file can be mined, not just a background.
+fn extract_image_dialog(win: &Win, shared: &Shared, set_background: bool) {
+	let frame = win.frame;
+	let Some(path) = file_dialog(
+		&frame,
+		"Choose an image to extract colors from",
+		"Image files (*.png;*.jpg;*.jpeg;*.webp)|*.png;*.jpg;*.jpeg;*.webp",
+		false,
+	) else {
+		return;
+	};
+	let Some(v) = numbers_dialog(
+		&frame,
+		"How many colors to extract",
+		&[("Number of colors", 1, 64, 8)],
+	) else {
+		return;
+	};
+	match image::open(&path) {
+		Ok(img) => {
+			let entries = extract_palette(&img, v[0] as usize);
+			let name = Path::new(&path)
+				.file_name()
+				.map(|n| n.to_string_lossy().into_owned())
+				.unwrap_or_else(|| path.clone());
+			let extracted: Vec<PaletteColor> = entries
+				.iter()
+				.map(|e| PaletteColor::extracted(e.color, e.coverage, &name))
+				.collect();
+			let mut state = shared.borrow_mut();
+			if set_background {
+				if let Some(first) = entries.first() {
+					state.drawing.set_background(first.color);
+				}
+				state.palette = extracted;
+			} else {
+				state.palette.extend(extracted);
+			}
+			refresh_lists(win, &state);
+			frame.set_status_text(
+				&format!(
+					"Extracted {} colors from {name}.{}",
+					entries.len(),
+					if set_background {
+						" The largest is now the design background."
+					} else {
+						" They were added to the palette."
+					}
+				),
+				0,
+			);
+			if set_background {
+				if let Some(first) = entries.first() {
+					let color = first.color;
+					select_color(win, &state, color);
+				}
+			}
+		}
+		Err(e) => {
+			frame.set_status_text(&format!("Could not open that image: {e}"), 0);
+		}
+	}
+}
+
 fn dispatch(win: &Win, shared: &Shared, id: Id) {
 	let frame = win.frame;
 	match id {
@@ -662,38 +748,104 @@ fn dispatch(win: &Win, shared: &Shared, id: Id) {
 			.build()
 			.show_modal();
 		}
-		ID_OPEN_IMAGE => {
+		ID_OPEN_IMAGE => extract_image_dialog(win, shared, true),
+		ID_EXTRACT_IMAGE => extract_image_dialog(win, shared, false),
+		ID_SAVE_DESIGN => {
 			if let Some(path) = file_dialog(
 				&frame,
-				"Open an image to extract its palette",
-				"Image files (*.png;*.jpg;*.jpeg;*.webp)|*.png;*.jpg;*.jpeg;*.webp",
+				"Save design",
+				"Blind Designer design (*.bdd)|*.bdd",
+				true,
+			) {
+				let state = shared.borrow();
+				let project = Project {
+					drawing: state.drawing.clone(),
+					palette: state.palette.clone(),
+				};
+				match std::fs::write(&path, project.to_text()) {
+					Ok(()) => frame.set_status_text(&format!("Saved design to {path}"), 0),
+					Err(e) => frame.set_status_text(&format!("Save failed: {e}"), 0),
+				}
+			}
+		}
+		ID_OPEN_DESIGN => {
+			if let Some(path) = file_dialog(
+				&frame,
+				"Open design",
+				"Blind Designer design (*.bdd)|*.bdd",
 				false,
 			) {
-				match image::open(&path) {
-					Ok(img) => {
-						let entries = extract_palette(&img, 8);
-						let mut state = shared.borrow_mut();
-						state.palette =
-							entries.iter().map(|e| (e.color, Some(e.coverage))).collect();
-						if let Some(first) = entries.first() {
-							state.drawing.set_background(first.color);
+				match std::fs::read_to_string(&path) {
+					Ok(text) => match Project::from_text(&text) {
+						Ok(project) => {
+							let mut state = shared.borrow_mut();
+							state.drawing = project.drawing;
+							state.palette = project.palette;
+							state.layer = 0;
+							let layers = state.drawing.layers.len();
+							let shapes: usize =
+								state.drawing.layers.iter().map(|l| l.shapes.len()).sum();
+							let colors = state.palette.len();
+							refresh_lists(win, &state);
+							frame.set_status_text(
+								&format!(
+									"Opened design from {path}: {layers} layers, {shapes} shapes, {colors} palette colors. It replaces the previous design."
+								),
+								0,
+							);
 						}
-						refresh_lists(win, &state);
-						frame.set_status_text(
-							&format!(
-								"Extracted {} colors from the image. The largest is now the design background.",
-								entries.len()
-							),
+						Err(e) => frame.set_status_text(
+							&format!("That file could not be opened as a design: {e}"),
 							0,
-						);
-						if let Some(first) = entries.first() {
-							select_color(win, &state, first.color);
-						}
-					}
+						),
+					},
 					Err(e) => {
-						frame.set_status_text(&format!("Could not open that image: {e}"), 0);
+						frame.set_status_text(&format!("Could not read that file: {e}"), 0)
 					}
 				}
+			}
+		}
+		ID_FORMAT_HEX | ID_FORMAT_RGB | ID_FORMAT_HSL | ID_FORMAT_HSV => {
+			let format = match id {
+				ID_FORMAT_HEX => ColorFormat::Hex,
+				ID_FORMAT_RGB => ColorFormat::Rgb,
+				ID_FORMAT_HSL => ColorFormat::Hsl,
+				_ => ColorFormat::Hsv,
+			};
+			let current;
+			{
+				let mut state = shared.borrow_mut();
+				state.color_format = format;
+				if let Some(bar) = frame.get_menu_bar() {
+					for (fid, on) in [
+						(ID_FORMAT_HEX, format == ColorFormat::Hex),
+						(ID_FORMAT_RGB, format == ColorFormat::Rgb),
+						(ID_FORMAT_HSL, format == ColorFormat::Hsl),
+						(ID_FORMAT_HSV, format == ColorFormat::Hsv),
+					] {
+						bar.check_item(fid, on);
+					}
+				}
+				refresh_lists(win, &state);
+				current = selected_color(win, &state);
+			}
+			match current {
+				Some(c) => {
+					let state = shared.borrow();
+					select_color(win, &state, c);
+					frame.set_status_text(
+						&format!(
+							"Color values now shown as {}, for example {}.",
+							format.name(),
+							c.format(format)
+						),
+						0,
+					);
+				}
+				None => frame.set_status_text(
+					&format!("Color values now shown as {}.", format.name()),
+					0,
+				),
 			}
 		}
 		ID_EXPORT_PNG => {
@@ -724,7 +876,7 @@ fn dispatch(win: &Win, shared: &Shared, id: Id) {
 				let colors: Vec<Srgb> = if state.palette.is_empty() {
 					vec![state.drawing.background]
 				} else {
-					state.palette.iter().map(|(c, _)| *c).collect()
+					state.palette.iter().map(|pc| pc.color).collect()
 				};
 				match std::fs::write(&path, css_for_colors(&colors, "color")) {
 					Ok(()) => frame.set_status_text(&format!("Exported CSS to {path}"), 0),
@@ -775,13 +927,14 @@ fn dispatch(win: &Win, shared: &Shared, id: Id) {
 						} else {
 							let mut state = shared.borrow_mut();
 							for c in &found {
-								state.palette.push((c.color, None));
+								state.palette.push(PaletteColor::imported(c.color, &c.source));
 							}
 							refresh_lists(win, &state);
+							let format = state.color_format;
 							let notes: Vec<String> = found
 								.iter()
 								.take(6)
-								.map(|c| format!("{} ({})", c.color.to_hex(), c.source))
+								.map(|c| format!("{} ({})", c.color.format(format), c.source))
 								.collect();
 							frame.set_status_text(
 								&format!(
@@ -821,10 +974,17 @@ fn dispatch(win: &Win, shared: &Shared, id: Id) {
 						let mut state = shared.borrow_mut();
 						state.drawing = drawing;
 						state.layer = 0;
-						state.palette = imp.colors.iter().map(|c| (c.color, None)).collect();
+						state.palette = imp
+							.colors
+							.iter()
+							.map(|c| PaletteColor::imported(c.color, &c.source))
+							.collect();
 						if state.palette.is_empty() {
 							let bg = state.drawing.background;
-							state.palette.push((bg, None));
+							state.palette.push(PaletteColor::imported(
+								bg,
+								"the imported design's background",
+							));
 						}
 						let colors = state.palette.len();
 						refresh_lists(win, &state);
@@ -865,15 +1025,18 @@ fn dispatch(win: &Win, shared: &Shared, id: Id) {
 				ID_TINTS => (o.tints(4).iter().map(|c| c.to_srgb()).collect(), "tints"),
 				_ => (o.tones(4).iter().map(|c| c.to_srgb()).collect(), "tones"),
 			};
-			add_colors(win, &mut state, &colors, what);
+			let provenance =
+				Provenance::Generated { scheme: format!("{what} of {}", base.to_hex()) };
+			add_colors(win, &mut state, &colors, what, &provenance);
 		}
 		ID_REMOVE_COLOR => {
 			let mut state = shared.borrow_mut();
 			if let Some(i) = win.palette_list.selected() {
 				if i < state.palette.len() {
-					let gone = state.palette.remove(i).0;
+					let gone = state.palette.remove(i).color;
+					let label = describe_in(gone, state.color_format);
 					refresh_lists(win, &state);
-					frame.set_status_text(&format!("Removed {}", describe(gone)), 0);
+					frame.set_status_text(&format!("Removed {label}"), 0);
 				}
 			} else {
 				frame.set_status_text("Select a palette color first.", 0);
@@ -916,15 +1079,15 @@ fn dispatch(win: &Win, shared: &Shared, id: Id) {
 			};
 			let fill = {
 				let state = shared.borrow();
-				selected_color(win, &state)
+				selected_color(win, &state).map(|c| (c, state.color_format))
 			};
-			let Some(fill) = fill else {
+			let Some((fill, format)) = fill else {
 				frame.set_status_text("Select a palette color to fill the shape first.", 0);
 				return;
 			};
 			if let Some(v) = numbers_dialog(
 				&frame,
-				&format!("Add {} filled with {}", kind.name(), describe(fill)),
+				&format!("Add {} filled with {}", kind.name(), describe_in(fill, format)),
 				&[
 					("X position", 0, 8000, 0),
 					("Y position", 0, 8000, 0),
@@ -945,15 +1108,15 @@ fn dispatch(win: &Win, shared: &Shared, id: Id) {
 		ID_ADD_STROKE => {
 			let fill = {
 				let state = shared.borrow();
-				selected_color(win, &state)
+				selected_color(win, &state).map(|c| (c, state.color_format))
 			};
-			let Some(fill) = fill else {
+			let Some((fill, format)) = fill else {
 				frame.set_status_text("Select a palette color for the stroke first.", 0);
 				return;
 			};
 			if let Some(text) = text_dialog(
 				&frame,
-				&format!("Add stroke in {}", describe(fill)),
+				&format!("Add stroke in {}", describe_in(fill, format)),
 				"Points as x,y pairs, separated by spaces (for example: 10,20 100,20 100,80)",
 				"10,10 200,10 200,100",
 			) {
@@ -1085,7 +1248,11 @@ fn dispatch(win: &Win, shared: &Shared, id: Id) {
 
 fn build_menus(frame: &Frame) {
 	let file = Menu::builder()
+		.append_item(ID_OPEN_DESIGN, "Open &Design…", "")
+		.append_item(ID_SAVE_DESIGN, "&Save Design…", "")
+		.append_separator()
 		.append_item(ID_OPEN_IMAGE, "&Open Image…\tCtrl+O", "")
+		.append_item(ID_EXTRACT_IMAGE, "&Extract Colors from Image…", "")
 		.append_item(ID_IMPORT_CSS, "Import &CSS Colors…", "")
 		.append_item(ID_IMPORT_HTML, "Import &HTML Design…", "")
 		.append_separator()
@@ -1125,6 +1292,12 @@ fn build_menus(frame: &Frame) {
 		.append_separator()
 		.append_item(ID_LAYERS, "&Layers…", "")
 		.build();
+	let view = Menu::builder()
+		.append_check_item(ID_FORMAT_HEX, "Color Values as &Hex", "")
+		.append_check_item(ID_FORMAT_RGB, "Color Values as &RGB", "")
+		.append_check_item(ID_FORMAT_HSL, "Color Values as HS&L", "")
+		.append_check_item(ID_FORMAT_HSV, "Color Values as HS&V", "")
+		.build();
 	let help = Menu::builder()
 		.append_item(ID_DICTIONARY, "&Dictionary…", "")
 		.append_item(ID_HELP_FILE, "&Help and Worked Examples…", "")
@@ -1136,9 +1309,11 @@ fn build_menus(frame: &Frame) {
 		.append(file, "&File")
 		.append(palette, "&Palette")
 		.append(design, "&Design")
+		.append(view, "&View")
 		.append(help, "&Help")
 		.build();
 	bar.check_item(ID_SOUND_CUES, true); // sound cues start on
+	bar.check_item(ID_FORMAT_HEX, true); // color values start as hex
 	frame.set_menu_bar(bar);
 }
 
@@ -1212,10 +1387,11 @@ fn main() {
 
 		let start = Srgb::new(58, 124, 165);
 		let shared: Shared = Rc::new(RefCell::new(State {
-			palette: vec![(start, None)],
+			palette: vec![PaletteColor::starter(start)],
 			drawing: Drawing::new(800, 600, Srgb::WHITE),
 			layer: 0,
 			sound_cues: true,
+			color_format: ColorFormat::Hex,
 		}));
 		let win = Rc::new(Win {
 			frame,
@@ -1257,13 +1433,13 @@ fn main() {
 						let mut state = s.borrow_mut();
 						if let Some(i) = w.palette_list.selected() {
 							if i < state.palette.len() {
-								state.palette[i] = (c, None);
+								state.palette[i] = PaletteColor::typed(c);
 								refresh_lists(&w, &state);
 								select_color(&w, &state, c);
 								return;
 							}
 						}
-						state.palette.push((c, None));
+						state.palette.push(PaletteColor::typed(c));
 						refresh_lists(&w, &state);
 						select_color(&w, &state, c);
 					}
@@ -1286,13 +1462,13 @@ fn main() {
 				let mut state = s.borrow_mut();
 				if let Some(i) = w.palette_list.selected() {
 					if i < state.palette.len() {
-						state.palette[i] = (c, None);
+						state.palette[i] = PaletteColor::typed(c);
 						refresh_lists(&w, &state);
 						select_color(&w, &state, c);
 						return;
 					}
 				}
-				state.palette.push((c, None));
+				state.palette.push(PaletteColor::typed(c));
 				refresh_lists(&w, &state);
 				select_color(&w, &state, c);
 			});

@@ -1,0 +1,527 @@
+//! project: save and load a whole design as one text file.
+//!
+//! The file holds everything the app state holds: the canvas, the
+//! background, every layer with its shapes (captions, angles, brush
+//! widths, stroke points), the palette with each color's provenance,
+//! and the full event log — so an opened design is the same design,
+//! history included, not just the same picture.
+//!
+//! The format is hand-rolled line-oriented text in the recreation
+//! file's spirit (serde is not a workspace dependency, and one design
+//! per file needs no more than this): one record per line, space-
+//! separated fields, strings double-quoted with backslash escapes.
+//! Numbers that must round-trip exactly (angles, coverage) are written
+//! with `{:?}`, Rust's shortest round-trip float form.
+//! ponytail: hand-rolled format by design — upgrade path is serde_json
+//! if designs ever need to be read by other tools.
+
+use crate::design::{Shape, ShapeKind};
+use crate::drawing::{Drawing, Event, Layer};
+use crate::palette::{PaletteColor, Provenance};
+use crate::Srgb;
+
+/// A whole saved design: the drawing plus the palette.
+#[derive(Debug, Clone)]
+pub struct Project {
+	pub drawing: Drawing,
+	pub palette: Vec<PaletteColor>,
+}
+
+/// A string as a quoted, escaped token.
+fn quote(s: &str) -> String {
+	let mut out = String::from("\"");
+	for c in s.chars() {
+		match c {
+			'"' => out.push_str("\\\""),
+			'\\' => out.push_str("\\\\"),
+			'\n' => out.push_str("\\n"),
+			'\t' => out.push_str("\\t"),
+			_ => out.push(c),
+		}
+	}
+	out.push('"');
+	out
+}
+
+/// Split one line into tokens; a double-quoted token may contain
+/// spaces and backslash escapes.
+fn tokens(line: &str) -> Result<Vec<String>, String> {
+	let mut out = Vec::new();
+	let mut chars = line.chars().peekable();
+	loop {
+		while chars.peek() == Some(&' ') {
+			chars.next();
+		}
+		let Some(&c) = chars.peek() else { break };
+		if c == '"' {
+			chars.next();
+			let mut tok = String::new();
+			loop {
+				match chars.next() {
+					None => return Err(format!("unterminated string in line: {line}")),
+					Some('"') => break,
+					Some('\\') => match chars.next() {
+						Some('n') => tok.push('\n'),
+						Some('t') => tok.push('\t'),
+						Some(other) => tok.push(other),
+						None => return Err(format!("dangling escape in line: {line}")),
+					},
+					Some(other) => tok.push(other),
+				}
+			}
+			out.push(tok);
+		} else {
+			let mut tok = String::new();
+			while let Some(&c) = chars.peek() {
+				if c == ' ' {
+					break;
+				}
+				tok.push(c);
+				chars.next();
+			}
+			out.push(tok);
+		}
+	}
+	Ok(out)
+}
+
+fn num<T: std::str::FromStr>(toks: &[String], i: usize, what: &str) -> Result<T, String> {
+	toks.get(i)
+		.ok_or_else(|| format!("missing {what}"))
+		.and_then(|t| t.parse::<T>().map_err(|_| format!("bad {what}: {t}")))
+}
+
+fn hex(toks: &[String], i: usize) -> Result<Srgb, String> {
+	let t = toks.get(i).ok_or("missing color")?;
+	Srgb::from_hex(t).ok_or_else(|| format!("bad color: {t}"))
+}
+
+/// The fields of one shape, in file order. Shared by the layer shape
+/// lines and the shape-added / shape-removed log events.
+fn shape_fields(s: &Shape) -> String {
+	let kind = match s.kind {
+		ShapeKind::Rectangle => "rectangle",
+		ShapeKind::Ellipse => "ellipse",
+		ShapeKind::Stroke => "stroke",
+	};
+	let points = if s.points.is_empty() {
+		"-".to_string()
+	} else {
+		s.points.iter().map(|(x, y)| format!("{x},{y}")).collect::<Vec<_>>().join(";")
+	};
+	let caption = match &s.caption {
+		None => "-".to_string(),
+		Some(c) => quote(c),
+	};
+	format!(
+		"{kind} {} {} {} {} {} {:?} {} {points} {caption}",
+		s.x,
+		s.y,
+		s.w,
+		s.h,
+		s.fill.to_hex(),
+		s.angle,
+		s.brush
+	)
+}
+
+fn parse_shape(toks: &[String]) -> Result<Shape, String> {
+	if toks.len() != 10 {
+		return Err(format!("a shape needs 10 fields, got {}", toks.len()));
+	}
+	let kind = match toks[0].as_str() {
+		"rectangle" => ShapeKind::Rectangle,
+		"ellipse" => ShapeKind::Ellipse,
+		"stroke" => ShapeKind::Stroke,
+		other => return Err(format!("unknown shape kind: {other}")),
+	};
+	let points = if toks[8] == "-" {
+		Vec::new()
+	} else {
+		toks[8]
+			.split(';')
+			.map(|p| {
+				let (x, y) = p.split_once(',').ok_or_else(|| format!("bad point: {p}"))?;
+				Ok((
+					x.parse::<i32>().map_err(|_| format!("bad point: {p}"))?,
+					y.parse::<i32>().map_err(|_| format!("bad point: {p}"))?,
+				))
+			})
+			.collect::<Result<Vec<(i32, i32)>, String>>()?
+	};
+	Ok(Shape {
+		kind,
+		x: num(&toks, 1, "shape x")?,
+		y: num(&toks, 2, "shape y")?,
+		w: num(&toks, 3, "shape width")?,
+		h: num(&toks, 4, "shape height")?,
+		fill: hex(&toks, 5)?,
+		points,
+		brush: num(&toks, 7, "brush width")?,
+		angle: num(&toks, 6, "angle")?,
+		caption: if toks[9] == "-" { None } else { Some(toks[9].clone()) },
+	})
+}
+
+fn provenance_fields(p: &Provenance) -> String {
+	match p {
+		Provenance::Starter => "starter".to_string(),
+		Provenance::Typed => "typed".to_string(),
+		Provenance::Extracted { image } => format!("extracted {}", quote(image)),
+		Provenance::Generated { scheme } => format!("generated {}", quote(scheme)),
+		Provenance::Imported { source } => format!("imported {}", quote(source)),
+	}
+}
+
+fn parse_provenance(toks: &[String]) -> Result<Provenance, String> {
+	match toks.first().map(String::as_str) {
+		Some("starter") => Ok(Provenance::Starter),
+		Some("typed") => Ok(Provenance::Typed),
+		Some("extracted") => Ok(Provenance::Extracted {
+			image: toks.get(1).ok_or("missing image name")?.clone(),
+		}),
+		Some("generated") => Ok(Provenance::Generated {
+			scheme: toks.get(1).ok_or("missing scheme")?.clone(),
+		}),
+		Some("imported") => Ok(Provenance::Imported {
+			source: toks.get(1).ok_or("missing import source")?.clone(),
+		}),
+		_ => Err("unknown provenance".to_string()),
+	}
+}
+
+fn event_line(e: &Event) -> String {
+	match e {
+		Event::CanvasSet { width, height } => format!("event canvas {width} {height}"),
+		Event::BackgroundSet { color } => format!("event background {}", color.to_hex()),
+		Event::LayerAdded { name } => format!("event layer-added {}", quote(name)),
+		Event::LayerRenamed { from, to } => {
+			format!("event layer-renamed {} {}", quote(from), quote(to))
+		}
+		Event::LayerRemoved { name } => format!("event layer-removed {}", quote(name)),
+		Event::LayerVisibility { name, visible } => format!(
+			"event layer-visibility {} {}",
+			quote(name),
+			if *visible { "visible" } else { "hidden" }
+		),
+		Event::ShapeAdded { layer, shape } => {
+			format!("event shape-added {} {}", quote(layer), shape_fields(shape))
+		}
+		Event::ShapeRemoved { layer, shape } => {
+			format!("event shape-removed {} {}", quote(layer), shape_fields(shape))
+		}
+		Event::ShapeShifted { layer, index, dx, dy } => {
+			format!("event shape-shifted {} {index} {dx} {dy}", quote(layer))
+		}
+		Event::ShapeResized { layer, index, w, h } => {
+			format!("event shape-resized {} {index} {w} {h}", quote(layer))
+		}
+		Event::ShapeRotated { layer, index, angle } => {
+			format!("event shape-rotated {} {index} {angle:?}", quote(layer))
+		}
+		Event::ShapeRecolored { layer, index, color } => {
+			format!("event shape-recolored {} {index} {}", quote(layer), color.to_hex())
+		}
+		Event::ShapeCaptioned { layer, index } => {
+			format!("event shape-captioned {} {index}", quote(layer))
+		}
+	}
+}
+
+fn parse_event(toks: &[String]) -> Result<Event, String> {
+	// toks[0] is "event"; toks[1] is the kind.
+	let name = |i: usize| toks.get(i).cloned().ok_or("missing layer name");
+	match toks.get(1).map(String::as_str) {
+		Some("canvas") => Ok(Event::CanvasSet {
+			width: num(toks, 2, "canvas width")?,
+			height: num(toks, 3, "canvas height")?,
+		}),
+		Some("background") => Ok(Event::BackgroundSet { color: hex(toks, 2)? }),
+		Some("layer-added") => Ok(Event::LayerAdded { name: name(2)? }),
+		Some("layer-renamed") => Ok(Event::LayerRenamed { from: name(2)?, to: name(3)? }),
+		Some("layer-removed") => Ok(Event::LayerRemoved { name: name(2)? }),
+		Some("layer-visibility") => Ok(Event::LayerVisibility {
+			name: name(2)?,
+			visible: match toks.get(3).map(String::as_str) {
+				Some("visible") => true,
+				Some("hidden") => false,
+				_ => return Err("bad layer visibility".to_string()),
+			},
+		}),
+		Some("shape-added") => Ok(Event::ShapeAdded {
+			layer: name(2)?,
+			shape: parse_shape(&toks[3..])?,
+		}),
+		Some("shape-removed") => Ok(Event::ShapeRemoved {
+			layer: name(2)?,
+			shape: parse_shape(&toks[3..])?,
+		}),
+		Some("shape-shifted") => Ok(Event::ShapeShifted {
+			layer: name(2)?,
+			index: num(toks, 3, "shape index")?,
+			dx: num(toks, 4, "shift x")?,
+			dy: num(toks, 5, "shift y")?,
+		}),
+		Some("shape-resized") => Ok(Event::ShapeResized {
+			layer: name(2)?,
+			index: num(toks, 3, "shape index")?,
+			w: num(toks, 4, "shape width")?,
+			h: num(toks, 5, "shape height")?,
+		}),
+		Some("shape-rotated") => Ok(Event::ShapeRotated {
+			layer: name(2)?,
+			index: num(toks, 3, "shape index")?,
+			angle: num(toks, 4, "angle")?,
+		}),
+		Some("shape-recolored") => Ok(Event::ShapeRecolored {
+			layer: name(2)?,
+			index: num(toks, 3, "shape index")?,
+			color: hex(toks, 4)?,
+		}),
+		Some("shape-captioned") => Ok(Event::ShapeCaptioned {
+			layer: name(2)?,
+			index: num(toks, 3, "shape index")?,
+		}),
+		_ => Err("unknown event kind".to_string()),
+	}
+}
+
+impl Project {
+	/// The whole project as project-file text.
+	pub fn to_text(&self) -> String {
+		let d = &self.drawing;
+		let mut out = String::from("blind-designer-project 1\n");
+		out.push_str(&format!("canvas {} {}\n", d.width, d.height));
+		out.push_str(&format!("background {}\n", d.background.to_hex()));
+		out.push_str(&format!("palette {}\n", self.palette.len()));
+		for pc in &self.palette {
+			let cov = match pc.coverage {
+				Some(c) => format!("{c:?}"),
+				None => "-".to_string(),
+			};
+			out.push_str(&format!(
+				"color {} {} {}\n",
+				pc.color.to_hex(),
+				cov,
+				provenance_fields(&pc.provenance)
+			));
+		}
+		out.push_str(&format!("layers {}\n", d.layers.len()));
+		for layer in &d.layers {
+			out.push_str(&format!(
+				"layer {} {} {}\n",
+				quote(&layer.name),
+				if layer.visible { "visible" } else { "hidden" },
+				layer.shapes.len()
+			));
+			for shape in &layer.shapes {
+				out.push_str(&format!("shape {}\n", shape_fields(shape)));
+			}
+		}
+		out.push_str(&format!("log {}\n", d.log.len()));
+		for event in &d.log {
+			out.push_str(&event_line(event));
+			out.push('\n');
+		}
+		out.push_str("end\n");
+		out
+	}
+
+	/// Read a project file back. Anything malformed is an `Err` with
+	/// a plain-words reason; a partial project is never returned.
+	pub fn from_text(text: &str) -> Result<Project, String> {
+		let mut lines = text.lines();
+		let mut next = |what: &str| -> Result<Vec<String>, String> {
+			let line = lines.next().ok_or_else(|| format!("file ends before {what}"))?;
+			tokens(line)
+		};
+		let head = next("the header")?;
+		if head.len() != 2 || head[0] != "blind-designer-project" || head[1] != "1" {
+			return Err("not a Blind Designer project file".to_string());
+		}
+		let canvas = next("the canvas")?;
+		if canvas.first().map(String::as_str) != Some("canvas") {
+			return Err("missing canvas line".to_string());
+		}
+		let (width, height) = (num(&canvas, 1, "canvas width")?, num(&canvas, 2, "canvas height")?);
+		let bg = next("the background")?;
+		if bg.first().map(String::as_str) != Some("background") {
+			return Err("missing background line".to_string());
+		}
+		let background = hex(&bg, 1)?;
+
+		let head = next("the palette")?;
+		if head.first().map(String::as_str) != Some("palette") {
+			return Err("missing palette line".to_string());
+		}
+		let count: usize = num(&head, 1, "palette size")?;
+		let mut palette = Vec::with_capacity(count);
+		for _ in 0..count {
+			let toks = next("a palette color")?;
+			if toks.first().map(String::as_str) != Some("color") {
+				return Err("missing palette color line".to_string());
+			}
+			let coverage = if toks.get(2).map(String::as_str) == Some("-") {
+				None
+			} else {
+				Some(num(&toks, 2, "coverage")?)
+			};
+			palette.push(PaletteColor {
+				color: hex(&toks, 1)?,
+				coverage,
+				provenance: parse_provenance(&toks[3..])?,
+			});
+		}
+
+		let head = next("the layers")?;
+		if head.first().map(String::as_str) != Some("layers") {
+			return Err("missing layers line".to_string());
+		}
+		let count: usize = num(&head, 1, "layer count")?;
+		let mut layers = Vec::with_capacity(count);
+		for _ in 0..count {
+			let toks = next("a layer")?;
+			if toks.first().map(String::as_str) != Some("layer") {
+				return Err("missing layer line".to_string());
+			}
+			let mut layer = Layer {
+				name: toks.get(1).ok_or("missing layer name")?.clone(),
+				visible: match toks.get(2).map(String::as_str) {
+					Some("visible") => true,
+					Some("hidden") => false,
+					_ => return Err("bad layer visibility".to_string()),
+				},
+				shapes: Vec::new(),
+			};
+			let shapes: usize = num(&toks, 3, "shape count")?;
+			for _ in 0..shapes {
+				let toks = next("a shape")?;
+				if toks.first().map(String::as_str) != Some("shape") {
+					return Err("missing shape line".to_string());
+				}
+				layer.shapes.push(parse_shape(&toks[1..])?);
+			}
+			layers.push(layer);
+		}
+
+		let head = next("the event log")?;
+		if head.first().map(String::as_str) != Some("log") {
+			return Err("missing log line".to_string());
+		}
+		let count: usize = num(&head, 1, "log size")?;
+		let mut log = Vec::with_capacity(count);
+		for _ in 0..count {
+			let toks = next("a log event")?;
+			if toks.first().map(String::as_str) != Some("event") {
+				return Err("missing event line".to_string());
+			}
+			log.push(parse_event(&toks)?);
+		}
+		let tail = next("the end marker")?;
+		if tail.first().map(String::as_str) != Some("end") {
+			return Err("missing end marker".to_string());
+		}
+		Ok(Project {
+			drawing: Drawing { width, height, background, layers, log },
+			palette,
+		})
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+	use crate::design::ShapeKind;
+	use crate::ColorFormat;
+
+	/// A drawing that exercises every moving part: two layers (one
+	/// hidden, one renamed), a captioned rotated rectangle, a stroke
+	/// with points and a brush, and edits of every kind in the log.
+	fn rich_project() -> Project {
+		let mut d = Drawing::new(800, 600, Srgb::WHITE);
+		d.set_canvas(1024, 768);
+		d.set_background(Srgb::new(238, 238, 238));
+		let sky = d.add_layer("Sky \"top\" \\ layer");
+		let mut rect = Shape::new(ShapeKind::Rectangle, 10, 20, 100, 50, Srgb::new(15, 94, 104));
+		rect.caption = Some("a \"quoted\" caption\nwith a newline".to_string());
+		d.add_shape(sky, rect);
+		d.add_shape(sky, Shape::stroke(vec![(1, 2), (30, 40), (50, 8)], 7, Srgb::new(255, 128, 0)));
+		d.shift_shape(sky, 0, 5, -3);
+		d.resize_shape(sky, 0, 120, 60);
+		d.rotate_shape(sky, 0, 33.25);
+		d.recolor_shape(sky, 1, Srgb::new(200, 40, 30));
+		d.caption_shape(sky, 1, "the sun path".to_string());
+		d.rename_layer(0, "Ground");
+		d.set_layer_visible(0, false);
+		let gone = d.add_layer("Scratch");
+		d.add_shape(gone, Shape::new(ShapeKind::Ellipse, 0, 0, 9, 9, Srgb::BLACK));
+		d.remove_shape(gone, 0);
+		d.remove_layer(gone);
+		Project {
+			drawing: d,
+			palette: vec![
+				PaletteColor::starter(Srgb::new(58, 124, 165)),
+				PaletteColor::typed(Srgb::new(15, 94, 104)),
+				PaletteColor::extracted(Srgb::new(255, 128, 0), 0.42, "photo.jpg"),
+				PaletteColor::generated(Srgb::new(200, 40, 30), "complementary of #3A7CA5"),
+				PaletteColor::imported(Srgb::new(0, 0, 255), "custom property --brand-1"),
+			],
+		}
+	}
+
+	#[test]
+	fn project_round_trips_everything() {
+		let project = rich_project();
+		let text = project.to_text();
+		let back = Project::from_text(&text).expect("a saved project reads back");
+		// Serializing the loaded project reproduces the file byte for
+		// byte: nothing was lost or altered anywhere.
+		assert_eq!(back.to_text(), text);
+		assert_eq!(back.drawing.summary(), project.drawing.summary());
+		assert_eq!(back.drawing.log.len(), project.drawing.log.len());
+		assert_eq!(back.palette, project.palette);
+		// Spot-check the fields a byte comparison could theoretically
+		// hide behind a shared bug in both directions.
+		let sky = &back.drawing.layers[1];
+		assert_eq!(sky.name, "Sky \"top\" \\ layer");
+		assert!(!back.drawing.layers[0].visible);
+		let rect = &sky.shapes[0];
+		assert_eq!(rect.caption.as_deref(), Some("a \"quoted\" caption\nwith a newline"));
+		assert_eq!(rect.angle, 33.25);
+		assert_eq!((rect.x, rect.y, rect.w, rect.h), (15, 17, 120, 60));
+		let stroke = &sky.shapes[1];
+		assert_eq!(stroke.kind, ShapeKind::Stroke);
+		assert_eq!(stroke.points, vec![(1, 2), (30, 40), (50, 8)]);
+		assert_eq!(stroke.brush, 7);
+		assert_eq!(stroke.caption.as_deref(), Some("the sun path"));
+		let extracted = &back.palette[2];
+		assert_eq!(extracted.coverage, Some(0.42));
+		assert!(extracted.spoken(ColorFormat::Hex).contains("extracted from image photo.jpg"));
+	}
+
+	#[test]
+	fn a_fresh_drawing_round_trips() {
+		let project = Project {
+			drawing: Drawing::new(100, 80, Srgb::new(15, 94, 104)),
+			palette: Vec::new(),
+		};
+		let back = Project::from_text(&project.to_text()).unwrap();
+		assert_eq!(back.to_text(), project.to_text());
+		assert_eq!(back.drawing.layers.len(), 1);
+		assert_eq!(back.drawing.log.len(), 3);
+	}
+
+	#[test]
+	fn bad_files_are_rejected_not_half_read() {
+		assert!(Project::from_text("hello world").is_err());
+		assert!(Project::from_text("").is_err());
+		let text = rich_project().to_text();
+		// Truncated at any point: an error, never a partial project.
+		for cut in [10, text.len() / 3, text.len() / 2, text.len() - 5] {
+			assert!(Project::from_text(&text[..cut]).is_err(), "cut at {cut}");
+		}
+		// A corrupted number is an error too.
+		let broken = text.replacen("canvas 1024", "canvas wide", 1);
+		assert!(Project::from_text(&broken).is_err());
+	}
+}

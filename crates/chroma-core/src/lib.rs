@@ -12,8 +12,45 @@ use std::fmt;
 pub mod design;
 pub mod dictionary;
 pub mod drawing;
+pub mod palette;
+pub mod project;
 pub mod sound;
 pub mod web;
+
+/// How a color value is written when it is spoken or displayed: the
+/// user's preference, chosen in the app's View menu. Captions and the
+/// recreation file always use hex (they are a stable file format);
+/// everything the app says live follows this choice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ColorFormat {
+	Hex,
+	Rgb,
+	Hsl,
+	Hsv,
+}
+
+impl ColorFormat {
+	pub fn name(self) -> &'static str {
+		match self {
+			ColorFormat::Hex => "hex",
+			ColorFormat::Rgb => "RGB",
+			ColorFormat::Hsl => "HSL",
+			ColorFormat::Hsv => "HSV",
+		}
+	}
+}
+
+fn hue_degrees(r: f32, g: f32, b: f32, max: f32, d: f32) -> f32 {
+	if d == 0.0 {
+		0.0
+	} else if max == r {
+		wrap_hue(60.0 * ((g - b) / d % 6.0))
+	} else if max == g {
+		60.0 * ((b - r) / d + 2.0)
+	} else {
+		60.0 * ((r - g) / d + 4.0)
+	}
+}
 
 /// An sRGB color, 8 bits per channel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -52,6 +89,53 @@ impl Srgb {
 
 	pub fn to_hex(self) -> String {
 		format!("#{:02X}{:02X}{:02X}", self.r, self.g, self.b)
+	}
+
+	/// Hue, saturation, lightness in HSL terms: hue in degrees 0..360,
+	/// saturation and lightness in percent 0..100.
+	pub fn to_hsl(self) -> (f32, f32, f32) {
+		let (r, g, b) = (self.r as f32 / 255.0, self.g as f32 / 255.0, self.b as f32 / 255.0);
+		let max = r.max(g).max(b);
+		let min = r.min(g).min(b);
+		let d = max - min;
+		let l = (max + min) / 2.0;
+		let s = if d == 0.0 {
+			0.0
+		} else if l > 0.5 {
+			d / (2.0 - max - min)
+		} else {
+			d / (max + min)
+		};
+		(hue_degrees(r, g, b, max, d), s * 100.0, l * 100.0)
+	}
+
+	/// Hue, saturation, value in HSV terms: hue in degrees 0..360,
+	/// saturation and value in percent 0..100.
+	pub fn to_hsv(self) -> (f32, f32, f32) {
+		let (r, g, b) = (self.r as f32 / 255.0, self.g as f32 / 255.0, self.b as f32 / 255.0);
+		let max = r.max(g).max(b);
+		let min = r.min(g).min(b);
+		let d = max - min;
+		let s = if max == 0.0 { 0.0 } else { d / max };
+		(hue_degrees(r, g, b, max, d), s * 100.0, max * 100.0)
+	}
+
+	/// The color written in one of the spoken/displayed formats:
+	/// `#0F5E68`, `rgb(15, 94, 104)`, `hsl(187, 75%, 23%)` or
+	/// `hsv(187, 86%, 41%)`.
+	pub fn format(self, format: ColorFormat) -> String {
+		match format {
+			ColorFormat::Hex => self.to_hex(),
+			ColorFormat::Rgb => format!("rgb({}, {}, {})", self.r, self.g, self.b),
+			ColorFormat::Hsl => {
+				let (h, s, l) = self.to_hsl();
+				format!("hsl({h:.0}, {s:.0}%, {l:.0}%)")
+			}
+			ColorFormat::Hsv => {
+				let (h, s, v) = self.to_hsv();
+				format!("hsv({h:.0}, {s:.0}%, {v:.0}%)")
+			}
+		}
 	}
 
 	fn to_linear(self) -> [f32; 3] {
@@ -313,13 +397,20 @@ fn chroma_word(c: f32) -> &'static str {
 /// Example: "dark moderate teal (#0F5E68), lightness 44 percent, chroma
 /// 0.07, hue 208 degrees".
 pub fn describe(color: Srgb) -> String {
+	describe_in(color, ColorFormat::Hex)
+}
+
+/// `describe` with the color value written in the user's chosen
+/// format instead of hex.
+pub fn describe_in(color: Srgb, format: ColorFormat) -> String {
 	let o = color.to_oklch();
+	let value = color.format(format);
 	if o.c < 0.02 {
 		// Achromatic: hue is meaningless, don't invent one.
 		return format!(
 			"{} gray ({}), lightness {:.0} percent",
 			lightness_word(o.l),
-			color.to_hex(),
+			value,
 			o.l * 100.0
 		);
 	}
@@ -328,7 +419,7 @@ pub fn describe(color: Srgb) -> String {
 		lightness_word(o.l),
 		chroma_word(o.c),
 		hue_family(o.h),
-		color.to_hex(),
+		value,
 		o.l * 100.0,
 		o.c,
 		o.h
@@ -502,6 +593,50 @@ mod tests {
 		let gray = describe(Srgb::new(120, 120, 120));
 		assert!(gray.contains("gray"), "{gray}");
 		assert!(!gray.contains("hue"), "{gray}");
+	}
+
+	#[test]
+	fn color_formats_write_the_same_color_four_ways() {
+		let teal = Srgb::new(15, 94, 104);
+		assert_eq!(teal.format(ColorFormat::Hex), "#0F5E68");
+		assert_eq!(teal.format(ColorFormat::Rgb), "rgb(15, 94, 104)");
+		assert_eq!(teal.format(ColorFormat::Hsl), "hsl(187, 75%, 23%)");
+		assert_eq!(teal.format(ColorFormat::Hsv), "hsv(187, 86%, 41%)");
+		// Achromatic colors have no hue and no saturation in any format.
+		let gray = Srgb::new(120, 120, 120);
+		assert_eq!(gray.format(ColorFormat::Hsl), "hsl(0, 0%, 47%)");
+		assert_eq!(gray.format(ColorFormat::Hsv), "hsv(0, 0%, 47%)");
+		// describe_in swaps only the value; the words stay put.
+		assert!(describe_in(teal, ColorFormat::Hex).contains("(#0F5E68)"));
+		assert!(describe_in(teal, ColorFormat::Rgb).contains("(rgb(15, 94, 104))"));
+		assert!(describe_in(teal, ColorFormat::Hsl).contains("(hsl(187, 75%, 23%))"));
+		assert!(describe_in(gray, ColorFormat::Hsv).contains("(hsv(0, 0%, 47%))"));
+		assert_eq!(describe(teal), describe_in(teal, ColorFormat::Hex));
+	}
+
+	#[test]
+	fn extraction_count_is_the_callers_choice() {
+		// 48 well-separated colors in equal columns: the extractor must
+		// honour a large requested count, not stop at a small fixed cap.
+		let vals = [0u8, 85, 170, 255];
+		let mut combos: Vec<[u8; 3]> = Vec::new();
+		for &r in &vals {
+			for &g in &vals {
+				for &b in &vals {
+					combos.push([r, g, b]);
+				}
+			}
+		}
+		let mut raw = image::RgbImage::new(480, 10);
+		for (x, _y, p) in raw.enumerate_pixels_mut() {
+			*p = image::Rgb(combos[(x / 10) as usize % 48]);
+		}
+		let img = image::DynamicImage::ImageRgb8(raw);
+		let many = extract_palette(&img, 48);
+		let few = extract_palette(&img, 8);
+		assert!(few.len() <= 8, "asked for 8, got {}", few.len());
+		assert!(many.len() >= 24, "asked for 48 well-separated colors, got {}", many.len());
+		assert!(many.len() > few.len());
 	}
 
 	#[test]

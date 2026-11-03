@@ -149,3 +149,41 @@ TIPS
 - A drawing always keeps at least one layer. Hide a layer to compare
   the design with and without its shapes; hidden layers do not paint
   and do not export to PNG.
+
+SAVING AND OPENING DESIGNS
+
+- File, Save Design writes the whole design to a .bdd file: the
+  canvas, the background, every layer and shape, the palette with
+  each color's provenance, and the full step-by-step log.
+- File, Open Design reads one back. The opened design replaces the
+  current one, history included — export a summary afterwards and
+  the steps are the same steps you saved.
+
+WHERE EACH COLOR CAME FROM
+
+Every palette entry says how it got there, right in the palette
+list: "typed in by hand", "extracted from image photo.jpg" (with
+the percent of the image it covers), "generated as complementary
+of" a base color, or "imported from" the CSS or HTML source it was
+found in. When a design is saved, the provenance is saved with it.
+
+Worked example: press Apply Hex with a color selected and the entry
+is restamped "typed in by hand" — the palette always tells the
+truth about the latest way a color arrived.
+
+COLOR VALUES YOUR WAY
+
+View menu: Color Values as Hex, RGB, HSL or HSV. Every spoken and
+displayed color value follows the choice — the palette list, the
+selected-color readout, the status line. Captions and the summary
+(recreation) file keep hex, because those are saved file formats
+and stay stable. The choice is yours per session; the app starts
+in hex.
+
+EXTRACTING MORE COLORS
+
+File, Open Image and File, Extract Colors from Image both ask how
+many colors to extract: 8 by default, up to 64. Open Image replaces
+the palette and sets the background to the largest color, as
+before. Extract Colors from Image only adds to the palette — use it
+to mine any image for colors without touching your design.

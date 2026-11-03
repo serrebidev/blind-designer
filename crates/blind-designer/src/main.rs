@@ -15,7 +15,9 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use chroma_core::design::{css_for_colors, Shape, ShapeKind};
-use chroma_core::drawing::Drawing;
+use chroma_core::dictionary;
+use chroma_core::drawing::{Drawing, Event};
+use chroma_core::sound::{cue_at, cue_for_shape, tone_wav, Cue};
 use chroma_core::{describe, extract_palette, Oklch, Srgb};
 use quiet_list::{QuietList, Select};
 use wxdragon::prelude::*;
@@ -47,6 +49,12 @@ const ID_LAYERS: Id = 310;
 const ID_RESIZE_SHAPE: Id = 311;
 const ID_EXPORT_SUMMARY: Id = 106;
 const ID_ABOUT: Id = 401;
+const ID_DICTIONARY: Id = 402;
+const ID_HELP_FILE: Id = 403;
+const ID_SOUND_CUES: Id = 404;
+
+/// The help file, shipped inside the app: worked examples included.
+const HELP_TEXT: &str = include_str!("help.md");
 
 struct State {
 	/// Palette colors, with image coverage when extracted from an image.
@@ -54,6 +62,8 @@ struct State {
 	drawing: Drawing,
 	/// Index of the layer new shapes land on.
 	layer: usize,
+	/// Sound cues while drawing (Help menu toggle, on by default).
+	sound_cues: bool,
 }
 
 struct Win {
@@ -121,6 +131,46 @@ fn announce(win: &Win, state: &State) {
 	if let Some(last) = state.drawing.log.last() {
 		let step = last.describe(&state.drawing);
 		win.frame.set_status_text(&step, 0);
+	}
+	// And sound it (Q7): the cue's pitch, pan and length say where the
+	// changed shape is and how big it is, alongside the spoken words.
+	if state.sound_cues {
+		if let Some(cue) = cue_for_last(state) {
+			play_cue(cue);
+		}
+	}
+}
+
+thread_local! {
+	/// The cue currently sounding. wxSound plays asynchronously, so the
+	/// object is kept alive here; replacing it stops the previous cue.
+	static CURRENT_SOUND: RefCell<Option<Sound>> = const { RefCell::new(None) };
+}
+
+fn play_cue(cue: Cue) {
+	let sound = Sound::from_data(&tone_wav(&cue));
+	if sound.is_ok() {
+		sound.play(SoundFlags::Async);
+		CURRENT_SOUND.with(|c| *c.borrow_mut() = Some(sound));
+	}
+}
+
+/// The cue for the newest log entry: shape events cue from the shape
+/// itself; anything else gets a neutral centre cue as a soft tick.
+fn cue_for_last(state: &State) -> Option<Cue> {
+	let d = &state.drawing;
+	let shape_cue = |layer: &str, index: usize| {
+		let l = d.layers.iter().find(|l| l.name == layer)?;
+		let s = l.shapes.get(index)?;
+		Some(cue_for_shape(s, d.width, d.height))
+	};
+	match d.log.last()? {
+		Event::ShapeAdded { shape, .. } => Some(cue_for_shape(shape, d.width, d.height)),
+		Event::ShapeShifted { layer, index, .. }
+		| Event::ShapeResized { layer, index, .. }
+		| Event::ShapeRotated { layer, index, .. }
+		| Event::ShapeRecolored { layer, index, .. } => shape_cue(layer, *index),
+		_ => Some(cue_at(0.5, 0.5)),
 	}
 }
 
@@ -407,10 +457,135 @@ fn layers_dialog(win: &Win, shared: &Shared) {
 	dialog.show_modal();
 }
 
+/// The Dictionary dialog (Help menu): search the built-in design-terms
+/// dictionary (chroma-core::dictionary) and read definitions in a
+/// reviewable text field. The list is labelled "Dictionary terms", the
+/// definition box "Definition"; opening the dialog moves no focus
+/// anywhere else, and closing returns to the main window.
+fn dictionary_dialog(win: &Win) {
+	let frame = win.frame;
+	let dialog = Dialog::builder(&frame, "Design Terms Dictionary").with_size(560, 480).build();
+	let sizer = BoxSizer::builder(Orientation::Vertical).build();
+	let search_label = StaticText::builder(&dialog).with_label("Search terms").build();
+	let search_field = TextCtrl::builder(&dialog).build();
+	let search_button = Button::builder(&dialog).with_label("Search").build();
+	let search_row = BoxSizer::builder(Orientation::Horizontal).build();
+	search_row.add(&search_label, 0, SizerFlag::All, 5);
+	search_row.add(&search_field, 1, SizerFlag::All, 5);
+	search_row.add(&search_button, 0, SizerFlag::All, 5);
+	sizer.add_sizer(&search_row, 0, SizerFlag::Expand, 0);
+	let list_label = StaticText::builder(&dialog).with_label("Dictionary terms").build();
+	sizer.add(&list_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	let list = QuietList::<usize>::new(&dialog, "Dictionary terms");
+	sizer.add(&list, 1, SizerFlag::Expand | SizerFlag::All, 5);
+	let list = Rc::new(list);
+	let def_label = StaticText::builder(&dialog).with_label("Definition").build();
+	sizer.add(&def_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	let definition = TextCtrl::builder(&dialog)
+		.with_style(TextCtrlStyle::MultiLine | TextCtrlStyle::ReadOnly)
+		.build();
+	sizer.add(&definition, 1, SizerFlag::Expand | SizerFlag::All, 5);
+	let close = Button::builder(&dialog).with_label("Close").build();
+	sizer.add(&close, 0, SizerFlag::All, 5);
+	dialog.set_sizer(sizer, true);
+
+	let rows = |query: &str| -> Vec<(usize, String)> {
+		dictionary::search(query)
+			.iter()
+			.enumerate()
+			.map(|(i, en)| (i, en.term.to_string()))
+			.collect()
+	};
+	let show_selected = {
+		let (list, definition, search_field) =
+			(list.clone(), definition.clone(), search_field.clone());
+		move || {
+			let hits = dictionary::search(&search_field.get_value());
+			if let Some(i) = list.selected() {
+				if let Some(en) = hits.get(i) {
+					definition.set_value(&format!("{}: {}", en.term, en.definition));
+				}
+			}
+		}
+	};
+	let show_selected = Rc::new(show_selected);
+	list.update_labelled(rows(""), Select::Start);
+	show_selected();
+	{
+		let show = show_selected.clone();
+		list.on_selection_changed(move || show());
+	}
+	{
+		let (list, definition, search_field) =
+			(list.clone(), definition.clone(), search_field.clone());
+		search_button.on_click(move |_| {
+			let query = search_field.get_value();
+			let hits = dictionary::search(&query);
+			list.update_labelled(rows(&query), Select::Start);
+			match hits.first() {
+				Some(en) => {
+					definition.set_value(&format!("{}: {}", en.term, en.definition));
+					frame.set_status_text(
+						&format!("{} dictionary terms match.", hits.len()),
+						0,
+					);
+				}
+				None => {
+					definition.set_value("No term matches that search.");
+					frame.set_status_text("No dictionary term matches that search.", 0);
+				}
+			}
+		});
+	}
+	{
+		let dialog = dialog.clone();
+		close.on_click(move |_| dialog.end_modal(ID_CANCEL));
+	}
+	dialog.show_modal();
+}
+
+/// The Help dialog (Help menu): the shipped help file — how the app
+/// works plus step-by-step worked examples — in one read-only,
+/// reviewable text field labelled "Help and worked examples".
+fn help_dialog(win: &Win) {
+	let frame = win.frame;
+	let dialog = Dialog::builder(&frame, "Help and Worked Examples").with_size(640, 520).build();
+	let sizer = BoxSizer::builder(Orientation::Vertical).build();
+	let label = StaticText::builder(&dialog).with_label("Help and worked examples").build();
+	sizer.add(&label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	let text = TextCtrl::builder(&dialog)
+		.with_style(TextCtrlStyle::MultiLine | TextCtrlStyle::ReadOnly)
+		.build();
+	text.set_value(HELP_TEXT);
+	sizer.add(&text, 1, SizerFlag::Expand | SizerFlag::All, 5);
+	let close = Button::builder(&dialog).with_label("Close").build();
+	sizer.add(&close, 0, SizerFlag::All, 5);
+	dialog.set_sizer(sizer, true);
+	{
+		let dialog = dialog.clone();
+		close.on_click(move |_| dialog.end_modal(ID_CANCEL));
+	}
+	dialog.show_modal();
+}
+
 fn dispatch(win: &Win, shared: &Shared, id: Id) {
 	let frame = win.frame;
 	match id {
 		ID_EXIT => frame.close(true),
+		ID_DICTIONARY => dictionary_dialog(win),
+		ID_HELP_FILE => help_dialog(win),
+		ID_SOUND_CUES => {
+			let mut state = shared.borrow_mut();
+			state.sound_cues = !state.sound_cues;
+			frame.set_status_text(
+				if state.sound_cues {
+					"Sound cues on: drawing changes play a pitch and position tone."
+				} else {
+					"Sound cues off. Spoken readouts are unchanged."
+				},
+				0,
+			);
+		}
 		ID_ABOUT => {
 			MessageDialog::builder(
 				&frame,
@@ -789,13 +964,20 @@ fn build_menus(frame: &Frame) {
 		.append_separator()
 		.append_item(ID_LAYERS, "&Layers…", "")
 		.build();
-	let help = Menu::builder().append_item(ID_ABOUT, "&About Blind Designer", "").build();
+	let help = Menu::builder()
+		.append_item(ID_DICTIONARY, "&Dictionary…", "")
+		.append_item(ID_HELP_FILE, "&Help and Worked Examples…", "")
+		.append_check_item(ID_SOUND_CUES, "&Sound Cues", "")
+		.append_separator()
+		.append_item(ID_ABOUT, "&About Blind Designer", "")
+		.build();
 	let bar = MenuBar::builder()
 		.append(file, "&File")
 		.append(palette, "&Palette")
 		.append(design, "&Design")
 		.append(help, "&Help")
 		.build();
+	bar.check_item(ID_SOUND_CUES, true); // sound cues start on
 	frame.set_menu_bar(bar);
 }
 
@@ -867,6 +1049,7 @@ fn main() {
 			palette: vec![(start, None)],
 			drawing: Drawing::new(800, 600, Srgb::WHITE),
 			layer: 0,
+			sound_cues: true,
 		}));
 		let win = Rc::new(Win {
 			frame,

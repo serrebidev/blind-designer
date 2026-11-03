@@ -10,7 +10,9 @@
 use std::fmt;
 
 pub mod design;
+pub mod dictionary;
 pub mod drawing;
+pub mod sound;
 
 /// An sRGB color, 8 bits per channel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

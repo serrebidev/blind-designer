@@ -28,6 +28,7 @@ pub mod sound;
 pub mod symbols;
 pub mod tactile;
 pub mod templates;
+pub mod variables;
 pub mod viewability;
 pub mod web;
 

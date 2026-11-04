@@ -611,6 +611,9 @@ fn event_line(e: &Event) -> String {
 		Event::ColorTreated { scope, count, locked } => {
 			format!("event color-treated {} {count} {locked}", quote(scope))
 		}
+		Event::VariablesSubstituted { count } => {
+			format!("event variables-substituted {count}")
+		}
 		Event::FrameAdded { index, duration_ms } => {
 			format!("event frame-added {index} {duration_ms}")
 		}
@@ -765,6 +768,9 @@ fn parse_event(toks: &[String]) -> Result<Event, String> {
 			scope: name(2)?,
 			count: num(toks, 3, "treated count")?,
 			locked: num(toks, 4, "locked count")?,
+		}),
+		Some("variables-substituted") => Ok(Event::VariablesSubstituted {
+			count: num(toks, 2, "substitution count")?,
 		}),
 		Some("frame-added") => Ok(Event::FrameAdded {
 			index: num(toks, 2, "frame index")?,
@@ -1409,6 +1415,31 @@ end
 		let back = Project::from_text(&text).unwrap();
 		assert!(back.goal.is_none());
 		assert!(!back.grayscale_start);
+	}
+
+	#[test]
+	fn variables_substituted_events_round_trip() {
+		let mut d = Drawing::new(100, 100, Srgb::WHITE);
+		d.add_shape(
+			0,
+			Shape::text("Dear {name}", "Serif", 12, 0, 0, 50, 10, Srgb::BLACK),
+		);
+		d.substitute_variables(&[("name".to_string(), "Jo".to_string())]);
+		let project = Project {
+			drawing: d,
+			palette: Vec::new(),
+			pinned_sliders: Vec::new(),
+			slider_target: AdjustTarget::BaseColor,
+			page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT,
+			goal: None,
+			grayscale_start: false,
+		};
+		let text = project.to_text();
+		assert!(text.contains("event variables-substituted 1\n"), "{text}");
+		assert!(text.contains("Dear Jo"), "{text}");
+		let back = Project::from_text(&text).unwrap();
+		assert_eq!(back.to_text(), text);
+		assert_eq!(back.drawing.summary(), project.drawing.summary());
 	}
 
 	#[test]

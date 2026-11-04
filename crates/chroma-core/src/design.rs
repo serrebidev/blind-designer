@@ -153,6 +153,52 @@ impl Shape {
 		s
 	}
 
+	/// A stroke drawn with a pointer: the raw path the hand
+	/// travelled, thinned by `sample_points` at `min_dist`
+	/// pixels, painted with the given brush width and color.
+	pub fn stroke_from_points(
+		raw: &[(i32, i32)],
+		min_dist: i32,
+		brush: u32,
+		fill: Srgb,
+	) -> Shape {
+		Shape::stroke(sample_points(raw, min_dist), brush, fill)
+	}
+}
+
+/// Thin a raw pointer path to the points a stroke keeps: the
+/// first point, every later point at least `min_dist` pixels
+/// (straight-line distance) from the last kept one, and the
+/// final point where the pointer lifted — so a fast scribble
+/// becomes a smooth stroke instead of a thousand-point one,
+/// and the stroke still ends where the hand stopped. A path of
+/// zero or one points passes through unchanged. Distances are
+/// compared squared, so no square roots are taken.
+pub fn sample_points(raw: &[(i32, i32)], min_dist: i32) -> Vec<(i32, i32)> {
+	let min = min_dist.max(0) as i64;
+	let min2 = min * min;
+	let mut kept: Vec<(i32, i32)> = Vec::new();
+	for &p in raw {
+		match kept.last() {
+			None => kept.push(p),
+			Some(&last) => {
+				let dx = p.0 as i64 - last.0 as i64;
+				let dy = p.1 as i64 - last.1 as i64;
+				if dx * dx + dy * dy >= min2 {
+					kept.push(p);
+				}
+			}
+		}
+	}
+	if let Some(&last) = raw.last() {
+		if kept.last() != Some(&last) {
+			kept.push(last);
+		}
+	}
+	kept
+}
+
+impl Shape {
 	/// Centre the rotation and measurements turn around.
 	pub fn center(&self) -> (f64, f64) {
 		(self.x as f64 + self.w as f64 / 2.0, self.y as f64 + self.h as f64 / 2.0)
@@ -912,6 +958,38 @@ mod tests {
 		assert!(solid > 100, "solid stroke painted only {solid} pixels");
 		assert!(dashed < solid && dashed > solid / 3, "dashed {dashed} vs solid {solid}");
 		assert!(dotted < dashed, "dotted {dotted} vs dashed {dashed}");
+	}
+
+	#[test]
+	fn sampling_keeps_first_far_and_final_points() {
+		// One pixel steps along a line, sampled at 4: every
+		// fourth point survives, plus the exact lift-off point.
+		let raw: Vec<(i32, i32)> = (0..=10).map(|x| (x, 0)).collect();
+		assert_eq!(
+			sample_points(&raw, 4),
+			vec![(0, 0), (4, 0), (8, 0), (10, 0)]
+		);
+		// Diagonal distance counts, not just axis steps:
+		// (3,3) is ~4.24 away, (2,2) only ~2.83.
+		assert_eq!(
+			sample_points(&[(0, 0), (2, 2), (3, 3)], 4),
+			vec![(0, 0), (3, 3)]
+		);
+		// A press and release on one spot stays one point;
+		// an empty path stays empty.
+		assert_eq!(sample_points(&[(5, 5)], 4), vec![(5, 5)]);
+		assert!(sample_points(&[], 4).is_empty());
+	}
+
+	#[test]
+	fn stroke_from_points_samples_and_bounds() {
+		let raw: Vec<(i32, i32)> = (0..=10).map(|x| (x * 2, x)).collect();
+		let s = Shape::stroke_from_points(&raw, 4, 3, Srgb::BLACK);
+		assert_eq!(s.kind, ShapeKind::Stroke);
+		assert_eq!(s.points, sample_points(&raw, 4));
+		assert!(s.points.len() < raw.len());
+		assert_eq!((s.x, s.y, s.w, s.h), (0, 0, 20, 10));
+		assert_eq!(s.brush, 3);
 	}
 
 	#[test]

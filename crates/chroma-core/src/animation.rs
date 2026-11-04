@@ -119,15 +119,42 @@ impl Drawing {
 		true
 	}
 
-	/// Set how long a frame shows, clamped to the supported range.
+	/// Set how long a frame shows, clamped to the range the
+	/// frame-duration slider definition carries (the single source
+	/// of that range). Consecutive sets on the same frame — a
+	/// slider dragging through values — coalesce into one log
+	/// event with the final duration.
 	pub fn set_frame_duration(&mut self, index: usize, duration_ms: u32) -> bool {
 		let Some(frame) = self.frames.get_mut(index) else {
 			return false;
 		};
 		let duration_ms = duration_ms.clamp(MIN_FRAME_MS, MAX_FRAME_MS);
 		frame.duration_ms = duration_ms;
-		self.log
-			.push(Event::FrameDurationSet { index, duration_ms });
+		self.log_slider_event(
+			Event::FrameDurationSet { index, duration_ms },
+			|e| matches!(e, Event::FrameDurationSet { index: i, .. } if *i == index),
+		);
+		true
+	}
+
+	/// Set EVERY frame's duration at once — the whole film at one
+	/// pace; this is what the frame-duration slider drives.
+	/// Clamped like a single frame's duration, and logged as ONE
+	/// event for the whole change, coalesced while a slider drags.
+	/// False when the design has no frames yet.
+	pub fn set_all_frame_durations(&mut self, duration_ms: u32) -> bool {
+		if self.frames.is_empty() {
+			return false;
+		}
+		let duration_ms = duration_ms.clamp(MIN_FRAME_MS, MAX_FRAME_MS);
+		for frame in &mut self.frames {
+			frame.duration_ms = duration_ms;
+		}
+		let count = self.frames.len();
+		self.log_slider_event(
+			Event::AllFramesDurationSet { count, duration_ms },
+			|e| matches!(e, Event::AllFramesDurationSet { .. }),
+		);
 		true
 	}
 
@@ -507,6 +534,31 @@ mod tests {
 		assert!(!d.remove_frame(9));
 		assert!(d.remove_frame(0));
 		assert_eq!(d.frames.len(), 2);
+	}
+
+	#[test]
+	fn set_all_frame_durations_is_one_coalesced_event() {
+		let mut d = drawing_with_circle();
+		// No frames yet: nothing to pace.
+		assert!(!d.set_all_frame_durations(500));
+		d.add_frame();
+		d.add_frame();
+		d.add_frame();
+		let logged = d.log.len();
+		assert!(d.set_all_frame_durations(500));
+		assert!(d.frames.iter().all(|f| f.duration_ms == 500));
+		assert_eq!(d.log.len(), logged + 1, "one event for the whole film");
+		// A slider dragging through values stays one event.
+		assert!(d.set_all_frame_durations(640));
+		assert!(d.set_all_frame_durations(700));
+		assert_eq!(d.log.len(), logged + 1);
+		assert!(d.frames.iter().all(|f| f.duration_ms == 700));
+		let text = d.log.last().unwrap().describe(&d);
+		assert!(text.contains("all 3 animation frames"), "{text}");
+		assert!(text.contains("700 milliseconds"), "{text}");
+		// Clamped like a single frame.
+		assert!(d.set_all_frame_durations(1));
+		assert!(d.frames.iter().all(|f| f.duration_ms == MIN_FRAME_MS));
 	}
 
 	#[test]

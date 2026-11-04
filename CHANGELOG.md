@@ -6,6 +6,29 @@ workflow.
 
 ## Unreleased
 
+- Sliders (Elshara's request): a fourth notebook tab, Sliders,
+  holds the settings a project wants to keep as native sliders —
+  brush width, the current color's red/green/blue, transparency,
+  element transparency and scale, stroke width, frame duration
+  (the whole film at one pace), extract count, tactile grid size,
+  sound cue volume, and eleven color adjustments (shade, tint,
+  tone, chroma, undertone, temperature, vibrancy, brightness,
+  clarity, fogginess, hardness). A project starts from scratch:
+  NO sliders are pinned until Design, Project Options pins them;
+  the pins, the adjustment target and the Page Up/Down jump
+  percent are saved in the design file. Adjustments act on the
+  current color, the selected element, or a whole layer at once,
+  always computed from the color the target started with, so
+  sliding back to zero restores it exactly; a layer adjustment is
+  one logged step. Moving a slider announces what changed and
+  that everything else stayed the same (View, Announce Slider
+  Changes turns that wording off). Keys: arrows take the smallest
+  step, Page Up/Down jump by the project's percent, Home/End go
+  to the ends, Ctrl+arrows hop focus between sliders. The brush,
+  animation-duration, extract-count and tactile dialogs now read
+  their ranges from the same slider definitions, and new shapes
+  are painted at the transparency slider's opacity (shape opacity
+  is stored per element and renders blended).
 - Elshara's feedback wave: lists now show only what the project
   actually contains — a new project starts with an empty palette
   (the starter colors arrive via Color, Load Starter Colors), and

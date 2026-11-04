@@ -9,12 +9,12 @@ have a step-by-step recipe that recreates the image exactly.
 
 THE MAIN WINDOW
 
-The window's lists live in a tabbed notebook: three tabs — Palette,
-Elements, Layers — that you reach with Tab and move between with
-Ctrl+Tab or the arrow keys. Every list shows only what the project
-actually contains: a new project starts with an empty palette, no
-elements, and its one starting layer. Nothing is listed before it
-exists.
+The window's lists live in a tabbed notebook: four tabs — Palette,
+Elements, Layers, Sliders — that you reach with Tab and move
+between with Ctrl+Tab or the arrow keys. Every list shows only
+what the project actually contains: a new project starts with an
+empty palette, no elements, and its one starting layer. Nothing
+is listed before it exists.
 
 - Palette tab: your working colors. A new palette is empty — add
   colors with the hex field, by extracting them from an image, by
@@ -42,6 +42,64 @@ exists.
   how many layers, elements, palette colors and animation frames
   the project has, and the canvas size. Design, Project Statistics
   gives the full count, element kind by element kind.
+- Sliders tab: the sliders this project has pinned — see THE
+  SLIDERS TAB below. A new project pins none.
+
+THE SLIDERS TAB
+
+Instead of a dialog for every setting, the settings you keep
+coming back to can live as sliders on their own tab, and they
+apply the moment you move them. Each slider spans the smallest to
+the largest value it can take, with the finest step there is:
+
+- Arrow keys move a slider by its smallest step (one unit: one
+  pixel, one level of red, one percent). Type-exact values still
+  exist everywhere they did before — the dialogs and fields all
+  still work, and they read their ranges from the same
+  definitions, so the numbers always agree.
+- Page Up and Page Down jump by a percent of the slider's range —
+  10 percent to start; change it in Project Options.
+- Home and End jump to the smallest and largest values.
+- Ctrl plus an arrow key hops from slider to slider without
+  changing any value: once your hand knows the tab, you can move
+  through your kept settings by feel.
+- Every slider carries its name and a spoken readout of its value
+  in words beside it: "Brush width, 12 pixels".
+
+Moving a slider says what changed and that everything else stayed
+the same — "Brush width 12 pixels. Everything else unchanged." —
+on the status line. View, Announce Slider Changes turns the
+"everything else" wording off, leaving just the name and value.
+
+Which sliders are pinned is the project's own choice, made in
+Design, Project Options (below): check the ones you want to keep,
+and they are saved in the design file with the project. A new
+project starts from scratch — no sliders pinned at all. Project
+Options is also where adding and removing lives now: the starter
+colors load there too, alongside Color, Load Starter Colors.
+
+The sliders there are: brush width (the current brush); the
+current color's red, green and blue; transparency (how see-through
+NEW shapes are painted — 0 is fully solid); element transparency
+and element scale (the Elements-tab selection: scale grows or
+shrinks it from the size it had when you started); stroke width
+(a selected stroke); frame duration (the whole film at one pace —
+every frame set at once); the extract-colors count; the tactile
+grid's columns and rows; the sound cue volume; and the color
+adjustments.
+
+The color adjustments — shade, tint, tone, chroma, undertone, and
+the descriptive ones: temperature (warm or cool), vibrancy
+(vibrant or dull), brightness, clarity, fogginess, hardness (hard
+or soft) — act on a target you choose: the current color (the
+brush color new strokes paint with), the selected element, or the
+whole current layer at once. Picking the target is the picker at
+the top of the Sliders tab when any adjustment is pinned, and
+also lives in Project Options. An adjustment is always worked out
+from the color the target had when you started moving its
+sliders, never piled on top of the last move, so sliding back to
+zero restores the original color exactly. A layer adjustment is
+one step in the log for the whole layer, spoken in words.
 
 THE MENUS
 
@@ -68,10 +126,11 @@ bar saying what it does.
   image, or symbol; Arrange Selected Shape — move, rotate, resize,
   recolor, or remove the element selected in the Elements list or
   tab; the Elements and Layers dialogs; Animation; Describe Area;
-  Project Statistics; save the current brush and open the brush
-  library.
+  Project Statistics; Project Options; save the current brush and
+  open the brush library.
 - View: how color values are shown and spoken — hex, RGB, HSL or
-  HSV.
+  HSV — and whether slider changes announce that everything else
+  stayed the same.
 - Help: the design-terms Dictionary, this help file, the Sound Cues
   toggle, and About.
 
@@ -105,6 +164,21 @@ SETTINGS: WHAT EACH ONE CHANGES
 - Text size (asked by Design, Add, Add Text): the placed text's
   point size, 6 to 200. It sets the text element's box and, in the
   HTML export, its real font size.
+- Pinned sliders (Design, Project Options): which sliders this
+  project keeps on its Sliders tab. Starts empty — pin only what
+  you use. Saved in the design file.
+- Color adjustments act on (Project Options, and the picker at
+  the top of the Sliders tab): the current color, the selected
+  element, or the whole current layer. Saved in the design file.
+- Page jump (Project Options): how far Page Up and Page Down move
+  a slider, as a percent of its range — 10 percent to start.
+  Saved in the design file.
+- Announce Slider Changes (View menu, starts on): moving a slider
+  also says that everything else stayed the same. Off: only the
+  slider's name and new value are spoken.
+- Sound cue volume (a slider, when pinned): how loud the sound
+  cues play, 0 to 100 percent. 100 is how they have always
+  sounded. Lasts for the session.
 
 SOUND CUES
 

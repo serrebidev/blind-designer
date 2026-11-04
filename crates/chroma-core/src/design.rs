@@ -57,6 +57,10 @@ pub struct Shape {
 	pub image_path: String,
 	/// Rotation in degrees, clockwise, around the shape's centre.
 	pub angle: f64,
+	/// How opaque the shape paints, as a percent: 100 paints the
+	/// fill color exactly, lower values blend with whatever is
+	/// already painted beneath, in paint order.
+	pub opacity: u8,
 	/// Hand-written caption, if any. `None` means "generate one for me".
 	pub caption: Option<String>,
 }
@@ -78,6 +82,7 @@ impl Shape {
 			font_size: 0,
 			image_path: String::new(),
 			angle: 0.0,
+			opacity: 100,
 			caption: None,
 		}
 	}
@@ -136,6 +141,27 @@ impl Shape {
 	pub fn center(&self) -> (f64, f64) {
 		(self.x as f64 + self.w as f64 / 2.0, self.y as f64 + self.h as f64 / 2.0)
 	}
+}
+
+/// Paint one pixel of a shape. At full opacity the color lands
+/// exactly — the design's promise that output colors are palette
+/// colors. Below full opacity the color blends with the pixel
+/// already painted, in paint order.
+fn put_shape_pixel(
+	img: &mut image::RgbImage,
+	x: u32,
+	y: u32,
+	px: image::Rgb<u8>,
+	opacity: u8,
+) {
+	if opacity >= 100 {
+		img.put_pixel(x, y, px);
+		return;
+	}
+	let old = img.get_pixel(x, y);
+	let a = opacity as u32;
+	let mix = |new: u8, old: u8| ((new as u32 * a + old as u32 * (100 - a)) / 100) as u8;
+	img.put_pixel(x, y, image::Rgb([mix(px[0], old[0]), mix(px[1], old[1]), mix(px[2], old[2])]));
 }
 
 #[derive(Debug, Clone)]
@@ -284,11 +310,11 @@ impl Design {
 		let (cx, cy) = shape.center();
 		let at = self.spot(cx, cy);
 		let words = color_words(shape.fill);
-		match shape.kind {
+		let mut out = match shape.kind {
 			ShapeKind::Stroke => {
 				if shape.points.len() < 2 {
-					return format!("single brush dot at {at}, {words}");
-				}
+					format!("single brush dot at {at}, {words}")
+				} else {
 				let (fx, fy) = shape.points[0];
 				let (lx, ly) = shape.points[shape.points.len() - 1];
 				let from = self.spot(fx as f64, fy as f64);
@@ -319,6 +345,7 @@ impl Design {
 					s.push_str(&format!(", {} pattern", shape.pattern));
 				}
 				s
+				}
 			}
 			ShapeKind::Text => {
 				let font = if shape.font.is_empty() {
@@ -356,12 +383,18 @@ impl Design {
 					shape.h
 				)
 			}
+		};
+		if shape.opacity < 100 {
+			out.push_str(&format!(", {} percent opaque", shape.opacity));
 		}
+		out
 	}
 
 	/// Render the design to an image: background fill, then each shape in
-	/// order. Rectangles and ellipses with hard edges (no blending — colors
-	/// in the output are exactly the palette colors, pixel for pixel).
+	/// order. Rectangles and ellipses with hard edges. A fully opaque
+	/// shape's colors land exactly — the output colors are the palette
+	/// colors, pixel for pixel; a shape below full opacity blends with
+	/// what is already painted beneath it, in paint order.
 	/// Strokes are stamped along their points with a square brush; a shape
 	/// with a rotation angle turns around its centre.
 	pub fn render(&self) -> image::RgbImage {
@@ -407,7 +440,7 @@ impl Design {
 							}
 						};
 						if inside {
-							img.put_pixel(x as u32, y as u32, px);
+							put_shape_pixel(&mut img, x as u32, y as u32, px, shape.opacity);
 						}
 					}
 				}
@@ -436,7 +469,7 @@ impl Design {
 							}
 						};
 						if inside {
-							img.put_pixel(x as u32, y as u32, px);
+							put_shape_pixel(&mut img, x as u32, y as u32, px, shape.opacity);
 						}
 					}
 				}
@@ -484,7 +517,7 @@ impl Design {
 			for y in (sy - half).floor() as i32..(sy + half).ceil() as i32 {
 				for x in (sx - half).floor() as i32..(sx + half).ceil() as i32 {
 					if x >= 0 && y >= 0 && x < w && y < h {
-						img.put_pixel(x as u32, y as u32, px);
+						put_shape_pixel(img, x as u32, y as u32, px, shape.opacity);
 					}
 				}
 			}
@@ -530,7 +563,7 @@ impl Design {
 								shape.y + row as i32 * scale + dy,
 							);
 							if x >= 0 && y >= 0 && x < iw && y < ih {
-								img.put_pixel(x as u32, y as u32, px);
+								put_shape_pixel(img, x as u32, y as u32, px, shape.opacity);
 							}
 						}
 					}
@@ -555,7 +588,13 @@ impl Design {
 					for x in 0..shape.w as i32 {
 						let (tx, ty) = (shape.x + x, shape.y + y);
 						if tx >= 0 && ty >= 0 && tx < iw && ty < ih {
-							img.put_pixel(tx as u32, ty as u32, *small.get_pixel(x as u32, y as u32));
+							put_shape_pixel(
+								img,
+								tx as u32,
+								ty as u32,
+								*small.get_pixel(x as u32, y as u32),
+								shape.opacity,
+							);
 						}
 					}
 				}
@@ -567,7 +606,7 @@ impl Design {
 		let (x1, y1) = (shape.x + shape.w as i32 - 1, shape.y + shape.h as i32 - 1);
 		let plot = |img: &mut image::RgbImage, x: i32, y: i32| {
 			if x >= 0 && y >= 0 && x < iw && y < ih {
-				img.put_pixel(x as u32, y as u32, px);
+				put_shape_pixel(img, x as u32, y as u32, px, shape.opacity);
 			}
 		};
 		for t in 0..2 {
@@ -638,6 +677,34 @@ pub fn css_for_colors(colors: &[Srgb], prefix: &str) -> String {
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	#[test]
+	fn render_blends_a_translucent_shape_over_what_is_beneath() {
+		let mut d = Design::new(4, 4, Srgb::WHITE);
+		let mut s = Shape::new(ShapeKind::Rectangle, 0, 0, 4, 4, Srgb::BLACK);
+		s.opacity = 50;
+		d.shapes.push(s);
+		let img = d.render();
+		// Half black over white lands exactly halfway.
+		assert_eq!(*img.get_pixel(2, 2), image::Rgb([127, 127, 127]));
+	}
+
+	#[test]
+	fn render_at_full_opacity_is_exact() {
+		let mut d = Design::new(4, 4, Srgb::WHITE);
+		d.shapes.push(Shape::new(ShapeKind::Rectangle, 0, 0, 4, 4, Srgb::BLACK));
+		assert_eq!(d.shapes[0].opacity, 100, "shapes start fully opaque");
+		assert_eq!(*d.render().get_pixel(2, 2), image::Rgb([0, 0, 0]));
+	}
+
+	#[test]
+	fn plain_description_mentions_opacity_only_below_full() {
+		let d = Design::new(100, 100, Srgb::WHITE);
+		let mut s = Shape::new(ShapeKind::Rectangle, 10, 10, 20, 20, Srgb::BLACK);
+		assert!(!d.describe_plain(&s).contains("opaque"), "{}", d.describe_plain(&s));
+		s.opacity = 40;
+		assert!(d.describe_plain(&s).ends_with(", 40 percent opaque"), "{}", d.describe_plain(&s));
+	}
 
 	#[test]
 	fn render_paints_shapes_in_order() {

@@ -77,6 +77,12 @@ pub fn cue_for_shape(shape: &Shape, canvas_width: u32, canvas_height: u32) -> Cu
 /// the tone never clicks. Constant-power panning keeps the loudness
 /// steady as the cue moves across the stereo field.
 pub fn tone_wav(cue: &Cue) -> Vec<u8> {
+	tone_wav_at(cue, 100)
+}
+
+/// `tone_wav` at a volume percent (the sound-volume slider's
+/// value): 100 is the full rendering level, 0 is silence.
+pub fn tone_wav_at(cue: &Cue, volume: u8) -> Vec<u8> {
 	let frames = (SAMPLE_RATE as usize * cue.duration_ms as usize) / 1000;
 	let fade = (SAMPLE_RATE as usize / 100).max(1); // 10 ms fades
 	// Pan law: angle 0 at hard left, pi/2 at hard right, pi/4 centre.
@@ -101,7 +107,10 @@ pub fn tone_wav(cue: &Cue) -> Vec<u8> {
 		let env = (i as f32 / fade as f32)
 			.min((frames - i) as f32 / fade as f32)
 			.min(1.0);
-		let s = (2.0 * std::f32::consts::PI * cue.freq_hz * t).sin() * env * 0.5;
+		let s = (2.0 * std::f32::consts::PI * cue.freq_hz * t).sin()
+			* env
+			* 0.5
+			* (volume.min(100) as f32 / 100.0);
 		for g in [gl, gr] {
 			let v = (s * g * i16::MAX as f32) as i16;
 			data.extend_from_slice(&v.to_le_bytes());
@@ -127,6 +136,33 @@ mod tests {
 		assert_eq!(cue_at(0.0, 0.5).pan, -1.0);
 		assert_eq!(cue_at(1.0, 0.5).pan, 1.0);
 		assert_eq!(cue_at(0.5, 0.5).pan, 0.0);
+	}
+
+	#[test]
+	fn volume_scales_the_tone_and_full_volume_is_the_old_rendering() {
+		let cue = cue_at(0.5, 0.5);
+		// 100 percent is exactly what tone_wav has always produced.
+		assert_eq!(tone_wav_at(&cue, 100), tone_wav(&cue));
+		// Silence renders the same length, same header, and every
+		// sample (after the 44-byte WAV header) at zero.
+		let silent = tone_wav_at(&cue, 0);
+		assert_eq!(silent.len(), tone_wav(&cue).len());
+		assert_eq!(&silent[..44], &tone_wav(&cue)[..44]);
+		assert!(silent[44..].iter().all(|b| *b == 0));
+		// Half volume peaks lower. (Skip the header: compare the
+		// loudest sample magnitude in the sample data.)
+		let peak = |wav: &[u8]| -> i32 {
+			wav[44..]
+				.chunks_exact(2)
+				.map(|p| i16::from_le_bytes([p[0], p[1]]) as i32)
+				.map(|v| v.abs())
+				.max()
+				.unwrap_or(0)
+		};
+		let half = peak(&tone_wav_at(&cue, 50));
+		let full = peak(&tone_wav(&cue));
+		assert!(half > 0 && half < full, "half {half} vs full {full}");
+		assert!((half * 2 - full).abs() <= 2, "half {half} vs full {full}");
 	}
 
 	#[test]

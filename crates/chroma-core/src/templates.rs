@@ -91,7 +91,7 @@ mod tests {
 			assert!(shape_count(&d) >= 4, "{name} is too empty: {}", shape_count(&d));
 			// A template is an ordinary design: it loads through the
 			// normal project path and comes back unchanged.
-			let text = Project { drawing: d.clone(), palette: Vec::new() }.to_text();
+			let text = Project { drawing: d.clone(), palette: Vec::new(), pinned_sliders: Vec::new(), slider_target: crate::sliders::AdjustTarget::BaseColor, page_jump_percent: crate::project::DEFAULT_PAGE_JUMP_PERCENT }.to_text();
 			let back = Project::from_text(&text).unwrap().drawing;
 			assert_eq!(back.summary(), d.summary(), "{name} changed in the project round-trip");
 			assert_eq!(back.flatten().caption_sheet(), d.flatten().caption_sheet());

@@ -163,6 +163,7 @@ pub enum Event {
 		hardness: i32,
 	},
 	ShapeCornerSet { layer: String, index: usize, corner: u8 },
+	ShapeLocked { layer: String, index: usize, locked: bool },
 	SceneInserted { name: String, count: usize },
 	FrameAdded { index: usize, duration_ms: u32 },
 	FrameDuplicated { index: usize },
@@ -359,6 +360,12 @@ impl Event {
 				"On layer \"{layer}\", set shape {}'s corners to {corner} percent rounded.",
 				index + 1
 			),
+			Event::ShapeLocked { layer, index, locked } => format!(
+				"On layer \"{layer}\", {} shape {}: bulk changes {} it.",
+				if *locked { "lock" } else { "unlock" },
+				index + 1,
+				if *locked { "now skip" } else { "reach" }
+			),
 			Event::SceneInserted { name, count } => format!(
 				"Insert scene \"{name}\": {count} elements, captioned as part of the scene."
 			),
@@ -370,6 +377,33 @@ impl Event {
 				"Replace animation frame {} with the canvas as it is now.",
 				index + 1
 			),
+		}
+	}
+}
+
+/// The result of a bulk color change (a layer-wide or
+/// depth-wide adjustment): how many shapes took the new color,
+/// and how many locked shapes the change passed by — the two
+/// numbers the app speaks as "N changed, M locked stayed the
+/// same". Both zero means the change never ran (a stale
+/// snapshot, a missing layer, an empty depth).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct BulkOutcome {
+	pub changed: usize,
+	pub locked: usize,
+}
+
+impl BulkOutcome {
+	pub const ZERO: BulkOutcome = BulkOutcome { changed: 0, locked: 0 };
+
+	/// The spoken form, for status lines and reports:
+	/// "3 changed, 1 locked stayed the same", or just "3
+	/// changed" when nothing was locked.
+	pub fn spoken(&self) -> String {
+		if self.locked == 0 {
+			format!("{} changed", self.changed)
+		} else {
+			format!("{} changed, {} locked stayed the same", self.changed, self.locked)
 		}
 	}
 }
@@ -632,6 +666,23 @@ impl Drawing {
 		true
 	}
 
+	/// Lock or unlock a shape against the bulk changes. A locked
+	/// shape is skipped by the layer-wide and depth-wide color
+	/// adjustments (and counted as having stayed the same);
+	/// direct edits to the shape itself are untouched by the
+	/// lock. Setting the state the shape already has still logs
+	/// the step the user took.
+	pub fn set_shape_locked(&mut self, layer: usize, index: usize, locked: bool) -> bool {
+		let name = {
+			let Some(l) = self.layers.get_mut(layer) else { return false };
+			let Some(s) = l.shapes.get_mut(index) else { return false };
+			s.locked = locked;
+			l.name.clone()
+		};
+		self.log.push(Event::ShapeLocked { layer: name, index, locked });
+		true
+	}
+
 	/// Adjust one shape's color: the amounts apply to `base`
 	/// — the color the shape had when the adjustment began — so
 	/// the result never compounds as a slider moves, and zeroing
@@ -692,45 +743,55 @@ impl Drawing {
 	/// Adjust every shape's color on a layer at once: each shape's
 	/// new color is the adjustment applied to its entry in `bases`
 	/// (the layer's colors when the adjustment began, in shape
-	/// order). Returns how many shapes were adjusted — zero when
-	/// the layer is missing or `bases` no longer matches it, so a
-	/// stale snapshot can never repaint the wrong shapes. Logged
-	/// as ONE event for the whole layer.
+	/// order). Locked shapes are skipped — the lock is exactly
+	/// this promise — and counted as having stayed the same.
+	/// Both counts are zero when the layer is missing or `bases`
+	/// no longer matches it, so a stale snapshot can never
+	/// repaint the wrong shapes. Logged as ONE event for the
+	/// whole layer, and only when something actually changed.
 	pub fn adjust_layer_colors(
 		&mut self,
 		layer: usize,
 		bases: &[Srgb],
 		adjust: ColorAdjust,
-	) -> usize {
-		let (name, count) = {
-			let Some(l) = self.layers.get_mut(layer) else { return 0 };
+	) -> BulkOutcome {
+		let (name, outcome) = {
+			let Some(l) = self.layers.get_mut(layer) else { return BulkOutcome::ZERO };
 			if bases.len() != l.shapes.len() || bases.is_empty() {
-				return 0;
+				return BulkOutcome::ZERO;
 			}
+			let mut outcome = BulkOutcome::ZERO;
 			for (s, base) in l.shapes.iter_mut().zip(bases.iter()) {
-				s.fill = adjust.apply(*base);
+				if s.locked {
+					outcome.locked += 1;
+				} else {
+					s.fill = adjust.apply(*base);
+					outcome.changed += 1;
+				}
 			}
-			(l.name.clone(), l.shapes.len())
+			(l.name.clone(), outcome)
 		};
-		self.log_slider_event(
-			Event::LayerColorsAdjusted {
-				name: name.clone(),
-				count,
-				shade: adjust.shade,
-				tint: adjust.tint,
-				tone: adjust.tone,
-				chroma: adjust.chroma,
-				undertone: adjust.undertone,
-				warmth: adjust.warmth,
-				vibrancy: adjust.vibrancy,
-				brightness: adjust.brightness,
-				clarity: adjust.clarity,
-				fog: adjust.fog,
-				hardness: adjust.hardness,
-			},
-			|e| matches!(e, Event::LayerColorsAdjusted { name: n, .. } if *n == name),
-		);
-		count
+		if outcome.changed > 0 {
+			self.log_slider_event(
+				Event::LayerColorsAdjusted {
+					name: name.clone(),
+					count: outcome.changed,
+					shade: adjust.shade,
+					tint: adjust.tint,
+					tone: adjust.tone,
+					chroma: adjust.chroma,
+					undertone: adjust.undertone,
+					warmth: adjust.warmth,
+					vibrancy: adjust.vibrancy,
+					brightness: adjust.brightness,
+					clarity: adjust.clarity,
+					fog: adjust.fog,
+					hardness: adjust.hardness,
+				},
+				|e| matches!(e, Event::LayerColorsAdjusted { name: n, .. } if *n == name),
+			);
+		}
+		outcome
 	}
 
 	/// Adjust the colors of every shape on every layer with one
@@ -739,15 +800,16 @@ impl Drawing {
 	/// (layer, shape) with the color it had when the adjustment
 	/// began; it must name exactly the role's shapes, no more and
 	/// no fewer, so a stale snapshot can never repaint the wrong
-	/// shapes. Returns how many shapes were adjusted — zero when
-	/// the role has no shapes or the snapshot is stale. Logged as
-	/// ONE event for the whole depth.
+	/// shapes. Locked shapes are skipped and counted as having
+	/// stayed the same. Both counts are zero when the role has
+	/// no shapes or the snapshot is stale. Logged as ONE event
+	/// for the whole depth, and only when something changed.
 	pub fn adjust_depth_colors(
 		&mut self,
 		role: DepthRole,
 		bases: &[(usize, usize, Srgb)],
 		adjust: ColorAdjust,
-	) -> usize {
+	) -> BulkOutcome {
 		// The role's current shapes, in paint order.
 		let current: Vec<(usize, usize)> = self
 			.layers
@@ -757,37 +819,45 @@ impl Drawing {
 			.flat_map(|(li, l)| (0..l.shapes.len()).map(move |si| (li, si)))
 			.collect();
 		if current.is_empty() || bases.len() != current.len() {
-			return 0;
+			return BulkOutcome::ZERO;
 		}
 		let mut sorted: Vec<(usize, usize)> =
 			bases.iter().map(|(li, si, _)| (*li, *si)).collect();
 		sorted.sort_unstable();
 		if sorted != current {
-			return 0;
+			return BulkOutcome::ZERO;
 		}
+		let mut outcome = BulkOutcome::ZERO;
 		for (li, si, base) in bases {
-			self.layers[*li].shapes[*si].fill = adjust.apply(*base);
+			let shape = &mut self.layers[*li].shapes[*si];
+			if shape.locked {
+				outcome.locked += 1;
+			} else {
+				shape.fill = adjust.apply(*base);
+				outcome.changed += 1;
+			}
 		}
-		let count = bases.len();
-		self.log_slider_event(
-			Event::DepthColorsAdjusted {
-				role,
-				count,
-				shade: adjust.shade,
-				tint: adjust.tint,
-				tone: adjust.tone,
-				chroma: adjust.chroma,
-				undertone: adjust.undertone,
-				warmth: adjust.warmth,
-				vibrancy: adjust.vibrancy,
-				brightness: adjust.brightness,
-				clarity: adjust.clarity,
-				fog: adjust.fog,
-				hardness: adjust.hardness,
-			},
-			|e| matches!(e, Event::DepthColorsAdjusted { role: r, .. } if *r == role),
-		);
-		count
+		if outcome.changed > 0 {
+			self.log_slider_event(
+				Event::DepthColorsAdjusted {
+					role,
+					count: outcome.changed,
+					shade: adjust.shade,
+					tint: adjust.tint,
+					tone: adjust.tone,
+					chroma: adjust.chroma,
+					undertone: adjust.undertone,
+					warmth: adjust.warmth,
+					vibrancy: adjust.vibrancy,
+					brightness: adjust.brightness,
+					clarity: adjust.clarity,
+					fog: adjust.fog,
+					hardness: adjust.hardness,
+				},
+				|e| matches!(e, Event::DepthColorsAdjusted { role: r, .. } if *r == role),
+			);
+		}
+		outcome
 	}
 
 	/// Insert a saved scene into this drawing: every element of
@@ -1026,7 +1096,7 @@ mod tests {
 		let logged = d.log.len();
 		let adj = ColorAdjust { shade: 50, ..Default::default() };
 		// All three shapes adjusted, counted, one log event.
-		assert_eq!(d.adjust_layer_colors(0, &bases, adj), 3);
+		assert_eq!(d.adjust_layer_colors(0, &bases, adj), BulkOutcome { changed: 3, locked: 0 });
 		assert_eq!(d.log.len(), logged + 1);
 		for (shape, base) in d.layers[0].shapes.iter().zip(bases.iter()) {
 			assert_eq!(shape.fill, adj.apply(*base));
@@ -1034,11 +1104,11 @@ mod tests {
 		}
 		// Dragging further replaces the event, never adds another.
 		let adj2 = ColorAdjust { shade: 80, ..Default::default() };
-		assert_eq!(d.adjust_layer_colors(0, &bases, adj2), 3);
+		assert_eq!(d.adjust_layer_colors(0, &bases, adj2), BulkOutcome { changed: 3, locked: 0 });
 		assert_eq!(d.log.len(), logged + 1);
 		// A stale snapshot (wrong shape count) changes nothing.
-		assert_eq!(d.adjust_layer_colors(0, &bases[..2], adj), 0);
-		assert_eq!(d.adjust_layer_colors(9, &bases, adj), 0);
+		assert_eq!(d.adjust_layer_colors(0, &bases[..2], adj), BulkOutcome::ZERO);
+		assert_eq!(d.adjust_layer_colors(9, &bases, adj), BulkOutcome::ZERO);
 		// The event describes itself in words.
 		let text = d.log.last().unwrap().describe(&d);
 		assert!(text.contains("all 3 elements"), "{text}");
@@ -1098,7 +1168,7 @@ mod tests {
 			.collect();
 		let logged = d.log.len();
 		let adj = ColorAdjust { shade: 50, ..Default::default() };
-		assert_eq!(d.adjust_depth_colors(DepthRole::Background, &bases, adj), 3);
+		assert_eq!(d.adjust_depth_colors(DepthRole::Background, &bases, adj), BulkOutcome { changed: 3, locked: 0 });
 		assert_eq!(d.log.len(), logged + 1, "one event for the whole depth");
 		for (li, si, base) in &bases {
 			assert_eq!(d.layers[*li].shapes[*si].fill, adj.apply(*base));
@@ -1108,15 +1178,15 @@ mod tests {
 		let text = d.log.last().unwrap().describe(&d);
 		assert!(text.contains("all 3 elements on background layers"), "{text}");
 		// Dragging further replaces the event, never adds another.
-		assert_eq!(d.adjust_depth_colors(DepthRole::Background, &bases, adj), 3);
+		assert_eq!(d.adjust_depth_colors(DepthRole::Background, &bases, adj), BulkOutcome { changed: 3, locked: 0 });
 		assert_eq!(d.log.len(), logged + 1);
 		// A stale snapshot (a shape missing, or one too many)
 		// changes nothing, and an empty depth counts zero.
-		assert_eq!(d.adjust_depth_colors(DepthRole::Background, &bases[..2], adj), 0);
-		assert_eq!(d.adjust_depth_colors(DepthRole::Sideground, &[], adj), 0);
+		assert_eq!(d.adjust_depth_colors(DepthRole::Background, &bases[..2], adj), BulkOutcome::ZERO);
+		assert_eq!(d.adjust_depth_colors(DepthRole::Sideground, &[], adj), BulkOutcome::ZERO);
 		let wrong: Vec<(usize, usize, Srgb)> =
 			vec![(0, 0, red()), (0, 1, red()), (front, 0, red())];
-		assert_eq!(d.adjust_depth_colors(DepthRole::Background, &wrong, adj), 0);
+		assert_eq!(d.adjust_depth_colors(DepthRole::Background, &wrong, adj), BulkOutcome::ZERO);
 		assert_eq!(d.layers[0].shapes[0].fill, adj.apply(red()));
 	}
 
@@ -1173,6 +1243,65 @@ mod tests {
 		assert_eq!(d.insert_scene(0, &empty, "Nothing"), 0);
 		assert_eq!(d.insert_scene(9, &scene, "Harbour"), 0);
 		assert_eq!(d.log.len(), logged + 1);
+	}
+
+	#[test]
+	fn locked_shapes_are_skipped_by_bulk_adjustments_and_counted() {
+		let mut d = Drawing::new(100, 100, Srgb::WHITE);
+		d.add_shape(0, Shape::new(ShapeKind::Rectangle, 5, 5, 10, 10, red()));
+		d.add_shape(0, Shape::new(ShapeKind::Ellipse, 30, 30, 10, 10, Srgb::new(58, 124, 165)));
+		d.add_shape(0, Shape::new(ShapeKind::Rectangle, 60, 60, 10, 10, Srgb::BLACK));
+		// Locking is itself a logged step, and it speaks plainly.
+		assert!(d.set_shape_locked(0, 1, true));
+		assert!(d.layers[0].shapes[1].locked);
+		let text = d.log.last().unwrap().describe(&d);
+		assert!(text.contains("lock shape 2"), "{text}");
+		assert!(text.contains("bulk changes now skip it"), "{text}");
+		assert!(!d.set_shape_locked(0, 9, true));
+		assert!(!d.set_shape_locked(9, 0, true));
+		// The layer adjustment passes the locked shape by: its
+		// color is untouched, and the counts say so.
+		let bases: Vec<Srgb> = d.layers[0].shapes.iter().map(|s| s.fill).collect();
+		let logged = d.log.len();
+		let adj = ColorAdjust { shade: 50, ..Default::default() };
+		let outcome = d.adjust_layer_colors(0, &bases, adj);
+		assert_eq!(outcome, BulkOutcome { changed: 2, locked: 1 });
+		assert_eq!(outcome.spoken(), "2 changed, 1 locked stayed the same");
+		assert_eq!(d.layers[0].shapes[1].fill, Srgb::new(58, 124, 165), "locked means untouched");
+		assert_eq!(d.layers[0].shapes[0].fill, adj.apply(red()));
+		assert_eq!(d.log.len(), logged + 1, "one event for what changed");
+		let text = d.log.last().unwrap().describe(&d);
+		assert!(text.contains("all 2 elements"), "{text}");
+		// A direct edit still reaches a locked shape: the lock
+		// guards against sweeps, not the owner's hand.
+		assert!(d.recolor_shape(0, 1, red()));
+		assert_eq!(d.layers[0].shapes[1].fill, red());
+		// Unlocking returns the shape to the bulk changes.
+		assert!(d.set_shape_locked(0, 1, false));
+		let bases: Vec<Srgb> = d.layers[0].shapes.iter().map(|s| s.fill).collect();
+		assert_eq!(d.adjust_layer_colors(0, &bases, adj), BulkOutcome { changed: 3, locked: 0 });
+	}
+
+	#[test]
+	fn a_fully_locked_bulk_adjustment_changes_and_logs_nothing() {
+		let mut d = Drawing::new(100, 100, Srgb::WHITE);
+		d.set_layer_depth(0, DepthRole::Background);
+		d.add_shape(0, Shape::new(ShapeKind::Rectangle, 5, 5, 10, 10, red()));
+		d.set_shape_locked(0, 0, true);
+		let bases: Vec<(usize, usize, Srgb)> = vec![(0, 0, red())];
+		let logged = d.log.len();
+		let adj = ColorAdjust { tint: 40, ..Default::default() };
+		let outcome = d.adjust_depth_colors(DepthRole::Background, &bases, adj);
+		assert_eq!(outcome, BulkOutcome { changed: 0, locked: 1 });
+		assert_eq!(d.layers[0].shapes[0].fill, red());
+		assert_eq!(d.log.len(), logged, "nothing changed, so nothing is logged");
+		// The same promise on the layer path.
+		let layer_bases: Vec<Srgb> = vec![red()];
+		assert_eq!(
+			d.adjust_layer_colors(0, &layer_bases, adj),
+			BulkOutcome { changed: 0, locked: 1 }
+		);
+		assert_eq!(d.log.len(), logged);
 	}
 
 	#[test]

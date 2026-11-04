@@ -19,6 +19,7 @@ pub mod font;
 pub mod palette;
 pub mod plain;
 pub mod project;
+pub mod sliders;
 pub mod sound;
 pub mod symbols;
 pub mod tactile;

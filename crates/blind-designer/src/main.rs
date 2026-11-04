@@ -15,15 +15,18 @@ use std::cell::RefCell;
 use std::path::Path;
 use std::rc::Rc;
 
-use chroma_core::animation::{MAX_FRAME_MS, MIN_FRAME_MS};
 use chroma_core::brushes::{Brush, BrushLibrary, PATTERNS};
 use chroma_core::design::{css_for_colors, Shape, ShapeKind};
 use chroma_core::dictionary;
 use chroma_core::drawing::{Drawing, Event};
 use chroma_core::palette::{starter_palette, PaletteColor, Provenance};
 use chroma_core::plain::{parse_color, parse_position, parse_size};
-use chroma_core::project::{Project, ProjectStats};
-use chroma_core::sound::{cue_at, cue_for_shape, tone_wav, Cue};
+use chroma_core::project::{Project, ProjectStats, DEFAULT_PAGE_JUMP_PERCENT};
+use chroma_core::sliders::{
+	change_announcement, page_jump, slider_by_id, AdjustTarget, ColorAdjust, SliderDef,
+	SliderTarget, SLIDERS,
+};
+use chroma_core::sound::{cue_at, cue_for_shape, tone_wav_at, Cue};
 use chroma_core::symbols;
 use chroma_core::tactile::{compare_images, tactile_grid};
 use chroma_core::templates;
@@ -83,6 +86,7 @@ const ID_TACTILE_GRID: Id = 121;
 const ID_DESCRIBE_AREA: Id = 318;
 const ID_ADD_SYMBOL: Id = 319;
 const ID_STATS: Id = 320;
+const ID_PROJECT_OPTIONS: Id = 321;
 const ID_ABOUT: Id = 401;
 const ID_DICTIONARY: Id = 402;
 const ID_HELP_FILE: Id = 403;
@@ -91,6 +95,7 @@ const ID_FORMAT_HEX: Id = 501;
 const ID_FORMAT_RGB: Id = 502;
 const ID_FORMAT_HSL: Id = 503;
 const ID_FORMAT_HSV: Id = 504;
+const ID_ANNOUNCE_SLIDERS: Id = 505;
 
 /// Every custom menu ID in the app. wxWidgets window IDs: a custom ID
 /// must be positive and at or below wxID_HIGHEST (5999); the only
@@ -152,6 +157,8 @@ const MENU_IDS: &[Id] = &[
 	ID_DESCRIBE_AREA,
 	ID_ADD_SYMBOL,
 	ID_STATS,
+	ID_PROJECT_OPTIONS,
+	ID_ANNOUNCE_SLIDERS,
 	ID_ABOUT,
 	ID_DICTIONARY,
 	ID_HELP_FILE,
@@ -194,10 +201,63 @@ struct State {
 	brush: Brush,
 	/// The saved-brush library, persisted beside the executable.
 	brushes: BrushLibrary,
+	/// Slider ids this project pins to its Sliders tab (chosen in
+	/// Project Options). A new project pins NONE — Elshara: start
+	/// from scratch, pin only what you want to keep. Saved in the
+	/// design file.
+	pinned_sliders: Vec<String>,
+	/// What the color-adjustment sliders act on. Saved too.
+	slider_target: AdjustTarget,
+	/// Page Up/Down jump on the Sliders tab, percent of each
+	/// slider's range. Saved too.
+	page_jump_percent: u8,
+	/// Whether slider changes announce themselves on the status
+	/// line ("... Everything else unchanged."). View menu toggle,
+	/// on by default.
+	announce_sliders: bool,
+	/// How opaque new shapes are painted, percent. The Transparency
+	/// slider drives it: 100 percent transparent = 0 here.
+	current_opacity: u8,
+	/// How many colors the next extraction takes (the Extract
+	/// colors count slider).
+	extract_count: i32,
+	/// Tactile grid size for the next grid (the tactile sliders).
+	tactile_cols: i32,
+	tactile_rows: i32,
+	/// How loud the sound cues play, percent (the Sound cue volume
+	/// slider).
+	sound_volume: u8,
+	/// The adjustment sliders' current amounts, and the colors
+	/// they apply to: an adjustment always recomputes from the
+	/// base captured when it began, so it never compounds.
+	adjust: ColorAdjust,
+	adjust_base: Option<AdjustBase>,
+	/// The selected element's size when the scale slider's current
+	/// run began: (layer, shape, width, height).
+	scale_base: Option<(usize, usize, u32, u32)>,
+}
+
+/// What the color-adjustment sliders are acting on, captured when
+/// an adjustment run begins: the current color is the brush color
+/// (what new strokes paint with); an element contributes its fill;
+/// a layer contributes every element's fill, in order.
+enum AdjustBase {
+	Brush(Srgb),
+	Element(usize, usize, Srgb),
+	Layer(usize, Vec<Srgb>),
+}
+
+/// One row of the Sliders tab: the registry id it drives, the
+/// native slider control, and the value readout after it.
+struct SliderRow {
+	id: &'static str,
+	slider: Slider,
+	readout: StaticText,
 }
 
 struct Win {
 	frame: Frame,
+	notebook: Notebook,
 	palette_list: QuietList<usize>,
 	elements_list: QuietList<usize>,
 	layers_list: QuietList<usize>,
@@ -207,6 +267,18 @@ struct Win {
 	l_spin: SpinCtrlDouble,
 	c_spin: SpinCtrlDouble,
 	h_spin: SpinCtrlDouble,
+	/// The Sliders notebook page, rebuilt whenever the pinned set
+	/// or the adjustment target changes (the page is removed from
+	/// the notebook and a fresh one inserted at the same index, so
+	/// rows always match the project's pins). Its rows, in pin
+	/// order, and the adjustment-target picker shown when any
+	/// adjustment slider is pinned.
+	slider_page: RefCell<Option<Panel>>,
+	slider_rows: RefCell<Vec<SliderRow>>,
+	slider_target_choice: RefCell<Option<Choice>>,
+	/// True while code (not the user) is setting slider values, so
+	/// the change handler stays out of refreshes.
+	slider_refreshing: std::cell::Cell<bool>,
 }
 
 type Shared = Rc<RefCell<State>>;
@@ -247,7 +319,7 @@ fn announce(win: &Win, state: &State) {
 	// changed shape is and how big it is, alongside the spoken words.
 	if state.sound_cues {
 		if let Some(cue) = cue_for_last(state) {
-			play_cue(cue);
+			play_cue(cue, state.sound_volume);
 		}
 	}
 }
@@ -258,8 +330,8 @@ thread_local! {
 	static CURRENT_SOUND: RefCell<Option<Sound>> = const { RefCell::new(None) };
 }
 
-fn play_cue(cue: Cue) {
-	let sound = Sound::from_data(&tone_wav(&cue));
+fn play_cue(cue: Cue, volume: u8) {
+	let sound = Sound::from_data(&tone_wav_at(&cue, volume));
 	if sound.is_ok() {
 		sound.play(SoundFlags::Async);
 		CURRENT_SOUND.with(|c| *c.borrow_mut() = Some(sound));
@@ -315,6 +387,7 @@ fn refresh_lists(win: &Win, state: &State) {
 	win.stats_text
 		.set_label(&ProjectStats::gather(&state.drawing, state.palette.len()).one_line());
 	refresh_menu_states(win, state);
+	refresh_slider_values(win, state);
 }
 
 /// Grey the menu actions that cannot do anything right now, so the
@@ -367,6 +440,571 @@ fn selected_color(win: &Win, state: &State) -> Option<Srgb> {
 		.selected()
 		.and_then(|i| state.palette.get(i))
 		.map(|pc| pc.color)
+}
+
+/// End the current adjustment / scale run: the next slider move
+/// captures a fresh base. Called whenever what the sliders would
+/// act on changes identity — a different element or layer is
+/// selected, the adjustment target switches, or a new design
+/// replaces this one.
+fn reset_adjustment(state: &mut State) {
+	state.adjust = ColorAdjust::default();
+	state.adjust_base = None;
+	state.scale_base = None;
+}
+
+/// Add the starter colors to the palette (the ones not already
+/// there) and say so. Shared by Color, Load Starter Colors and
+/// Project Options' button of the same job.
+fn load_starter_colors(win: &Win, state: &mut State) {
+	let fresh: Vec<PaletteColor> = starter_palette()
+		.into_iter()
+		.filter(|pc| !state.palette.iter().any(|p| p.color == pc.color))
+		.collect();
+	if fresh.is_empty() {
+		win.frame.set_status_text("The starter colors are already in the palette.", 0);
+		return;
+	}
+	let names: Vec<String> = fresh.iter().map(|pc| pc.spoken(state.color_format)).collect();
+	state.palette.extend(fresh);
+	refresh_lists(win, state);
+	win.frame.set_status_text(&format!("Loaded starter colors: {}", names.join("; ")), 0);
+}
+
+/// Read one slider's current value — or None when the slider has
+/// nothing to act on right now (no element selected, a non-stroke
+/// selected for Stroke width, no frames yet). The single place
+/// that knows where each slider's value lives.
+fn read_slider_value(win: &Win, state: &State, def: &SliderDef) -> Option<i32> {
+	match def.target {
+		SliderTarget::BrushWidth => Some(state.brush.width as i32),
+		SliderTarget::ColorRed => Some(state.brush.color.r as i32),
+		SliderTarget::ColorGreen => Some(state.brush.color.g as i32),
+		SliderTarget::ColorBlue => Some(state.brush.color.b as i32),
+		SliderTarget::CurrentAlpha => Some(100 - state.current_opacity as i32),
+		SliderTarget::ElementOpacity => {
+			selected_shape(state, win).map(|(_, _, s)| s.opacity as i32)
+		}
+		SliderTarget::ElementScale => selected_shape(state, win).map(|(li, si, s)| {
+			match state.scale_base {
+				Some((bl, bs, bw, _)) if bl == li && bs == si && bw > 0 => {
+					(s.w as i32 * 100 / bw as i32).clamp(def.min, def.max)
+				}
+				_ => 100,
+			}
+		}),
+		SliderTarget::StrokeWidth => match selected_shape(state, win) {
+			Some((_, _, s)) if s.kind == ShapeKind::Stroke => Some(s.brush as i32),
+			_ => None,
+		},
+		SliderTarget::FrameDuration => {
+			state.drawing.frames.first().map(|f| f.duration_ms as i32)
+		}
+		SliderTarget::ExtractCount => Some(state.extract_count),
+		SliderTarget::TactileColumns => Some(state.tactile_cols),
+		SliderTarget::TactileRows => Some(state.tactile_rows),
+		SliderTarget::SoundVolume => Some(state.sound_volume as i32),
+		t if def.is_adjustment() => Some(state.adjust.get(t)),
+		_ => None,
+	}
+}
+
+/// The readout words for a slider with nothing to act on.
+fn slider_placeholder(def: &SliderDef) -> &'static str {
+	match def.target {
+		SliderTarget::ElementOpacity | SliderTarget::ElementScale => "no element selected",
+		SliderTarget::StrokeWidth => "no stroke selected",
+		SliderTarget::FrameDuration => "no frames yet",
+		_ => "not available",
+	}
+}
+
+/// The element the main window has selected, as (layer, shape,
+/// shape) — the target of the element sliders.
+fn selected_shape<'a>(state: &'a State, win: &Win) -> Option<(usize, usize, &'a Shape)> {
+	let flat = win.elements_list.selected()?;
+	let (li, si) = locate(state, flat)?;
+	state.drawing.layers.get(li)?.shapes.get(si).map(|s| (li, si, s))
+}
+
+/// Push the current values into the Sliders tab's controls and
+/// readouts. Runs inside every refresh, so the tab always agrees
+/// with the project; guarded so programmatic sets never re-enter
+/// the change handler.
+fn refresh_slider_values(win: &Win, state: &State) {
+	if win.slider_rows.borrow().is_empty() {
+		return;
+	}
+	win.slider_refreshing.set(true);
+	for row in win.slider_rows.borrow().iter() {
+		let Some(def) = slider_by_id(row.id) else { continue };
+		match read_slider_value(win, state, def) {
+			Some(value) => {
+				row.slider.set_value(value);
+				row.readout.set_label(&def.format(value));
+			}
+			None => row.readout.set_label(slider_placeholder(def)),
+		}
+	}
+	win.slider_refreshing.set(false);
+}
+
+/// (Re)build the Sliders notebook page from the project's pinned
+/// sliders. Accessibility: each row is a label, a NATIVE slider
+/// (arrow keys move it by its fine step — the smallest step there
+/// is; Home and End jump to the ends), and a value readout with a
+/// real-words value; the slider itself also carries the spoken
+/// name. Page Up/Down jump by the project's page-jump percent;
+/// Ctrl+arrow moves focus from slider to slider, the semi-
+/// invisible interface Elshara asked for. Focus is never moved
+/// except by those Ctrl+arrow keys the user presses. A project
+/// with no pins gets a page that says so and where to pin some.
+fn build_sliders_tab(win: &Rc<Win>, shared: &Shared) {
+	const PAGE_INDEX: usize = 3;
+	if win.slider_page.borrow().is_some() {
+		win.notebook.remove_page(PAGE_INDEX);
+	}
+	let (pins, target, any_adjust) = {
+		let state = shared.borrow();
+		let any_adjust = state
+			.pinned_sliders
+			.iter()
+			.filter_map(|id| slider_by_id(id))
+			.any(|d| d.is_adjustment());
+		(state.pinned_sliders.clone(), state.slider_target, any_adjust)
+	};
+	let page = Panel::builder(&win.notebook).build();
+	let sizer = BoxSizer::builder(Orientation::Vertical).build();
+	let mut rows: Vec<SliderRow> = Vec::new();
+	let mut target_choice: Option<Choice> = None;
+	if pins.is_empty() {
+		let note = StaticText::builder(&page)
+			.with_label(
+				"No sliders are pinned in this project yet. Pin the ones you want to keep in Design, Project Options.",
+			)
+			.build();
+		sizer.add(&note, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	} else {
+		if any_adjust {
+			let label =
+				StaticText::builder(&page).with_label("Color adjustments act on").build();
+			let choice = Choice::builder(&page).build();
+			for t in AdjustTarget::ALL {
+				choice.append(t.name());
+			}
+			let at = AdjustTarget::ALL.iter().position(|t| *t == target).unwrap_or(0);
+			choice.set_selection(at as u32);
+			let row = BoxSizer::builder(Orientation::Horizontal).build();
+			row.add(&label, 0, SizerFlag::All, 5);
+			row.add(&choice, 0, SizerFlag::All, 5);
+			sizer.add_sizer(&row, 0, SizerFlag::Expand, 0);
+			{
+				let (w, s, choice) = (win.clone(), shared.clone(), choice.clone());
+				choice.on_selection_changed(move |_| {
+					let Some(sel) = choice.get_selection() else { return };
+					let mut state = s.borrow_mut();
+					if let Some(t) = AdjustTarget::ALL.get(sel as usize) {
+						if *t != state.slider_target {
+							state.slider_target = *t;
+							reset_adjustment(&mut state);
+						}
+					}
+					drop(state);
+					let state = s.borrow();
+					refresh_slider_values(&w, &state);
+				});
+			}
+			target_choice = Some(choice);
+		}
+		let state = shared.borrow();
+		for id in &pins {
+			let Some(def) = slider_by_id(id) else { continue };
+			let (value, text) = match read_slider_value(win, &state, def) {
+				Some(v) => (v, def.format(v)),
+				None => (def.min, slider_placeholder(def).to_string()),
+			};
+			let label = StaticText::builder(&page).with_label(def.name).build();
+			let slider = Slider::builder(&page)
+				.with_min_value(def.min)
+				.with_max_value(def.max)
+				.with_value(value)
+				.build();
+			slider.set_name(def.name);
+			let readout = StaticText::builder(&page).with_label(&text).build();
+			let row_sizer = BoxSizer::builder(Orientation::Horizontal).build();
+			row_sizer.add(&label, 0, SizerFlag::All, 5);
+			row_sizer.add(&slider, 1, SizerFlag::Expand | SizerFlag::All, 5);
+			row_sizer.add(&readout, 0, SizerFlag::All, 5);
+			sizer.add_sizer(&row_sizer, 0, SizerFlag::Expand, 0);
+			let row_index = rows.len();
+			{
+				let (w, s) = (win.clone(), shared.clone());
+				slider.on_slider(move |e| {
+					if w.slider_refreshing.get() {
+						return;
+					}
+					apply_slider(&w, &s, def.id, e.get_value());
+				});
+			}
+			{
+				let (w, s) = (win.clone(), shared.clone());
+				slider.on_key_down(move |data| {
+					slider_key(&w, &s, row_index, &data);
+				});
+			}
+			rows.push(SliderRow { id: def.id, slider, readout });
+		}
+	}
+	page.set_sizer(sizer, true);
+	let count = win.notebook.get_page_count();
+	if count > PAGE_INDEX {
+		win.notebook.insert_page(PAGE_INDEX, &page, "Sliders", false, None);
+	} else {
+		win.notebook.add_page(&page, "Sliders", false, None);
+	}
+	*win.slider_page.borrow_mut() = Some(page);
+	*win.slider_rows.borrow_mut() = rows;
+	*win.slider_target_choice.borrow_mut() = target_choice;
+}
+
+/// The Sliders tab's custom keys (Elshara's semi-invisible
+/// interface): Ctrl+arrow hops focus from slider to slider;
+/// Page Up/Down jump the value by the project's page-jump percent
+/// of the range. Everything else — plain arrows (the fine step),
+/// Home/End (the ends) — is the native slider's own behavior, so
+/// the event is skipped onward untouched.
+fn slider_key(win: &Rc<Win>, shared: &Shared, row_index: usize, data: &WindowEventData) {
+	let WindowEventData::Keyboard(kb) = data else {
+		data.skip(true);
+		return;
+	};
+	let Some(code) = kb.get_key_code() else {
+		data.skip(true);
+		return;
+	};
+	let rows = win.slider_rows.borrow();
+	let Some(row) = rows.get(row_index) else {
+		data.skip(true);
+		return;
+	};
+	let Some(def) = slider_by_id(row.id) else {
+		data.skip(true);
+		return;
+	};
+	if kb.control_down() && matches!(code, WXK_LEFT | WXK_UP | WXK_RIGHT | WXK_DOWN) {
+		// Handled here: focus hops, the value does not change.
+		let back = matches!(code, WXK_LEFT | WXK_UP);
+		let next = if back {
+			row_index.saturating_sub(1)
+		} else {
+			(row_index + 1).min(rows.len() - 1)
+		};
+		if let Some(dest) = rows.get(next) {
+			dest.slider.set_focus();
+		}
+		return;
+	}
+	if matches!(code, WXK_PAGEUP | WXK_PAGEDOWN) {
+		let percent = shared.borrow().page_jump_percent;
+		let jump = page_jump(def, percent);
+		let delta = if code == WXK_PAGEUP { jump } else { -jump };
+		let value = def.clamp(row.slider.get_value() + delta);
+		row.slider.set_value(value);
+		drop(rows);
+		apply_slider(win, shared, def.id, value);
+		return;
+	}
+	data.skip(true);
+}
+
+/// Apply one slider's new value to its target, live, and say what
+/// changed (the announcement honors the View toggle). Drawing
+/// changes go through the drawing, so they land in the log like
+/// every other edit; the status line speaks the slider's own
+/// announcement — what changed, and that everything else stayed.
+fn apply_slider(win: &Win, shared: &Shared, id: &'static str, value: i32) {
+	let Some(def) = slider_by_id(id) else { return };
+	let value = def.clamp(value);
+	let mut note: Option<String> = None;
+	{
+		let mut state = shared.borrow_mut();
+		match def.target {
+			SliderTarget::BrushWidth => {
+				state.brush.width = value as u32;
+				// The width lives on for the next stroke; strokes
+				// already drawn are elements (Stroke width slider).
+			}
+			SliderTarget::ColorRed
+			| SliderTarget::ColorGreen
+			| SliderTarget::ColorBlue => {
+				// A channel edit is absolute: it becomes the color
+				// any later adjustment starts from, so the current
+				// adjustment run ends here.
+				match def.target {
+					SliderTarget::ColorRed => state.brush.color.r = value as u8,
+					SliderTarget::ColorGreen => state.brush.color.g = value as u8,
+					_ => state.brush.color.b = value as u8,
+				}
+				reset_adjustment(&mut state);
+			}
+			SliderTarget::CurrentAlpha => {
+				state.current_opacity = (100 - value).clamp(0, 100) as u8;
+			}
+			SliderTarget::ElementOpacity => match selected_shape(&state, win) {
+				Some((li, si, _)) => {
+					if state.drawing.set_shape_opacity(li, si, value as u8) {
+						refresh_lists(win, &state);
+					}
+				}
+				None => note = Some("Select an element first.".to_string()),
+			},
+			SliderTarget::ElementScale => match selected_shape(&state, win) {
+				Some((li, si, s)) => {
+					if s.kind == ShapeKind::Stroke {
+						note = Some(
+							"A stroke's size is its points; it does not scale.".to_string(),
+						);
+					} else {
+						if state.scale_base.map(|(bl, bs, _, _)| (bl, bs)) != Some((li, si)) {
+							state.scale_base = Some((li, si, s.w, s.h));
+						}
+						let (_, _, bw, bh) = state.scale_base.unwrap();
+						let (w, h) = chroma_core::sliders::scaled_size(bw, bh, value);
+						state.drawing.resize_shape(li, si, w, h);
+						refresh_lists(win, &state);
+					}
+				}
+				None => note = Some("Select an element first.".to_string()),
+			},
+			SliderTarget::StrokeWidth => match selected_shape(&state, win) {
+				Some((li, si, s)) => {
+					if s.kind == ShapeKind::Stroke {
+						if state.drawing.set_shape_brush_width(li, si, value as u32) {
+							refresh_lists(win, &state);
+						}
+					} else {
+						note = Some("Stroke width acts on a selected stroke.".to_string());
+					}
+				}
+				None => note = Some("Select a stroke first.".to_string()),
+			},
+			SliderTarget::FrameDuration => {
+				if state.drawing.frames.is_empty() {
+					note = Some(
+						"No animation frames yet: add one in Design, Animation.".to_string(),
+					);
+				} else {
+					state.drawing.set_all_frame_durations(value as u32);
+					refresh_lists(win, &state);
+				}
+			}
+			SliderTarget::ExtractCount => state.extract_count = value,
+			SliderTarget::TactileColumns => state.tactile_cols = value,
+			SliderTarget::TactileRows => state.tactile_rows = value,
+			SliderTarget::SoundVolume => state.sound_volume = value as u8,
+			_ if def.is_adjustment() => {
+				note = apply_adjustment(win, &mut state, def, value);
+			}
+			_ => {}
+		}
+	}
+	// The readout always follows the slider, note or not.
+	if let Some(row) = win.slider_rows.borrow().iter().find(|r| r.id == id) {
+		row.readout.set_label(&def.format(value));
+	}
+	match note {
+		Some(text) => win.frame.set_status_text(&text, 0),
+		None => {
+			let announce_on = shared.borrow().announce_sliders;
+			if announce_on {
+				win.frame.set_status_text(&change_announcement(def, value), 0);
+			} else {
+				win.frame
+					.set_status_text(&format!("{} {}.", def.name, def.format(value)), 0);
+			}
+		}
+	}
+}
+
+/// Drive the color-adjustment sliders: set the one amount, then
+/// re-apply the whole adjustment from the base captured when the
+/// run began (a different target, element or layer starts a new
+/// run). Returns a status note when there is nothing to act on.
+fn apply_adjustment(
+	win: &Win,
+	state: &mut State,
+	def: &SliderDef,
+	value: i32,
+) -> Option<String> {
+	let matches_base = match (&state.adjust_base, state.slider_target) {
+		(Some(AdjustBase::Brush(_)), AdjustTarget::BaseColor) => true,
+		(Some(AdjustBase::Element(li, si, _)), AdjustTarget::Element) => {
+			selected_shape(state, win).map(|(l, s, _)| (l, s)) == Some((*li, *si))
+		}
+		(Some(AdjustBase::Layer(li, bases)), AdjustTarget::Layer) => {
+			*li == state.layer
+				&& state
+					.drawing
+					.layers
+					.get(*li)
+					.map(|l| l.shapes.len() == bases.len())
+					.unwrap_or(false)
+		}
+		_ => false,
+	};
+	if !matches_base {
+		state.adjust = ColorAdjust::default();
+		state.adjust_base = match state.slider_target {
+			AdjustTarget::BaseColor => Some(AdjustBase::Brush(state.brush.color)),
+			AdjustTarget::Element => {
+				selected_shape(state, win).map(|(li, si, s)| AdjustBase::Element(li, si, s.fill))
+			}
+			AdjustTarget::Layer => state.drawing.layers.get(state.layer).map(|l| {
+				AdjustBase::Layer(state.layer, l.shapes.iter().map(|s| s.fill).collect())
+			}),
+		};
+	}
+	if state.adjust_base.is_none() {
+		return Some(match state.slider_target {
+			AdjustTarget::Element => "Select an element to adjust first.".to_string(),
+			AdjustTarget::Layer => "This project has no current layer.".to_string(),
+			AdjustTarget::BaseColor => "Nothing to adjust.".to_string(),
+		});
+	}
+	state.adjust.set(def.target, value);
+	match &state.adjust_base {
+		Some(AdjustBase::Brush(base)) => {
+			let base = *base;
+			let adjust = state.adjust;
+			state.brush.color = adjust.apply(base);
+			None
+		}
+		Some(AdjustBase::Element(li, si, base)) => {
+			let (li, si, base) = (*li, *si, *base);
+			let adjust = state.adjust;
+			if state.drawing.adjust_shape_color(li, si, base, adjust) {
+				refresh_lists(win, state);
+				None
+			} else {
+				Some("That element is gone.".to_string())
+			}
+		}
+		Some(AdjustBase::Layer(li, bases)) => {
+			let (li, bases) = (*li, bases.clone());
+			let adjust = state.adjust;
+			if bases.is_empty() {
+				Some("The current layer has no elements to adjust.".to_string())
+			} else if state.drawing.adjust_layer_colors(li, &bases, adjust) > 0 {
+				refresh_lists(win, state);
+				None
+			} else {
+				Some("That layer changed under the adjustment; move the slider to start again.".to_string())
+			}
+		}
+		None => Some("Nothing to adjust.".to_string()),
+	}
+}
+
+/// The Project Options dialog (Design menu): this project's home
+/// for what used to be scattered — the pinned-slider checklist
+/// (check = the slider lives on the Sliders tab), what the color
+/// adjustments act on, the Page Up/Down jump, and the starter
+/// colors. OK applies the pins, target and jump at once; the
+/// dialog is modal and closing it returns to the main window.
+fn project_options_dialog(win: &Rc<Win>, shared: &Shared) {
+	let frame = win.frame;
+	let dialog = Dialog::builder(&frame, "Project Options").with_size(560, 640).build();
+	let sizer = BoxSizer::builder(Orientation::Vertical).build();
+	let pins_label = StaticText::builder(&dialog)
+		.with_label("Sliders pinned to this project's Sliders tab")
+		.build();
+	sizer.add(&pins_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	let checks = CheckListBox::builder(&dialog).build();
+	for def in SLIDERS {
+		checks.append(def.name);
+	}
+	{
+		let state = shared.borrow();
+		for (i, def) in SLIDERS.iter().enumerate() {
+			if state.pinned_sliders.iter().any(|p| p == def.id) {
+				checks.check(i as u32, true);
+			}
+		}
+	}
+	sizer.add(&checks, 1, SizerFlag::Expand | SizerFlag::All, 5);
+	let target_label =
+		StaticText::builder(&dialog).with_label("Color adjustments act on").build();
+	sizer.add(&target_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	let target_choice = Choice::builder(&dialog).build();
+	for t in AdjustTarget::ALL {
+		target_choice.append(t.name());
+	}
+	{
+		let state = shared.borrow();
+		let at = AdjustTarget::ALL.iter().position(|t| *t == state.slider_target).unwrap_or(0);
+		target_choice.set_selection(at as u32);
+	}
+	sizer.add(&target_choice, 0, SizerFlag::Expand | SizerFlag::All, 5);
+	let jump_now = shared.borrow().page_jump_percent;
+	let jump_label = StaticText::builder(&dialog)
+		.with_label("Page Up and Page Down jump, percent of each slider's range")
+		.build();
+	let jump_spin = SpinCtrl::builder(&dialog).with_range(1, 100).build();
+	jump_spin.set_value(jump_now as i32);
+	sizer.add(&jump_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	sizer.add(&jump_spin, 0, SizerFlag::Expand | SizerFlag::All, 5);
+	let starter_btn = Button::builder(&dialog).with_label("Load Starter Colors").build();
+	sizer.add(&starter_btn, 0, SizerFlag::All, 5);
+	let ok = Button::builder(&dialog).with_label("OK").build();
+	let cancel = Button::builder(&dialog).with_label("Cancel").build();
+	let buttons = BoxSizer::builder(Orientation::Horizontal).build();
+	buttons.add(&ok, 0, SizerFlag::All, 5);
+	buttons.add(&cancel, 0, SizerFlag::All, 5);
+	sizer.add_sizer(&buttons, 0, SizerFlag::All, 5);
+	dialog.set_sizer(sizer, true);
+	{
+		let (w, s) = (win.clone(), shared.clone());
+		starter_btn.on_click(move |_| {
+			let mut state = s.borrow_mut();
+			load_starter_colors(&w, &mut state);
+		});
+	}
+	{
+		let d = dialog.clone();
+		ok.on_click(move |_| d.end_modal(ID_OK));
+	}
+	{
+		let d = dialog.clone();
+		cancel.on_click(move |_| d.end_modal(ID_CANCEL));
+	}
+	if dialog.show_modal() == ID_OK {
+		let mut state = shared.borrow_mut();
+		state.pinned_sliders = SLIDERS
+			.iter()
+			.enumerate()
+			.filter(|(i, _)| checks.is_checked(*i as u32))
+			.map(|(_, def)| def.id.to_string())
+			.collect();
+		if let Some(sel) = target_choice.get_selection() {
+			if let Some(t) = AdjustTarget::ALL.get(sel as usize) {
+				if *t != state.slider_target {
+					state.slider_target = *t;
+					reset_adjustment(&mut state);
+				}
+			}
+		}
+		state.page_jump_percent = jump_spin.value().clamp(1, 100) as u8;
+		let count = state.pinned_sliders.len();
+		drop(state);
+		build_sliders_tab(win, shared);
+		frame.set_status_text(
+			&format!(
+				"Project options saved: {count} slider{} pinned to the Sliders tab.",
+				if count == 1 { "" } else { "s" }
+			),
+			0,
+		);
+	}
 }
 
 /// Append colors to the palette, stamped with their provenance, and
@@ -569,7 +1207,10 @@ fn speak_added(win: &Win, state: &State, layer: usize, index: usize) {
 		0,
 	);
 	if state.sound_cues {
-		play_cue(cue_for_shape(&shape, state.drawing.width, state.drawing.height));
+		play_cue(
+			cue_for_shape(&shape, state.drawing.width, state.drawing.height),
+			state.sound_volume,
+		);
 	}
 }
 
@@ -904,15 +1545,15 @@ fn animation_dialog(win: &Win, shared: &Shared) {
 				let Some(f) = state.drawing.frames.get(i) else { return };
 				f.duration_ms
 			};
+			// The range comes from the frame-duration slider
+			// definition — the dialog and the Sliders tab agree
+			// because there is only one source for it.
+			let dur_def =
+				slider_by_id("frame-duration").expect("the frame-duration slider exists");
 			if let Some(v) = numbers_dialog(
 				&frame,
 				"Frame duration",
-				&[(
-					"Duration in milliseconds",
-					MIN_FRAME_MS as i32,
-					MAX_FRAME_MS as i32,
-					current as i32,
-				)],
+				&[("Duration in milliseconds", dur_def.min, dur_def.max, current as i32)],
 			) {
 				shared.borrow_mut().drawing.set_frame_duration(i, v[0] as u32);
 				sync();
@@ -1428,6 +2069,12 @@ fn templates_dialog(win: &Win, shared: &Shared) {
 				let mut state = shared.borrow_mut();
 				state.drawing = design;
 				state.layer = 0;
+				// A new project starts from scratch (Elshara):
+				// no pinned sliders, default target and page jump.
+				state.pinned_sliders = Vec::new();
+				state.slider_target = AdjustTarget::BaseColor;
+				state.page_jump_percent = DEFAULT_PAGE_JUMP_PERCENT;
+				reset_adjustment(&mut state);
 				drop(state);
 				frame.set_status_text(
 					&format!("Started a new design from the {name} template. It is a normal design now: edit it, then Save Design to keep it."),
@@ -1512,6 +2159,7 @@ fn symbols_dialog(win: &Win, shared: &Shared) {
 			let mut added = 0;
 			for path in paths {
 				let mut shape = Shape::stroke(path, 3, color);
+				shape.opacity = state.current_opacity;
 				shape.caption = Some(format!("{name} symbol"));
 				if state.drawing.add_shape(layer, shape).is_some() {
 					added += 1;
@@ -1553,13 +2201,18 @@ fn extract_image_dialog(win: &Win, shared: &Shared, set_background: bool) {
 	) else {
 		return;
 	};
+	// The count's range comes from its slider definition — one
+	// source for the dialog, the Sliders tab, and Project Options.
+	let count_def = slider_by_id("extract-count").expect("the extract-count slider exists");
+	let now = shared.borrow().extract_count;
 	let Some(v) = numbers_dialog(
 		&frame,
 		"How many colors to extract",
-		&[("Number of colors", 1, 64, 8)],
+		&[("Number of colors", count_def.min, count_def.max, now)],
 	) else {
 		return;
 	};
+	shared.borrow_mut().extract_count = v[0];
 	match image::open(&path) {
 		Ok(img) => {
 			let entries = extract_palette(&img, v[0] as usize);
@@ -1606,7 +2259,7 @@ fn extract_image_dialog(win: &Win, shared: &Shared, set_background: bool) {
 	}
 }
 
-fn dispatch(win: &Win, shared: &Shared, id: Id) {
+fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 	let frame = win.frame;
 	match id {
 		ID_EXIT => frame.close(true),
@@ -1640,6 +2293,22 @@ fn dispatch(win: &Win, shared: &Shared, id: Id) {
 		}
 		ID_OPEN_IMAGE => extract_image_dialog(win, shared, true),
 		ID_EXTRACT_IMAGE => extract_image_dialog(win, shared, false),
+		ID_PROJECT_OPTIONS => project_options_dialog(win, shared),
+		ID_ANNOUNCE_SLIDERS => {
+			let mut state = shared.borrow_mut();
+			state.announce_sliders = !state.announce_sliders;
+			if let Some(bar) = frame.get_menu_bar() {
+				bar.check_item(ID_ANNOUNCE_SLIDERS, state.announce_sliders);
+			}
+			frame.set_status_text(
+				if state.announce_sliders {
+					"Slider announcements on: moving a slider says what changed and that everything else stayed the same."
+				} else {
+					"Slider announcements off: moving a slider says only its name and value."
+				},
+				0,
+			);
+		}
 		ID_SAVE_DESIGN => {
 			if let Some(path) = file_dialog(
 				&frame,
@@ -1651,6 +2320,9 @@ fn dispatch(win: &Win, shared: &Shared, id: Id) {
 				let project = Project {
 					drawing: state.drawing.clone(),
 					palette: state.palette.clone(),
+					pinned_sliders: state.pinned_sliders.clone(),
+					slider_target: state.slider_target,
+					page_jump_percent: state.page_jump_percent,
 				};
 				match std::fs::write(&path, project.to_text()) {
 					Ok(()) => frame.set_status_text(&format!("Saved design to {path}"), 0),
@@ -1671,11 +2343,18 @@ fn dispatch(win: &Win, shared: &Shared, id: Id) {
 							let mut state = shared.borrow_mut();
 							state.drawing = project.drawing;
 							state.palette = project.palette;
+							state.pinned_sliders = project.pinned_sliders;
+							state.slider_target = project.slider_target;
+							state.page_jump_percent = project.page_jump_percent;
+							reset_adjustment(&mut state);
 							state.layer = 0;
 							let layers = state.drawing.layers.len();
 							let shapes: usize =
 								state.drawing.layers.iter().map(|l| l.shapes.len()).sum();
 							let colors = state.palette.len();
+							drop(state);
+							build_sliders_tab(win, shared);
+							let state = shared.borrow();
 							refresh_lists(win, &state);
 							frame.set_status_text(
 								&format!(
@@ -1953,19 +2632,7 @@ fn dispatch(win: &Win, shared: &Shared, id: Id) {
 		}
 		ID_LOAD_STARTER => {
 			let mut state = shared.borrow_mut();
-			let fresh: Vec<PaletteColor> = starter_palette()
-				.into_iter()
-				.filter(|pc| !state.palette.iter().any(|p| p.color == pc.color))
-				.collect();
-			if fresh.is_empty() {
-				frame.set_status_text("The starter colors are already in the palette.", 0);
-				return;
-			}
-			let names: Vec<String> =
-				fresh.iter().map(|pc| pc.spoken(state.color_format)).collect();
-			state.palette.extend(fresh);
-			refresh_lists(win, &state);
-			frame.set_status_text(&format!("Loaded starter colors: {}", names.join("; ")), 0);
+			load_starter_colors(win, &mut state);
 		}
 		ID_STATS => {
 			let report = {
@@ -2070,7 +2737,9 @@ fn dispatch(win: &Win, shared: &Shared, id: Id) {
 			) {
 				let mut state = shared.borrow_mut();
 				let layer = state.layer;
-				let index = state.drawing.add_shape(layer, Shape::new(kind, x, y, w, h, color));
+				let mut shape = Shape::new(kind, x, y, w, h, color);
+				shape.opacity = state.current_opacity;
+				let index = state.drawing.add_shape(layer, shape);
 				refresh_lists(win, &state);
 				if let Some(index) = index {
 					speak_added(win, &state, layer, index);
@@ -2119,10 +2788,9 @@ fn dispatch(win: &Win, shared: &Shared, id: Id) {
 			) {
 				let mut state = shared.borrow_mut();
 				let layer = state.layer;
-				let index = state.drawing.add_shape(
-					layer,
-					Shape::text(phrase.trim(), font.trim(), size, x, y, w, h, color),
-				);
+				let mut shape = Shape::text(phrase.trim(), font.trim(), size, x, y, w, h, color);
+				shape.opacity = state.current_opacity;
+				let index = state.drawing.add_shape(layer, shape);
 				refresh_lists(win, &state);
 				if let Some(index) = index {
 					speak_added(win, &state, layer, index);
@@ -2155,8 +2823,9 @@ fn dispatch(win: &Win, shared: &Shared, id: Id) {
 			) {
 				let mut state = shared.borrow_mut();
 				let layer = state.layer;
-				let index =
-					state.drawing.add_shape(layer, Shape::image(&path, x, y, w, h, color));
+				let mut shape = Shape::image(&path, x, y, w, h, color);
+				shape.opacity = state.current_opacity;
+				let index = state.drawing.add_shape(layer, shape);
 				refresh_lists(win, &state);
 				if let Some(index) = index {
 					speak_added(win, &state, layer, index);
@@ -2194,9 +2863,24 @@ fn dispatch(win: &Win, shared: &Shared, id: Id) {
 			) else {
 				return;
 			};
-			let Some(width) = v[0].trim().parse::<u32>().ok().filter(|w| (1..=200).contains(w))
+			// The brush width's range comes from its slider
+			// definition — the dialog, the Sliders tab and
+			// Project Options all read the same numbers.
+			let width_def = slider_by_id("brush-width").expect("the brush-width slider exists");
+			let Some(width) = v[0]
+				.trim()
+				.parse::<i32>()
+				.ok()
+				.filter(|w| (width_def.min..=width_def.max).contains(w))
+				.map(|w| w as u32)
 			else {
-				frame.set_status_text("The brush width needs to be a whole number from 1 to 200.", 0);
+				frame.set_status_text(
+					&format!(
+						"The brush width needs to be a whole number from {} to {}.",
+						width_def.min, width_def.max
+					),
+					0,
+				);
 				return;
 			};
 			let Some(color) = parse_color(&v[1]) else {
@@ -2217,6 +2901,7 @@ fn dispatch(win: &Win, shared: &Shared, id: Id) {
 			let layer = state.layer;
 			let mut shape = Shape::stroke(points, width, color);
 			shape.pattern = pattern;
+			shape.opacity = state.current_opacity;
 			let index = state.drawing.add_shape(layer, shape);
 			refresh_lists(win, &state);
 			if let Some(index) = index {
@@ -2338,16 +3023,25 @@ fn dispatch(win: &Win, shared: &Shared, id: Id) {
 		}
 		ID_ANIMATION => {
 			animation_dialog(win, shared);
+			// Loading a frame replaces the canvas shapes: any
+			// captured adjustment base is stale now.
+			reset_adjustment(&mut shared.borrow_mut());
 			let state = shared.borrow();
 			refresh_lists(win, &state);
 		}
 		ID_ELEMENTS => {
 			elements_dialog(win, shared);
+			// The dialog can recolor shapes: end the adjustment
+			// run so its captured base can't revert that.
+			reset_adjustment(&mut shared.borrow_mut());
 			let state = shared.borrow();
 			refresh_lists(win, &state);
 		}
 		ID_TEMPLATES => {
 			templates_dialog(win, shared);
+			// A template is a new project: its slider settings were
+			// reset as it loaded, so the tab rebuilds to match.
+			build_sliders_tab(win, shared);
 			let state = shared.borrow();
 			refresh_lists(win, &state);
 		}
@@ -2458,11 +3152,30 @@ fn dispatch(win: &Win, shared: &Shared, id: Id) {
 				images,
 				false,
 			) {
+				// The ranges come from the tactile slider
+				// definitions; the values are the project's,
+				// shared with the Sliders tab.
+				let col_def =
+					slider_by_id("tactile-columns").expect("the tactile-columns slider exists");
+				let row_def =
+					slider_by_id("tactile-rows").expect("the tactile-rows slider exists");
+				let (cols_now, rows_now) = {
+					let state = shared.borrow();
+					(state.tactile_cols, state.tactile_rows)
+				};
 				if let Some(v) = numbers_dialog(
 					&frame,
 					"Tactile grid size",
-					&[("Columns", 1, 80, 24), ("Rows", 1, 60, 12)],
+					&[
+						("Columns", col_def.min, col_def.max, cols_now),
+						("Rows", row_def.min, row_def.max, rows_now),
+					],
 				) {
+					{
+						let mut state = shared.borrow_mut();
+						state.tactile_cols = v[0];
+						state.tactile_rows = v[1];
+					}
 					match image::open(&path) {
 						Ok(img) => {
 							let grid = tactile_grid(&img, v[0] as u32, v[1] as u32);
@@ -2616,6 +3329,7 @@ fn build_menus(frame: &Frame) {
 	design.append(ID_ANIMATION, "Anim&ation…", "Build a film from frames of the canvas, each with its own duration.", ItemKind::Normal);
 	design.append(ID_DESCRIBE_AREA, "&Describe Area…", "Hear only the elements inside one part of the canvas.", ItemKind::Normal);
 	design.append(ID_STATS, "&Project Statistics…", "How many layers, elements, palette colors and animation frames this project has.", ItemKind::Normal);
+	design.append(ID_PROJECT_OPTIONS, "Project &Options…", "Choose which sliders this project pins to its Sliders tab, what the color adjustments act on, how far Page Up and Page Down jump, and load the starter colors.", ItemKind::Normal);
 	design.append_separator();
 	design.append(ID_SAVE_BRUSH, "Save Current Br&ush…", "Keep the current brush — width, color, pattern — in the brush library under a name.", ItemKind::Normal);
 	design.append(ID_BRUSHES, "Brush Li&brary…", "The saved brushes; apply one to make it current for new strokes.", ItemKind::Normal);
@@ -2625,6 +3339,8 @@ fn build_menus(frame: &Frame) {
 	view.append(ID_FORMAT_RGB, "Color Values as &RGB", "Show and speak color values as red, green and blue numbers, 0 to 255.", ItemKind::Check);
 	view.append(ID_FORMAT_HSL, "Color Values as HS&L", "Show and speak color values as hue, saturation and lightness.", ItemKind::Check);
 	view.append(ID_FORMAT_HSV, "Color Values as HS&V", "Show and speak color values as hue, saturation and value.", ItemKind::Check);
+	view.append_separator();
+	view.append(ID_ANNOUNCE_SLIDERS, "&Announce Slider Changes", "Moving a slider says what changed and that everything else stayed the same. Off: only the slider's name and new value are said.", ItemKind::Check);
 
 	let help = Menu::builder().build();
 	help.append(ID_DICTIONARY, "&Dictionary…", "Plain-language definitions of the color and design terms the app uses.", ItemKind::Normal);
@@ -2642,6 +3358,7 @@ fn build_menus(frame: &Frame) {
 		.build();
 	bar.check_item(ID_SOUND_CUES, true); // sound cues start on
 	bar.check_item(ID_FORMAT_HEX, true); // color values start as hex
+	bar.check_item(ID_ANNOUNCE_SLIDERS, true); // slider announcements start on
 	frame.set_menu_bar(bar);
 }
 
@@ -2761,9 +3478,25 @@ fn main() {
 			color_format: ColorFormat::Hex,
 			brush: Brush::new("", 3, start, "solid"),
 			brushes: load_brushes(),
+			// A new project starts from scratch (Elshara): no
+			// pinned sliders, adjustments on the current color,
+			// the default page jump.
+			pinned_sliders: Vec::new(),
+			slider_target: AdjustTarget::BaseColor,
+			page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT,
+			announce_sliders: true,
+			current_opacity: 100,
+			extract_count: 8,
+			tactile_cols: 24,
+			tactile_rows: 12,
+			sound_volume: 100,
+			adjust: ColorAdjust::default(),
+			adjust_base: None,
+			scale_base: None,
 		}));
 		let win = Rc::new(Win {
 			frame,
+			notebook,
 			palette_list,
 			elements_list,
 			layers_list,
@@ -2773,8 +3506,13 @@ fn main() {
 			l_spin,
 			c_spin,
 			h_spin,
+			slider_page: RefCell::new(None),
+			slider_rows: RefCell::new(Vec::new()),
+			slider_target_choice: RefCell::new(None),
+			slider_refreshing: std::cell::Cell::new(false),
 		});
 
+		build_sliders_tab(&win, &shared);
 		{
 			let state = shared.borrow();
 			refresh_lists(&win, &state);
@@ -2793,8 +3531,15 @@ fn main() {
 		{
 			let (w, s) = (win.clone(), shared.clone());
 			win.elements_list.on_selection_changed(move || {
+				// A different element is a different adjustment
+				// and scale target: the next slider move starts
+				// a fresh run from its colors and size.
+				if let Ok(mut state) = s.try_borrow_mut() {
+					reset_adjustment(&mut state);
+				}
 				let state = s.borrow();
 				refresh_menu_states(&w, &state);
+				refresh_slider_values(&w, &state);
 			});
 		}
 		{
@@ -2810,6 +3555,9 @@ fn main() {
 						return;
 					}
 					state.layer = i;
+					// A different current layer is a different
+					// adjustment target: fresh run next move.
+					reset_adjustment(&mut state);
 					state.drawing.layers[i].name.clone()
 				};
 				let state = s.borrow();

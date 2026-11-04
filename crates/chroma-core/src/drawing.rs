@@ -9,6 +9,7 @@
 
 use crate::animation::Frame;
 use crate::design::{Design, Shape, ShapeKind};
+use crate::sliders::ColorAdjust;
 use crate::{describe, Srgb};
 
 #[derive(Debug, Clone)]
@@ -41,11 +42,44 @@ pub enum Event {
 	ShapeRotated { layer: String, index: usize, angle: f64 },
 	ShapeRecolored { layer: String, index: usize, color: Srgb },
 	ShapeCaptioned { layer: String, index: usize },
+	ShapeOpacitySet { layer: String, index: usize, opacity: u8 },
+	ShapeBrushSet { layer: String, index: usize, width: u32 },
+	ShapeColorAdjusted {
+		layer: String,
+		index: usize,
+		shade: u8,
+		tint: u8,
+		tone: u8,
+		chroma: u8,
+		undertone: i32,
+		warmth: i32,
+		vibrancy: i32,
+		brightness: i32,
+		clarity: i32,
+		fog: i32,
+		hardness: i32,
+	},
+	LayerColorsAdjusted {
+		name: String,
+		count: usize,
+		shade: u8,
+		tint: u8,
+		tone: u8,
+		chroma: u8,
+		undertone: i32,
+		warmth: i32,
+		vibrancy: i32,
+		brightness: i32,
+		clarity: i32,
+		fog: i32,
+		hardness: i32,
+	},
 	FrameAdded { index: usize, duration_ms: u32 },
 	FrameDuplicated { index: usize },
 	FrameRemoved { index: usize },
 	FrameMoved { from: usize, to: usize },
 	FrameDurationSet { index: usize, duration_ms: u32 },
+	AllFramesDurationSet { count: usize, duration_ms: u32 },
 	FrameLoaded { index: usize },
 	FrameUpdated { index: usize },
 }
@@ -93,6 +127,81 @@ impl Event {
 				"On layer \"{layer}\", set the caption of shape {}.",
 				index + 1
 			),
+			Event::ShapeOpacitySet { layer, index, opacity } => format!(
+				"On layer \"{layer}\", set shape {} to {opacity} percent opaque.",
+				index + 1
+			),
+			Event::ShapeBrushSet { layer, index, width } => format!(
+				"On layer \"{layer}\", set the brush width of shape {} to {width} pixels.",
+				index + 1
+			),
+			Event::ShapeColorAdjusted {
+				layer,
+				index,
+				shade,
+				tint,
+				tone,
+				chroma,
+				undertone,
+				warmth,
+				vibrancy,
+				brightness,
+				clarity,
+				fog,
+				hardness,
+			} => {
+				format!(
+					"On layer \"{layer}\", adjust the color of shape {}: {}.",
+					index + 1,
+					crate::sliders::ColorAdjust {
+						shade: *shade,
+						tint: *tint,
+						tone: *tone,
+						chroma: *chroma,
+						undertone: *undertone,
+						warmth: *warmth,
+						vibrancy: *vibrancy,
+						brightness: *brightness,
+						clarity: *clarity,
+						fog: *fog,
+						hardness: *hardness,
+					}
+					.describe()
+				)
+			}
+			Event::LayerColorsAdjusted {
+				name,
+				count,
+				shade,
+				tint,
+				tone,
+				chroma,
+				undertone,
+				warmth,
+				vibrancy,
+				brightness,
+				clarity,
+				fog,
+				hardness,
+			} => {
+				format!(
+					"Adjust the colors of all {count} elements on layer \"{name}\": {}.",
+					crate::sliders::ColorAdjust {
+						shade: *shade,
+						tint: *tint,
+						tone: *tone,
+						chroma: *chroma,
+						undertone: *undertone,
+						warmth: *warmth,
+						vibrancy: *vibrancy,
+						brightness: *brightness,
+						clarity: *clarity,
+						fog: *fog,
+						hardness: *hardness,
+					}
+					.describe()
+				)
+			}
 			Event::FrameAdded { index, duration_ms } => format!(
 				"Add animation frame {}: a copy of the canvas as it is now, shown for {duration_ms} milliseconds.",
 				index + 1
@@ -111,6 +220,9 @@ impl Event {
 			Event::FrameDurationSet { index, duration_ms } => format!(
 				"Set animation frame {} to show for {duration_ms} milliseconds.",
 				index + 1
+			),
+			Event::AllFramesDurationSet { count, duration_ms } => format!(
+				"Set all {count} animation frames to show for {duration_ms} milliseconds each."
 			),
 			Event::FrameLoaded { index } => format!(
 				"Load animation frame {} onto the canvas for editing.",
@@ -262,7 +374,13 @@ impl Drawing {
 		s.w = w;
 		s.h = h;
 		let name = l.name.clone();
-		self.log.push(Event::ShapeResized { layer: name, index, w, h });
+		// A resize slider drags through many sizes in a row; the
+		// log keeps the final one (see log_slider_event). A resize
+		// after any other change logs fresh, as before.
+		self.log_slider_event(
+			Event::ShapeResized { layer: name.clone(), index, w, h },
+			|e| matches!(e, Event::ShapeResized { layer: l, index: i, .. } if *l == name && *i == index),
+		);
 		true
 	}
 
@@ -291,6 +409,137 @@ impl Drawing {
 		let name = l.name.clone();
 		self.log.push(Event::ShapeCaptioned { layer: name, index });
 		true
+	}
+
+	/// Log an event for a slider-driven change. When the newest
+	/// log entry is the same kind of change to the same target, it
+	/// is replaced instead of appended: a slider dragged through
+	/// fifty values is one step in the design's story, told with
+	/// its final value, not fifty steps.
+	pub(crate) fn log_slider_event(&mut self, event: Event, replaces: impl Fn(&Event) -> bool) {
+		match self.log.last_mut() {
+			Some(last) if replaces(last) => *last = event,
+			_ => self.log.push(event),
+		}
+	}
+
+	/// Set a shape's opacity (percent, clamped to 100).
+	pub fn set_shape_opacity(&mut self, layer: usize, index: usize, opacity: u8) -> bool {
+		let opacity = opacity.min(100);
+		let name = {
+			let Some(l) = self.layers.get_mut(layer) else { return false };
+			let Some(s) = l.shapes.get_mut(index) else { return false };
+			s.opacity = opacity;
+			l.name.clone()
+		};
+		self.log_slider_event(
+			Event::ShapeOpacitySet { layer: name.clone(), index, opacity },
+			|e| matches!(e, Event::ShapeOpacitySet { layer: l, index: i, .. } if *l == name && *i == index),
+		);
+		true
+	}
+
+	/// Set a stroke's brush width in pixels. Only strokes have a
+	/// brush width; anything else fails.
+	pub fn set_shape_brush_width(&mut self, layer: usize, index: usize, width: u32) -> bool {
+		let width = width.max(1);
+		let name = {
+			let Some(l) = self.layers.get_mut(layer) else { return false };
+			let Some(s) = l.shapes.get_mut(index) else { return false };
+			if s.kind != ShapeKind::Stroke {
+				return false;
+			}
+			s.brush = width;
+			l.name.clone()
+		};
+		self.log_slider_event(
+			Event::ShapeBrushSet { layer: name.clone(), index, width },
+			|e| matches!(e, Event::ShapeBrushSet { layer: l, index: i, .. } if *l == name && *i == index),
+		);
+		true
+	}
+
+	/// Adjust one shape's color: the amounts apply to `base`
+	/// — the color the shape had when the adjustment began — so
+	/// the result never compounds as a slider moves, and zeroing
+	/// the sliders restores the original color exactly. Logged as
+	/// one event per adjustment (see `log_slider_event`).
+	pub fn adjust_shape_color(
+		&mut self,
+		layer: usize,
+		index: usize,
+		base: Srgb,
+		adjust: ColorAdjust,
+	) -> bool {
+		let name = {
+			let Some(l) = self.layers.get_mut(layer) else { return false };
+			let Some(s) = l.shapes.get_mut(index) else { return false };
+			s.fill = adjust.apply(base);
+			l.name.clone()
+		};
+		self.log_slider_event(
+			Event::ShapeColorAdjusted {
+				layer: name.clone(),
+				index,
+				shade: adjust.shade,
+				tint: adjust.tint,
+				tone: adjust.tone,
+				chroma: adjust.chroma,
+				undertone: adjust.undertone,
+				warmth: adjust.warmth,
+				vibrancy: adjust.vibrancy,
+				brightness: adjust.brightness,
+				clarity: adjust.clarity,
+				fog: adjust.fog,
+				hardness: adjust.hardness,
+			},
+			|e| matches!(e, Event::ShapeColorAdjusted { layer: l, index: i, .. } if *l == name && *i == index),
+		);
+		true
+	}
+
+	/// Adjust every shape's color on a layer at once: each shape's
+	/// new color is the adjustment applied to its entry in `bases`
+	/// (the layer's colors when the adjustment began, in shape
+	/// order). Returns how many shapes were adjusted — zero when
+	/// the layer is missing or `bases` no longer matches it, so a
+	/// stale snapshot can never repaint the wrong shapes. Logged
+	/// as ONE event for the whole layer.
+	pub fn adjust_layer_colors(
+		&mut self,
+		layer: usize,
+		bases: &[Srgb],
+		adjust: ColorAdjust,
+	) -> usize {
+		let (name, count) = {
+			let Some(l) = self.layers.get_mut(layer) else { return 0 };
+			if bases.len() != l.shapes.len() || bases.is_empty() {
+				return 0;
+			}
+			for (s, base) in l.shapes.iter_mut().zip(bases.iter()) {
+				s.fill = adjust.apply(*base);
+			}
+			(l.name.clone(), l.shapes.len())
+		};
+		self.log_slider_event(
+			Event::LayerColorsAdjusted {
+				name: name.clone(),
+				count,
+				shade: adjust.shade,
+				tint: adjust.tint,
+				tone: adjust.tone,
+				chroma: adjust.chroma,
+				undertone: adjust.undertone,
+				warmth: adjust.warmth,
+				vibrancy: adjust.vibrancy,
+				brightness: adjust.brightness,
+				clarity: adjust.clarity,
+				fog: adjust.fog,
+				hardness: adjust.hardness,
+			},
+			|e| matches!(e, Event::LayerColorsAdjusted { name: n, .. } if *n == name),
+		);
+		count
 	}
 
 	/// The flat design the renderers and caption sheets consume: visible
@@ -439,6 +688,75 @@ mod tests {
 		let flat = d.flatten();
 		assert_eq!(flat.shapes.len(), 2);
 		assert_eq!(flat.shapes[1].kind, ShapeKind::Image);
+	}
+
+	#[test]
+	fn slider_opacity_sets_and_coalesces_in_the_log() {
+		let mut d = Drawing::new(40, 40, Srgb::WHITE);
+		d.add_shape(0, Shape::new(ShapeKind::Rectangle, 5, 5, 10, 10, red()));
+		let logged = d.log.len();
+		assert!(d.set_shape_opacity(0, 0, 80));
+		assert!(d.set_shape_opacity(0, 0, 55));
+		assert!(d.set_shape_opacity(0, 0, 30));
+		assert_eq!(d.layers[0].shapes[0].opacity, 30);
+		// Three drags through the slider are ONE new log event.
+		assert_eq!(d.log.len(), logged + 1, "log: {:?}", d.log.last());
+		assert!(!d.set_shape_opacity(9, 0, 30));
+		assert!(!d.set_shape_opacity(0, 9, 30));
+	}
+
+	#[test]
+	fn slider_brush_width_only_touches_strokes() {
+		let mut d = Drawing::new(40, 40, Srgb::WHITE);
+		d.add_shape(0, Shape::new(ShapeKind::Rectangle, 5, 5, 10, 10, red()));
+		assert!(!d.set_shape_brush_width(0, 0, 9));
+		d.add_shape(0, Shape::stroke(vec![(1, 1), (20, 20)], 3, red()));
+		assert!(d.set_shape_brush_width(0, 1, 9));
+		assert_eq!(d.layers[0].shapes[1].brush, 9);
+	}
+
+	#[test]
+	fn layer_adjustment_recolors_every_shape_as_one_event() {
+		let mut d = Drawing::new(100, 100, Srgb::WHITE);
+		d.add_shape(0, Shape::new(ShapeKind::Rectangle, 5, 5, 10, 10, red()));
+		d.add_shape(0, Shape::new(ShapeKind::Ellipse, 30, 30, 10, 10, Srgb::new(58, 124, 165)));
+		d.add_shape(0, Shape::new(ShapeKind::Rectangle, 60, 60, 10, 10, Srgb::BLACK));
+		let bases: Vec<Srgb> = d.layers[0].shapes.iter().map(|s| s.fill).collect();
+		let logged = d.log.len();
+		let adj = ColorAdjust { shade: 50, ..Default::default() };
+		// All three shapes adjusted, counted, one log event.
+		assert_eq!(d.adjust_layer_colors(0, &bases, adj), 3);
+		assert_eq!(d.log.len(), logged + 1);
+		for (shape, base) in d.layers[0].shapes.iter().zip(bases.iter()) {
+			assert_eq!(shape.fill, adj.apply(*base));
+			assert!(shape.fill.to_oklch().l <= base.to_oklch().l);
+		}
+		// Dragging further replaces the event, never adds another.
+		let adj2 = ColorAdjust { shade: 80, ..Default::default() };
+		assert_eq!(d.adjust_layer_colors(0, &bases, adj2), 3);
+		assert_eq!(d.log.len(), logged + 1);
+		// A stale snapshot (wrong shape count) changes nothing.
+		assert_eq!(d.adjust_layer_colors(0, &bases[..2], adj), 0);
+		assert_eq!(d.adjust_layer_colors(9, &bases, adj), 0);
+		// The event describes itself in words.
+		let text = d.log.last().unwrap().describe(&d);
+		assert!(text.contains("all 3 elements"), "{text}");
+		assert!(text.contains("shaded 80 percent"), "{text}");
+	}
+
+	#[test]
+	fn shape_adjustment_applies_from_the_base_and_restores() {
+		let mut d = Drawing::new(40, 40, Srgb::WHITE);
+		d.add_shape(0, Shape::new(ShapeKind::Rectangle, 5, 5, 10, 10, red()));
+		let base = red();
+		let adj = ColorAdjust { tint: 40, warmth: 30, ..Default::default() };
+		assert!(d.adjust_shape_color(0, 0, base, adj));
+		assert_eq!(d.layers[0].shapes[0].fill, adj.apply(base));
+		assert_ne!(d.layers[0].shapes[0].fill, base);
+		// Back to zero restores the original color exactly.
+		assert!(d.adjust_shape_color(0, 0, base, ColorAdjust::default()));
+		assert_eq!(d.layers[0].shapes[0].fill, base);
+		assert!(!d.adjust_shape_color(0, 7, base, adj));
 	}
 
 	#[test]

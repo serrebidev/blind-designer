@@ -4,7 +4,7 @@ Readable release history for Blind Designer (renamed from Transversion at 0.2.0)
 section is its GitHub release note, taken from this file by the release
 workflow.
 
-## Unreleased
+## 0.13.0
 
 - Workflow wave A — the wizard frame and project goals
   (Elshara's design). One reusable step dialog (header always

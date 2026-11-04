@@ -4,7 +4,7 @@ Readable release history for Blind Designer (renamed from Transversion at 0.2.0)
 section is its GitHub release note, taken from this file by the release
 workflow.
 
-## Unreleased
+## 0.16.0
 
 - Feedback fixes, from hands-on testing of 0.15.0. The
   Sliders tab is never empty again: a project with no sliders

@@ -4,7 +4,7 @@ Readable release history for Blind Designer (renamed from Transversion at 0.2.0)
 section is its GitHub release note, taken from this file by the release
 workflow.
 
-## Unreleased
+## 0.18.0
 
 - One interaction surface at a time, per project (Elshara's
   principle: on screen, anything that is not an editor is a

@@ -4,6 +4,30 @@ Readable release history for Blind Designer (renamed from Transversion at 0.2.0)
 section is its GitHub release note, taken from this file by the release
 workflow.
 
+## Unreleased
+
+- Interface wave 2 (Elshara's hands-on requests): elements can
+  be locked (Design, Lock/Unlock Selected) — bulk layer and
+  depth color adjustments skip locked elements and announce
+  "N changed, M locked stayed the same"; direct edits still
+  work, and the lock is saved in the design file. Enter on any
+  main-window list opens the inspector: what the element, layer
+  or color is, where it is used, what can change it, and what
+  happens if it is left alone (nothing — nothing changes a
+  design by itself). Every list has a context menu, empty lists
+  included: an empty palette offers the three ways colors
+  arrive, an empty elements list offers the Add items, the
+  sliders page offers Project Options where the pins live.
+  Design, Search and Insert (Ctrl+F) searches palette colors,
+  starter colors, elements, symbols, templates and patterns by
+  name or hex fragment, and inserts the chosen thing at the
+  cursor — colors to the brush, elements and symbols onto the
+  canvas — with a report of what landed where. File, New from
+  Pattern weaves a checkerboard, stripes or dots design from
+  two palette colors. View, Lists Side by Side puts the Palette
+  and Elements lists on one tab in a splitter (this session
+  only, like the other View choices).
+
 ## 0.11.0
 
 - Color channels as sliders (Elshara: "the hex/lch values

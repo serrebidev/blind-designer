@@ -524,6 +524,20 @@ impl Drawing {
 		Some(index)
 	}
 
+	/// Insert a shape at a position in a layer — the search
+	/// dialog's "place the copy right after the selected
+	/// element". Past-the-end clamps to an append; a layer that
+	/// does not exist drops the shape, like `add_shape`.
+	/// Returns the index the shape landed at, if any.
+	pub fn insert_shape(&mut self, layer: usize, at: usize, shape: Shape) -> Option<usize> {
+		let l = self.layers.get_mut(layer)?;
+		let at = at.min(l.shapes.len());
+		l.shapes.insert(at, shape.clone());
+		let name = l.name.clone();
+		self.log.push(Event::ShapeAdded { layer: name, shape });
+		Some(at)
+	}
+
 	pub fn remove_shape(&mut self, layer: usize, index: usize) -> Option<Shape> {
 		let l = self.layers.get_mut(layer)?;
 		if index >= l.shapes.len() {
@@ -1243,6 +1257,23 @@ mod tests {
 		assert_eq!(d.insert_scene(0, &empty, "Nothing"), 0);
 		assert_eq!(d.insert_scene(9, &scene, "Harbour"), 0);
 		assert_eq!(d.log.len(), logged + 1);
+	}
+
+	#[test]
+	fn insert_shape_lands_after_the_selected_element() {
+		let mut d = Drawing::new(200, 200, Srgb::WHITE);
+		let red = Shape::new(ShapeKind::Rectangle, 0, 0, 10, 10, Srgb::new(200, 0, 0));
+		let blue = Shape::new(ShapeKind::Rectangle, 50, 50, 10, 10, Srgb::new(0, 0, 200));
+		d.add_shape(0, red.clone());
+		d.add_shape(0, blue.clone());
+		// Insert a copy of red between the two.
+		assert_eq!(d.insert_shape(0, 1, red.clone()), Some(1));
+		let fills: Vec<Srgb> = d.layers[0].shapes.iter().map(|s| s.fill).collect();
+		assert_eq!(fills, vec![red.fill, red.fill, blue.fill]);
+		// Past-the-end clamps to an append; a missing layer drops.
+		assert_eq!(d.insert_shape(0, 99, blue.clone()), Some(3));
+		assert_eq!(d.insert_shape(9, 0, red), None);
+		assert_eq!(d.layers[0].shapes.len(), 4);
 	}
 
 	#[test]

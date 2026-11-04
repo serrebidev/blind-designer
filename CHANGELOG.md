@@ -90,6 +90,23 @@ workflow.
   of a fixed cap; Extract adds to the palette from any image without
   touching the design.
 
+## 0.8.0
+
+- Sliders, Elshara's way: a Sliders tab in the main window with 24
+  descriptive sliders — brush width, transparency, color channels,
+  element scale, frame duration, sound volume, and the color
+  adjustments: shade, tint, tone, chroma, undertone, temperature,
+  vibrancy, brightness, clarity, fogginess, hardness.
+- A new project pins NONE of them: Design, Project Options is where
+  you choose your sliders, set what they aim at (the brush color, the
+  selected piece, or the whole layer), and set your page-jump size.
+- Every change announces itself: "Brush width 12 pixels. Everything
+  else unchanged." (View, Announce Slider Changes turns it off.)
+- Keys: arrows fine-step, Page up/down jump by your percentage, Home
+  and End go to the ends, Control+arrows hop between sliders.
+- Elements have real transparency now, set by the Transparency
+  slider and spoken in their descriptions.
+
 ## 0.7.0
 
 - Your lists tell the truth now: a new project starts empty — no

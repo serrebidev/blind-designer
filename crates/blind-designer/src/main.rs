@@ -26,7 +26,7 @@ use chroma_core::goals::{
 use chroma_core::viewability::DepthBand;
 use chroma_core::palette::{gray_ramp, starter_palette, PaletteColor, Provenance};
 use chroma_core::plain::{parse_color, parse_position, parse_size};
-use chroma_core::project::{Project, ProjectStats, DEFAULT_PAGE_JUMP_PERCENT};
+use chroma_core::project::{InteractionMode, Project, ProjectStats, DEFAULT_PAGE_JUMP_PERCENT};
 use chroma_core::sliders::{
 	change_announcement, page_jump, slider_by_id, AdjustTarget, ColorAdjust, SliderDef,
 	SliderTarget, SLIDERS,
@@ -389,6 +389,13 @@ struct State {
 	/// A new project starts this way; a loaded project carries
 	/// whatever its file says. Saved in the design file.
 	grayscale_start: bool,
+	/// The project's interaction mode (Elshara's principle:
+	/// one interaction surface at a time — Draw, Slide or
+	/// Type — switched in Project Options and applied by
+	/// `apply_interaction_mode`). A new project starts in
+	/// Slide; a loaded project carries its file's mode, and a
+	/// file that does not say means Type. Saved in the file.
+	interaction_mode: InteractionMode,
 	/// The file this project was last saved to or opened from,
 	/// when there is one: the unsaved-changes guard saves back
 	/// to it without asking for a name again. Session-only.
@@ -507,7 +514,19 @@ struct ShapeRow {
 
 struct Win {
 	frame: Frame,
+	/// The main window's content panel: the mode surfaces are
+	/// its children, and a mode switch re-runs its layout.
+	panel: Panel,
 	notebook: Notebook,
+	/// The typed-fields surface (the hex row and the L C H
+	/// spins row in one panel, so a mode switch shows or hides
+	/// them as a unit): visible only in Type mode.
+	typed_panel: Panel,
+	/// The Draw surface: a panel holding the line that drawing
+	/// tools lead in Draw mode and the button that opens the
+	/// pointer drawing dialog. Visible only in Draw mode.
+	draw_panel: Panel,
+	draw_button: Button,
 	/// The palette and elements lists live behind RefCells: the
 	/// Lists Side by Side toggle rebuilds their pages (a wx
 	/// widget's parent is fixed at birth), and the new list
@@ -676,6 +695,7 @@ fn current_project(state: &State) -> Project {
 		page_jump_percent: state.page_jump_percent,
 		goal: state.goal.clone(),
 		grayscale_start: state.grayscale_start,
+		interaction_mode: state.interaction_mode,
 	}
 }
 
@@ -1543,7 +1563,106 @@ fn sliders_page_index(win: &Win) -> Option<usize> {
 		.find(|&i| win.notebook.get_page_text(i).as_deref() == Some("Sliders"))
 }
 
+/// Take the Sliders page out of the notebook and forget its
+/// rows: the page the interaction mode hides. The rows go with
+/// it — a refresh against controls that no longer exist would
+/// be a lie, and an empty row set refreshes as a no-op.
+fn remove_sliders_tab(win: &Win) {
+	if win.slider_page.borrow().is_some() {
+		if let Some(i) = sliders_page_index(win) {
+			win.notebook.remove_page(i);
+		}
+	}
+	*win.slider_page.borrow_mut() = None;
+	win.slider_rows.borrow_mut().clear();
+	win.channel_rows.borrow_mut().clear();
+	win.shape_rows.borrow_mut().clear();
+	*win.channel_note.borrow_mut() = None;
+	*win.slider_target_choice.borrow_mut() = None;
+}
+
+/// Apply the state's interaction mode to the main window
+/// (Elshara's principle: only one interaction surface shows
+/// at a time, per project): the typed-fields panel shows only
+/// in Type mode, the Draw panel only in Draw mode, and the
+/// Sliders page exists only in Slide mode — every other
+/// build_sliders_tab caller is gated by the same rule, so the
+/// page cannot creep back while another mode is showing.
+/// Hidden surfaces leave the tab order with their visibility:
+/// a hidden panel's controls are not reachable, a removed page
+/// is not there at all. With `move_focus`, focus lands on a
+/// real control of the surface just shown — the hex field, the
+/// Draw button, or the Sliders page's first slider (the
+/// palette list when the page somehow has none).
+fn apply_interaction_mode(win: &Rc<Win>, shared: &Shared, move_focus: bool) {
+	let mode = shared.borrow().interaction_mode;
+	win.typed_panel.show(mode == InteractionMode::Type);
+	win.draw_panel.show(mode == InteractionMode::Draw);
+	if mode == InteractionMode::Slide {
+		build_sliders_tab(win, shared);
+	} else {
+		remove_sliders_tab(win);
+	}
+	win.panel.layout();
+	if !move_focus {
+		return;
+	}
+	match mode {
+		InteractionMode::Type => win.hex_field.set_focus(),
+		InteractionMode::Draw => win.draw_button.set_focus(),
+		InteractionMode::Slide => {
+			if let Some(i) = sliders_page_index(win) {
+				win.notebook.set_selection(i);
+			}
+			let landed = {
+				let rows = win.slider_rows.borrow();
+				if let Some(row) = rows.first() {
+					row.slider.set_focus();
+					true
+				} else {
+					false
+				}
+			};
+			if !landed {
+				let landed = {
+					let rows = win.channel_rows.borrow();
+					if let Some(row) = rows.first() {
+						row.slider.set_focus();
+						true
+					} else {
+						false
+					}
+				};
+				if !landed {
+					win.palette_list.borrow().set_focus();
+				}
+			}
+		}
+	}
+}
+
+/// Bring the Sliders page forward and put focus on one
+/// shape-part slider: the Slide-mode landing for the Arrange
+/// commands (Move rests on Across, Resize on Width, Rotate on
+/// Rotation). The row may be disabled for the selected element
+/// (a stroke's Width) — its callers keep those cases out, the
+/// way the Resize dialog refuses a stroke before opening.
+fn focus_shape_part(win: &Win, part: ShapePart) {
+	if let Some(i) = sliders_page_index(win) {
+		win.notebook.set_selection(i);
+	}
+	if let Some(row) = win.shape_rows.borrow().iter().find(|r| r.part == part) {
+		row.slider.set_focus();
+	}
+}
+
 fn build_sliders_tab(win: &Rc<Win>, shared: &Shared) {
+	// The Sliders page is the Slide mode's surface: in any
+	// other mode there is no page to build, whoever asked.
+	if shared.borrow().interaction_mode != InteractionMode::Slide {
+		remove_sliders_tab(win);
+		return;
+	}
 	if win.slider_page.borrow().is_some() {
 		if let Some(i) = sliders_page_index(win) {
 			win.notebook.remove_page(i);
@@ -2374,6 +2493,26 @@ fn project_options_dialog(win: &Rc<Win>, shared: &Shared) {
 		target_choice.set_selection(at as u32);
 	}
 	sizer.add(&target_choice, 0, SizerFlag::Expand | SizerFlag::All, 5);
+	// The interaction mode (Elshara's principle): the one
+	// place the project's surface is switched — Draw, Slide
+	// or Type, only one of them on screen at a time.
+	let mode_label = StaticText::builder(&dialog)
+		.with_label("Interaction mode (one surface at a time: Draw, Slide or Type)")
+		.build();
+	sizer.add(&mode_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	let mode_choice = Choice::builder(&dialog).build();
+	for m in InteractionMode::ALL {
+		mode_choice.append(m.name());
+	}
+	{
+		let state = shared.borrow();
+		let at = InteractionMode::ALL
+			.iter()
+			.position(|m| *m == state.interaction_mode)
+			.unwrap_or(2);
+		mode_choice.set_selection(at as u32);
+	}
+	sizer.add(&mode_choice, 0, SizerFlag::Expand | SizerFlag::All, 5);
 	let jump_now = shared.borrow().page_jump_percent;
 	let jump_label = StaticText::builder(&dialog)
 		.with_label("Page Up and Page Down jump, percent of each slider's range")
@@ -2459,13 +2598,30 @@ fn project_options_dialog(win: &Rc<Win>, shared: &Shared) {
 		}
 		state.page_jump_percent = jump_spin.value().clamp(1, 100) as u8;
 		state.grayscale_start = gray_check.is_checked();
+		let mode_before = state.interaction_mode;
+		let mut mode_after = mode_before;
+		if let Some(sel) = mode_choice.get_selection() {
+			if let Some(m) = InteractionMode::ALL.get(sel as usize) {
+				mode_after = *m;
+				state.interaction_mode = *m;
+			}
+		}
+		let mode_note = if mode_after != mode_before {
+			match mode_after {
+				InteractionMode::Slide => " Interaction mode is now Slide: the Sliders tab is the surface, and the typed hex and L C H fields are hidden.",
+				InteractionMode::Type => " Interaction mode is now Type: the typed hex and L C H fields show, and the Sliders tab is hidden.",
+				InteractionMode::Draw => " Interaction mode is now Draw: the pointer drawing tools lead, and the sliders and typed fields are hidden.",
+			}
+		} else {
+			""
+		};
 		let count = state.pinned_sliders.len();
 		let grayscale = state.grayscale_start;
 		drop(state);
-		build_sliders_tab(win, shared);
+		apply_interaction_mode(win, shared, true);
 		frame.set_status_text(
 			&format!(
-				"Project options saved: {count} slider{} pinned to the Sliders tab.{}{}",
+				"Project options saved: {count} slider{} pinned to the Sliders tab.{}{}{mode_note}",
 				if count == 1 { "" } else { "s" },
 				if count == 0 {
 					" With none pinned, the tab shows every slider."
@@ -3796,9 +3952,10 @@ fn insert_hit(win: &Rc<Win>, shared: &Shared, hit: &CatalogHit) -> Option<String
 			state.pinned_sliders = Vec::new();
 			state.slider_target = AdjustTarget::BaseColor;
 			state.page_jump_percent = DEFAULT_PAGE_JUMP_PERCENT;
+			state.interaction_mode = InteractionMode::Slide;
 			reset_adjustment(&mut state);
 			drop(state);
-			build_sliders_tab(win, shared);
+			apply_interaction_mode(win, shared, true);
 			let state = shared.borrow();
 			refresh_lists(win, &state);
 			Some(format!(
@@ -3979,7 +4136,7 @@ fn pattern_dialog(win: &Rc<Win>, shared: &Shared, preselect: Option<&str>) {
 	sizer.add_sizer(&buttons, 0, SizerFlag::All, 5);
 	dialog.set_sizer(sizer, true);
 	{
-		let (dialog, shared) = (dialog.clone(), shared.clone());
+		let (dialog, shared, w) = (dialog.clone(), shared.clone(), win.clone());
 		start.on_click(move |_| {
 			let kind = templates::PATTERN_NAMES
 				.get(kinds.get_selection().map(|i| i as usize).unwrap_or(0))
@@ -3999,12 +4156,14 @@ fn pattern_dialog(win: &Rc<Win>, shared: &Shared, preselect: Option<&str>) {
 			state.page_jump_percent = DEFAULT_PAGE_JUMP_PERCENT;
 			state.goal = None;
 			state.grayscale_start = true;
+			state.interaction_mode = InteractionMode::Slide;
 			state.design_path = None;
 			reset_adjustment(&mut state);
 			// The fresh pattern design is the saved baseline.
 			let fp = project_fingerprint(&state);
 			state.saved_fingerprint = fp;
 			drop(state);
+			apply_interaction_mode(&w, &shared, true);
 			frame.set_status_text(
 				&format!("Started a new {kind} design from the two colors. It is a normal design now: edit it, then Save Design to keep it."),
 				0,
@@ -4264,6 +4423,14 @@ fn setup_wizard(win: &Rc<Win>, shared: &Shared, new_project: bool) {
 	s1.add(&kind_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
 	let kind_list = QuietList::<usize>::new(&p1, "What do you want to create or build");
 	s1.add(&kind_list, 1, SizerFlag::Expand | SizerFlag::All, 5);
+	let mode_note = StaticText::builder(&p1)
+		.with_label(if new_project {
+			"A new project starts in Slide mode: the sliders are the surface, and the typed fields stay away. Switch the interaction mode any time in Design, Project Options."
+		} else {
+			"This project's interaction mode — Draw, Slide or Type, one surface at a time — is switched in Design, Project Options."
+		})
+		.build();
+	s1.add(&mode_note, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
 	let kind_list = Rc::new(kind_list);
 	kind_list.update_labelled(
 		GoalKind::ALL
@@ -4492,6 +4659,9 @@ fn setup_wizard(win: &Rc<Win>, shared: &Shared, new_project: bool) {
 		state.slider_target = AdjustTarget::BaseColor;
 		state.page_jump_percent = DEFAULT_PAGE_JUMP_PERCENT;
 		state.grayscale_start = true;
+		// A new project starts on the sliders (Elshara's
+		// principle: what can be slid is not typed).
+		state.interaction_mode = InteractionMode::Slide;
 		state.design_path = None;
 		reset_adjustment(&mut state);
 	} else {
@@ -4513,8 +4683,10 @@ fn setup_wizard(win: &Rc<Win>, shared: &Shared, new_project: bool) {
 		state.saved_fingerprint = fp;
 	}
 	drop(state);
-	// The pins may have changed either way: rebuild the tab.
-	build_sliders_tab(win, shared);
+	// The pins may have changed either way, and a new project
+	// starts in Slide mode: apply the mode, which rebuilds
+	// the tab when the mode shows it.
+	apply_interaction_mode(win, shared, true);
 	let state = shared.borrow();
 	refresh_lists(win, &state);
 	frame.set_status_text(
@@ -5404,7 +5576,7 @@ fn template_rows() -> Vec<(usize, String)> {
 /// replaces the current drawing — the template is an ordinary
 /// design from then on: it edits, saves and exports like anything
 /// drawn by hand. The list is labelled "Templates".
-fn templates_dialog(win: &Win, shared: &Shared) {
+fn templates_dialog(win: &Rc<Win>, shared: &Shared) {
 	let frame = win.frame;
 	let dialog = Dialog::builder(&frame, "New from Template").build();
 	let sizer = BoxSizer::builder(Orientation::Vertical).build();
@@ -5420,7 +5592,8 @@ fn templates_dialog(win: &Win, shared: &Shared) {
 	let list = Rc::new(list);
 	list.update_labelled(template_rows(), Select::Start);
 	{
-		let (list, shared, dialog) = (list.clone(), shared.clone(), dialog.clone());
+		let (list, shared, dialog, w) =
+			(list.clone(), shared.clone(), dialog.clone(), win.clone());
 		load.on_click(move |_| {
 			let Some(i) = list.selected() else { return };
 			let name = templates::TEMPLATE_NAMES[i];
@@ -5436,12 +5609,14 @@ fn templates_dialog(win: &Win, shared: &Shared) {
 				state.page_jump_percent = DEFAULT_PAGE_JUMP_PERCENT;
 				state.goal = None;
 				state.grayscale_start = true;
+				state.interaction_mode = InteractionMode::Slide;
 				state.design_path = None;
 				reset_adjustment(&mut state);
 				// The fresh template design is the saved baseline.
 				let fp = project_fingerprint(&state);
 				state.saved_fingerprint = fp;
 				drop(state);
+				apply_interaction_mode(&w, &shared, true);
 				frame.set_status_text(
 					&format!("Started a new design from the {name} template. It is a normal design now: edit it, then Save Design to keep it."),
 					0,
@@ -6645,6 +6820,7 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 							state.page_jump_percent = project.page_jump_percent;
 							state.goal = project.goal;
 							state.grayscale_start = project.grayscale_start;
+							state.interaction_mode = project.interaction_mode;
 							state.design_path = Some(PathBuf::from(&path));
 							reset_adjustment(&mut state);
 							state.layer = 0;
@@ -6656,7 +6832,10 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 								state.drawing.layers.iter().map(|l| l.shapes.len()).sum();
 							let colors = state.palette.len();
 							drop(state);
-							build_sliders_tab(win, shared);
+							// The opened project's own mode rules
+							// the window now (a file that does not
+							// name one means Type).
+							apply_interaction_mode(win, shared, true);
 							let state = shared.borrow();
 							refresh_lists(win, &state);
 							frame.set_status_text(
@@ -7272,6 +7451,23 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 				locate(&state, flat)
 			};
 			let Some((li, si)) = at else { return };
+			// Slide mode routes the command to the shape's own
+			// sliders instead of a dialog (Elshara's principle:
+			// what can be slid is not typed).
+			let slide = shared.borrow().interaction_mode == InteractionMode::Slide;
+			if slide {
+				let part = if id == ID_MOVE_SHAPE {
+					ShapePart::Across
+				} else {
+					ShapePart::Rotation
+				};
+				focus_shape_part(win, part);
+				frame.set_status_text(
+					&format!("Slide mode: adjust {} on the Sliders tab.", part.name()),
+					0,
+				);
+				return;
+			}
 			if id == ID_MOVE_SHAPE {
 				let (cur, canvas) = {
 					let state = shared.borrow();
@@ -7333,6 +7529,14 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 			};
 			if stroke {
 				frame.set_status_text("A stroke's size is its points; move it or add a new one.", 0);
+				return;
+			}
+			// Slide mode: the Width slider carries this, the
+			// way Move rests on Across (see ID_MOVE_SHAPE).
+			let slide = shared.borrow().interaction_mode == InteractionMode::Slide;
+			if slide {
+				focus_shape_part(win, ShapePart::Width);
+				frame.set_status_text("Slide mode: adjust Width on the Sliders tab.", 0);
 				return;
 			}
 			if let Some(v) = fields_dialog(
@@ -7515,6 +7719,7 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 					page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT,
 					goal: None,
 					grayscale_start: false,
+					interaction_mode: InteractionMode::Type,
 				};
 				match std::fs::write(&path, scene.to_text()) {
 					Ok(()) => frame.set_status_text(&format!("Saved scene to {path}"), 0),
@@ -8099,37 +8304,35 @@ fn main() {
 			.with_label("No color selected yet. Open an image, or add a color by hex.")
 			.build();
 
-		let hex_label = StaticText::builder(&panel).with_label("Hex value").build();
-		let hex_field = TextCtrl::builder(&panel).build();
+		// The typed-fields surface (Elshara's interaction
+		// modes): the hex row and the L C H spins row live in
+		// ONE panel, so a mode switch shows or hides the whole
+		// surface as a unit — visible only in Type mode.
+		let typed_panel = Panel::builder(&panel).build();
+		let hex_label = StaticText::builder(&typed_panel).with_label("Hex value").build();
+		let hex_field = TextCtrl::builder(&typed_panel).build();
 		hex_field.set_value("#3A7CA5");
-		let apply_hex = Button::builder(&panel).with_label("Apply Hex").build();
+		let apply_hex = Button::builder(&typed_panel).with_label("Apply Hex").build();
 
-		let l_label = StaticText::builder(&panel).with_label("Lightness (0 to 1)").build();
-		let l_spin = SpinCtrlDouble::builder(&panel).with_range(0.0, 1.0).build();
-		let c_label = StaticText::builder(&panel).with_label("Chroma (0 to 0.4)").build();
-		let c_spin = SpinCtrlDouble::builder(&panel).with_range(0.0, 0.4).build();
-		let h_label = StaticText::builder(&panel).with_label("Hue (0 to 360 degrees)").build();
-		let h_spin = SpinCtrlDouble::builder(&panel).with_range(0.0, 360.0).build();
+		let l_label = StaticText::builder(&typed_panel).with_label("Lightness (0 to 1)").build();
+		let l_spin = SpinCtrlDouble::builder(&typed_panel).with_range(0.0, 1.0).build();
+		let c_label = StaticText::builder(&typed_panel).with_label("Chroma (0 to 0.4)").build();
+		let c_spin = SpinCtrlDouble::builder(&typed_panel).with_range(0.0, 0.4).build();
+		let h_label = StaticText::builder(&typed_panel).with_label("Hue (0 to 360 degrees)").build();
+		let h_spin = SpinCtrlDouble::builder(&typed_panel).with_range(0.0, 360.0).build();
 		l_spin.set_increment(0.01);
 		l_spin.set_digits(2);
 		c_spin.set_increment(0.01);
 		c_spin.set_digits(2);
 		h_spin.set_increment(1.0);
 		h_spin.set_digits(0);
-		let apply_lch = Button::builder(&panel).with_label("Apply L C H").build();
-
-		let stats_label = StaticText::builder(&panel).with_label("Project statistics").build();
-		let stats_text = StaticText::builder(&panel).build();
-
-		let sizer = BoxSizer::builder(Orientation::Vertical).build();
-		sizer.add(&notebook, 1, SizerFlag::Expand | SizerFlag::All, 5);
-		sizer.add(&readout_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
-		sizer.add(&readout, 0, SizerFlag::Expand | SizerFlag::All, 5);
+		let apply_lch = Button::builder(&typed_panel).with_label("Apply L C H").build();
+		let typed_sizer = BoxSizer::builder(Orientation::Vertical).build();
 		let editor = BoxSizer::builder(Orientation::Horizontal).build();
 		editor.add(&hex_label, 0, SizerFlag::All, 5);
 		editor.add(&hex_field, 1, SizerFlag::All, 5);
 		editor.add(&apply_hex, 0, SizerFlag::All, 5);
-		sizer.add_sizer(&editor, 0, SizerFlag::Expand, 0);
+		typed_sizer.add_sizer(&editor, 0, SizerFlag::Expand, 0);
 		let spins = BoxSizer::builder(Orientation::Horizontal).build();
 		spins.add(&l_label, 0, SizerFlag::All, 5);
 		spins.add(&l_spin, 1, SizerFlag::All, 5);
@@ -8138,7 +8341,32 @@ fn main() {
 		spins.add(&h_label, 0, SizerFlag::All, 5);
 		spins.add(&h_spin, 1, SizerFlag::All, 5);
 		spins.add(&apply_lch, 0, SizerFlag::All, 5);
-		sizer.add_sizer(&spins, 0, SizerFlag::Expand, 0);
+		typed_sizer.add_sizer(&spins, 0, SizerFlag::Expand, 0);
+		typed_panel.set_sizer(typed_sizer, true);
+
+		// The Draw surface: one line saying the drawing tools
+		// lead here, and the button that opens them. Visible
+		// only in Draw mode.
+		let draw_panel = Panel::builder(&panel).build();
+		let draw_note = StaticText::builder(&draw_panel)
+			.with_label("Draw mode: the pointer drawing tools lead. Everything else waits in the menus.")
+			.build();
+		let draw_button =
+			Button::builder(&draw_panel).with_label("Draw with Pointer\u{2026}").build();
+		let draw_sizer = BoxSizer::builder(Orientation::Vertical).build();
+		draw_sizer.add(&draw_note, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+		draw_sizer.add(&draw_button, 0, SizerFlag::All, 5);
+		draw_panel.set_sizer(draw_sizer, true);
+
+		let stats_label = StaticText::builder(&panel).with_label("Project statistics").build();
+		let stats_text = StaticText::builder(&panel).build();
+
+		let sizer = BoxSizer::builder(Orientation::Vertical).build();
+		sizer.add(&notebook, 1, SizerFlag::Expand | SizerFlag::All, 5);
+		sizer.add(&readout_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+		sizer.add(&readout, 0, SizerFlag::Expand | SizerFlag::All, 5);
+		sizer.add(&typed_panel, 0, SizerFlag::Expand, 0);
+		sizer.add(&draw_panel, 0, SizerFlag::Expand, 0);
 		sizer.add(&stats_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
 		sizer.add(&stats_text, 0, SizerFlag::Expand | SizerFlag::All, 5);
 		panel.set_sizer(sizer, true);
@@ -8190,6 +8418,10 @@ fn main() {
 			// colour treatment later.
 			goal: None,
 			grayscale_start: true,
+			// The startup project is a new project: it starts
+			// in Slide mode (new projects slide; projects
+			// opened from files carry their own mode).
+			interaction_mode: InteractionMode::Slide,
 			// No file yet, and the fresh project is its own
 			// baseline (set for real just below, once the
 			// fingerprint helper can see the whole state).
@@ -8204,7 +8436,11 @@ fn main() {
 		let channel_rebuild_timer = Timer::new(&frame);
 		let win = Rc::new(Win {
 			frame,
+			panel,
 			notebook,
+			typed_panel,
+			draw_panel,
+			draw_button,
 			palette_list: RefCell::new(palette_list),
 			elements_list: RefCell::new(elements_list),
 			layers_list,
@@ -8237,7 +8473,17 @@ fn main() {
 				build_sliders_tab(&w, &s);
 			});
 		}
-		build_sliders_tab(&win, &shared);
+		{
+			// The Draw surface's button opens the same pointer
+			// drawing dialog as Design, Draw with Pointer.
+			let (w, s) = (win.clone(), shared.clone());
+			win.draw_button.on_click(move |_| draw_pointer_dialog(&w, &s));
+		}
+		// The startup project's mode is Slide: the Sliders tab
+		// is built, the typed and Draw panels stay hidden. No
+		// focus move — the first-launch wizard opens next and
+		// owns the keyboard until it is done.
+		apply_interaction_mode(&win, &shared, false);
 		{
 			let state = shared.borrow();
 			refresh_lists(&win, &state);

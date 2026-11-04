@@ -694,6 +694,7 @@ mod tests {
 			page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT,
 			goal,
 			grayscale_start: false,
+			interaction_mode: crate::project::InteractionMode::Type,
 		}
 	}
 

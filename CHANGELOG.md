@@ -4,6 +4,37 @@ Readable release history for Blind Designer (renamed from Transversion at 0.2.0)
 section is its GitHub release note, taken from this file by the release
 workflow.
 
+## 0.16.0
+
+- Feedback fixes, from hands-on testing of 0.15.0. The
+  Sliders tab is never empty again: a project with no sliders
+  pinned now shows every slider (pinning in Project Options
+  trims the tab to a chosen set, as before), under a note
+  saying so. The setup wizard assigns the sliders each
+  project kind works with — finishing it pins the kind's
+  default set (restating a goal tops the pins up), and its
+  status line now names what it did: the goal set, how many
+  sliders were pinned, and the seeded canvas. The wizard
+  also opens by itself at first launch, on the blank
+  project; cancelling leaves the blank project untouched.
+  The element wizard's Finish now says on the status line
+  what it set. Menus regrouped: Embed Feed Snapshot and
+  Embed Pasted Post moved from Design into File, Import,
+  where they belong; Design gained Text (Text Studio,
+  Replacement Variables) and Review (Inspect Selected,
+  Viewability, Recognizability, Project Statistics)
+  submenus; View's fourteen color formats now sit in one
+  Color Format submenu. Focus Mode brings its window to
+  the front and puts the keyboard in its text. Lists Side
+  by Side lands the keyboard on the Palette list after the
+  switch. Unsaved work can no longer be lost silently:
+  opening a design, starting from a template, a pattern or
+  the wizard, and exiting all ask first — Save, Don't Save,
+  or Cancel — whenever the project has changed since it was
+  last saved or opened. New: File, New Window opens a
+  second Blind Designer window (a separate copy of the
+  app) so two projects can be open at once.
+
 ## 0.15.0
 
 - Text Studio wave — styled text, text transforms, embeds,

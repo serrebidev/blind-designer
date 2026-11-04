@@ -106,6 +106,25 @@ workflow.
   of a fixed cap; Extract adds to the palette from any image without
   touching the design.
 
+## 0.9.0
+
+- Every color format, spoken your way: the View menu's color format
+  now covers hex, rgb, rgba, hsl, hsv, CMYK, XYZ, xyY, CIE-LAB,
+  CIE-LCH, CIE-LUV, Hunter-Lab, decimal, web safe, and binary — the
+  whole app reads colors in the system you pick.
+- Wavelength: colors report their dominant wavelength where one
+  exists (purples honestly report a complementary wavelength, grays
+  report none).
+- Color, Color Tools: blend two colors by slider, subtract one from
+  another, build a gradient into your palette, roll a random color,
+  and check contrast between any two colors with a plain verdict.
+- Color, Text Readability: every text element judged against the
+  background — easy to read, hard to read, or unreadable.
+- Schemes gain settings: analogous spread in degrees, and the RYB
+  paint wheel as an alternate way to find harmonies.
+- Frequency to color (experimental): type a sound frequency in Hz
+  and hear the color it maps to by octaves into visible light.
+
 ## 0.8.0
 
 - Sliders, Elshara's way: a Sliders tab in the main window with 24

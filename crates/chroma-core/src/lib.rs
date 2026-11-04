@@ -17,6 +17,7 @@ pub mod dictionary;
 pub mod drawing;
 pub mod font;
 pub mod formats;
+pub mod goals;
 pub mod inspect;
 pub mod palette;
 pub mod plain;

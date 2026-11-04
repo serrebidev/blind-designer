@@ -165,6 +165,7 @@ pub enum Event {
 	ShapeCornerSet { layer: String, index: usize, corner: u8 },
 	ShapeLocked { layer: String, index: usize, locked: bool },
 	SceneInserted { name: String, count: usize },
+	ColorTreated { scope: String, count: usize, locked: usize },
 	FrameAdded { index: usize, duration_ms: u32 },
 	FrameDuplicated { index: usize },
 	FrameRemoved { index: usize },
@@ -369,6 +370,17 @@ impl Event {
 			Event::SceneInserted { name, count } => format!(
 				"Insert scene \"{name}\": {count} elements, captioned as part of the scene."
 			),
+			Event::ColorTreated { scope, count, locked } => {
+				if *locked > 0 {
+					format!(
+						"Colour treatment on {scope}: {count} grayscale shapes took palette colours in paint order, {locked} locked stayed grayscale."
+					)
+				} else {
+					format!(
+						"Colour treatment on {scope}: {count} grayscale shapes took palette colours in paint order."
+					)
+				}
+			}
 			Event::FrameLoaded { index } => format!(
 				"Load animation frame {} onto the canvas for editing.",
 				index + 1
@@ -406,6 +418,15 @@ impl BulkOutcome {
 			format!("{} changed, {} locked stayed the same", self.changed, self.locked)
 		}
 	}
+}
+
+/// Where a colour treatment lands (see
+/// `Drawing::apply_color_treatment`): one named layer, or every
+/// layer carrying one depth role.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TreatmentScope {
+	Layer(usize),
+	Depth(DepthRole),
 }
 
 #[derive(Debug, Clone)]
@@ -874,6 +895,67 @@ impl Drawing {
 		outcome
 	}
 
+	/// The colour treatment (grayscale start's second half): the
+	/// grayscale shapes in scope take palette colours in paint
+	/// order, cycling through `colors` when the scope holds more
+	/// grayscale shapes than the palette holds colours. Shapes
+	/// that already carry colour are left exactly as they are —
+	/// the treatment is for the uncoloured work — and locked
+	/// shapes are skipped and counted, like every bulk change.
+	/// Logged as ONE event, and only when something changed.
+	pub fn apply_color_treatment(
+		&mut self,
+		scope: TreatmentScope,
+		colors: &[Srgb],
+	) -> BulkOutcome {
+		if colors.is_empty() {
+			return BulkOutcome::ZERO;
+		}
+		let (targets, scope_words): (Vec<(usize, usize)>, String) = match scope {
+			TreatmentScope::Layer(index) => {
+				let Some(layer) = self.layers.get(index) else {
+					return BulkOutcome::ZERO;
+				};
+				(
+					(0..layer.shapes.len()).map(|si| (index, si)).collect(),
+					format!("layer \"{}\"", layer.name),
+				)
+			}
+			TreatmentScope::Depth(role) => (
+				self.layers
+					.iter()
+					.enumerate()
+					.filter(|(_, l)| l.depth == role)
+					.flat_map(|(li, l)| (0..l.shapes.len()).map(move |si| (li, si)))
+					.collect(),
+				format!("the {} depth", role.name()),
+			),
+		};
+		let mut outcome = BulkOutcome::ZERO;
+		let mut next = 0usize;
+		for (li, si) in targets {
+			let shape = &mut self.layers[li].shapes[si];
+			if shape.fill.r != shape.fill.g || shape.fill.g != shape.fill.b {
+				continue; // already coloured: not the treatment's business
+			}
+			if shape.locked {
+				outcome.locked += 1;
+				continue;
+			}
+			shape.fill = colors[next % colors.len()];
+			next += 1;
+			outcome.changed += 1;
+		}
+		if outcome.changed > 0 {
+			self.log.push(Event::ColorTreated {
+				scope: scope_words,
+				count: outcome.changed,
+				locked: outcome.locked,
+			});
+		}
+		outcome
+	}
+
 	/// Insert a saved scene into this drawing: every element of
 	/// the scene's visible layers, in paint order, lands on layer
 	/// `layer` as one group. Each inserted element's caption is
@@ -1014,6 +1096,59 @@ mod tests {
 		assert!(step.contains("recolor shape 1"), "{step}");
 		assert!(!d.set_shape_color_slider(9, 0, Srgb::BLACK), "no such layer");
 		assert!(!d.set_shape_color_slider(0, 9, Srgb::BLACK), "no such shape");
+	}
+
+	#[test]
+	fn color_treatment_fills_grays_in_paint_order_and_skips_locked() {
+		let gray = |v: u8| Srgb::new(v, v, v);
+		let mut d = Drawing::new(100, 100, Srgb::WHITE);
+		d.add_shape(0, Shape::new(ShapeKind::Rectangle, 0, 0, 10, 10, gray(40)));
+		d.add_shape(0, Shape::new(ShapeKind::Rectangle, 20, 0, 10, 10, red())); // coloured: untouched
+		d.add_shape(0, Shape::new(ShapeKind::Rectangle, 40, 0, 10, 10, gray(90)));
+		let mut locked = Shape::new(ShapeKind::Rectangle, 60, 0, 10, 10, gray(120));
+		locked.locked = true;
+		d.add_shape(0, locked);
+		let palette = [Srgb::new(200, 0, 0), Srgb::new(0, 0, 200)];
+		let before = d.log.len();
+		let out = d.apply_color_treatment(TreatmentScope::Layer(0), &palette);
+		assert_eq!(out, BulkOutcome { changed: 2, locked: 1 });
+		assert_eq!(d.layers[0].shapes[0].fill, palette[0], "first gray takes the first colour");
+		assert_eq!(d.layers[0].shapes[1].fill, red(), "coloured shapes are left alone");
+		assert_eq!(d.layers[0].shapes[2].fill, palette[1], "second gray takes the second colour");
+		assert_eq!(d.layers[0].shapes[3].fill, gray(120), "locked gray stays grayscale");
+		// One log event for the whole treatment.
+		assert_eq!(d.log.len(), before + 1);
+		let step = d.log.last().unwrap().describe(&d);
+		assert!(step.contains("2 grayscale shapes took palette colours"), "{step}");
+		assert!(step.contains("1 locked stayed grayscale"), "{step}");
+		// Nothing grayscale and unlocked remains: a second run is a no-op.
+		let out = d.apply_color_treatment(TreatmentScope::Layer(0), &palette);
+		assert_eq!(out.changed, 0);
+		assert_eq!(d.log.len(), before + 1);
+		// An empty palette changes nothing; a missing layer neither.
+		assert_eq!(d.apply_color_treatment(TreatmentScope::Layer(0), &[]), BulkOutcome::ZERO);
+		assert_eq!(
+			d.apply_color_treatment(TreatmentScope::Layer(9), &palette),
+			BulkOutcome::ZERO
+		);
+	}
+
+	#[test]
+	fn color_treatment_by_depth_cycles_the_palette() {
+		let gray = |v: u8| Srgb::new(v, v, v);
+		let mut d = Drawing::new(100, 100, Srgb::WHITE);
+		d.set_layer_depth(0, DepthRole::Background);
+		d.add_shape(0, Shape::new(ShapeKind::Rectangle, 0, 0, 10, 10, gray(10)));
+		let top = d.add_layer("Front");
+		d.set_layer_depth(top, DepthRole::Foreground);
+		d.add_shape(top, Shape::new(ShapeKind::Rectangle, 0, 0, 10, 10, gray(20)));
+		d.add_shape(top, Shape::new(ShapeKind::Rectangle, 20, 0, 10, 10, gray(30)));
+		let only = [Srgb::new(10, 200, 10)];
+		let out = d.apply_color_treatment(TreatmentScope::Depth(DepthRole::Foreground), &only);
+		assert_eq!(out.changed, 2);
+		assert_eq!(d.layers[top].shapes[0].fill, only[0], "one colour cycles onto both");
+		assert_eq!(d.layers[top].shapes[1].fill, only[0]);
+		assert_eq!(d.layers[0].shapes[0].fill, gray(10), "the other depth is untouched");
 	}
 
 	#[test]

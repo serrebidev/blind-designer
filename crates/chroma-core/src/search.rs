@@ -163,6 +163,8 @@ mod tests {
 			pinned_sliders: Vec::new(),
 			slider_target: AdjustTarget::BaseColor,
 			page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT,
+			goal: None,
+			grayscale_start: false,
 		}
 	}
 

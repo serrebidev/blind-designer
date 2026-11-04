@@ -132,6 +132,122 @@ Insert — and it goes where the cursor is:
 
 A report then confirms what was placed, and where.
 
+WIZARDS
+
+Every wizard in the app is one frame with the same controls:
+a header that always says where you are ("Step 2 of 4: ..."),
+one step shown at a time, and Back, Next, Finish and Cancel.
+Finish is offered on every step, and a wizard can be invoked
+at any step of the process — the steps rebuild themselves
+around whatever is in focus.
+
+- The setup wizard (File, New with Wizard, for a new project;
+  Design, Setup Wizard, to restate a project's goal) opens
+  with one question: what do you want to create or build? The
+  kind you choose decides which focus questions follow, and
+  the answers become the project's goal (see GOALS below).
+  On a new project, finishing also seeds the canvas for the
+  kind: writing starts with a text element to replace; image
+  creation with a background layer carrying the background
+  depth role and a light grey ground; a mixed project with
+  the tagged background layer alone; cosmetic work and
+  conversion start from the plain canvas, because their work
+  begins with something you bring in — a cosmetic project
+  gets the gray ramp in its palette instead.
+- The element wizard (Design, Element Wizard, or the Elements
+  list's context menu) is scoped to the selected element.
+  Step 1, Stack: what is painted over the element, what it is
+  painted over, and its place in the painting order — the
+  subwizard that shows what sits on top of what, and why the
+  element reads as it does. Step 2, Edit: its sliders
+  (opacity, and roundedness for a rectangle). Step 3, Review:
+  the inspector's report, describing the element as it now is
+  — the edits are applied when you reach Review, or when you
+  press Finish; Cancel before then leaves the element as it
+  was.
+- The export wizard (File, Export, Export Wizard) steps
+  through the export: the format (PNG, HTML page, raised-line
+  SVG, description, animated GIF), then how it will be
+  embedded or accompanied — a file on its own; inline in an
+  HTML page (a picture gets an HTML companion that shows it;
+  an HTML page and an SVG are inline by nature, and the
+  wizard says so); or with the caption text alongside (the
+  caption sheet written as a text file beside the main file).
+  A description is words already, so embedding changes
+  nothing for it — the confirm step says that too. The last
+  step confirms, in words, exactly what will be written;
+  Finish then asks for the main file's name.
+
+GOALS
+
+A project's goal is what it is for, stated once and measured
+as you work. The setup wizard states it: a kind (a writing
+project, creating an image, cosmetic work on an image, a
+mixed project, an accessibility review, a conversion) and
+the answers to that kind's focus questions. Every question
+offers No fixed answer: choosing it leaves that part of the
+goal deliberately open and flexible, and it is never treated
+as a failure. Answering one of those questions later — run
+the setup wizard again and restate the goal — changes the
+goal itself, and the percentages move with it.
+
+Two percentages are computed from the goal and the design:
+
+- Goal match: of the criteria that are settled, how many the
+  design meets.
+- Creation: of all the criteria there are, settled or not,
+  how many the design meets. Open answers count as not yet
+  here, never in the goal match.
+
+The criteria are checkable things: a writing project wants at
+least one text element and no unreadable text; creating an
+image wants a shape and a background; cosmetic work wants a
+picture or at least two palette colors; a mixed project wants
+its presentation said and a first element; and so on. The
+statistics line in the main window carries both percentages
+when a goal exists, and Design, Project Statistics gives the
+full report: every criterion, met, not yet, or open, with a
+suggested improvement for each unmet one.
+
+Design, Recognizability gives the companion judgment, per
+project type: how clearly someone else would recognize what
+you are creating — for words, their contrast; for pictures,
+element counts, how many elements stand out from the
+background, and whether depth layering gives the picture
+structure. It says what it is in its first lines: a rough
+guide from those numbers, not a measurement.
+
+GRAYSCALE START
+
+Most design work here starts in grayscale: a shape's form and
+a design's legibility come first, and color is a treatment
+applied later, to the part that is ready for it. So a new
+project starts with grayscale start on (Design, Project
+Options can turn it off for a project, and it is saved in
+the design file). What that means, exactly:
+
+- The gray ramp — eight grays, near-black to near-white —
+  is offered in Project Options (Load Gray Ramp) as the
+  palette for grayscale work: build the design in grays, one
+  part at a time.
+- Design, Apply Colour Treatment is the second half: pick a
+  layer, or a whole depth, and its grayscale shapes take the
+  palette's colors in paint order, cycling through the
+  palette when there are more shapes than colors. Shapes
+  that already carry color are never touched, and locked
+  shapes stay grayscale and are counted in the announcement,
+  like every bulk change. The treatment is one step in the
+  log.
+- Turning grayscale start off changes nothing already drawn;
+  it only records that this project is no longer in its
+  grayscale phase.
+
+The stat defaults elsewhere follow the same rule — stated,
+documented, never set in stone: a template's colors and
+layout are a starting expectation you edit freely, and the
+wizard seeds above say in the wizard itself what they place
+and why.
+
 THE SLIDERS TAB
 
 Instead of a dialog for every setting, the settings you keep

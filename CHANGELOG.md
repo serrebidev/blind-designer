@@ -4,6 +4,47 @@ Readable release history for Blind Designer (renamed from Transversion at 0.2.0)
 section is its GitHub release note, taken from this file by the release
 workflow.
 
+## Unreleased
+
+- Workflow wave A — the wizard frame and project goals
+  (Elshara's design). One reusable step dialog (header always
+  announcing "Step N of M", Back/Next/Finish/Cancel, Finish
+  offered on every step) carries three wizards. The setup
+  wizard (File, New with Wizard; Design, Setup Wizard) opens
+  with "What do you want to create or build?" — the kind
+  chosen (writing, image creation, cosmetic work, mixed,
+  accessibility review, conversion) decides the focus
+  questions, and any answer may be "no fixed answer", leaving
+  that part of the goal deliberately open. The answers are
+  the goal: the main window's statistics line and Project
+  Statistics now carry goal match (settled criteria met) and
+  creation (all criteria, open answers counted as not yet)
+  percentages with per-criterion lines and suggested
+  improvements. New wizard projects are seeded per kind
+  (writing starts with a text element, image creation with a
+  background-role layer and a grey ground, cosmetic work with
+  the gray ramp). The element wizard (Design, Element Wizard;
+  Elements context menu) walks one element's stack (what sits
+  on it, what it sits on), slider edits (opacity,
+  roundedness), and the inspector's review. The export wizard
+  (File, Export, Export Wizard) steps through format,
+  embedding (separate file, inline in an HTML page with a
+  companion page for pictures, caption text alongside) and a
+  spoken confirmation of what will be written. Goals and
+  answers save in the design file.
+- Recognizability (Design, Recognizability): per project
+  type, how clearly someone else would recognize what is
+  being created — word contrast for writing, element counts,
+  standout contrast and depth layering for pictures — plainly
+  labelled a rough guide, not a measurement.
+- Grayscale start: new projects begin in grayscale (Project
+  Options toggles it per project; saved in the file), the
+  gray ramp joins the palette from Project Options, and
+  Design, Apply Colour Treatment gives a layer's or a whole
+  depth's grayscale shapes the palette colours in paint
+  order (locked shapes stay grayscale and are counted;
+  coloured shapes are never touched).
+
 ## 0.12.0
 
 - Interface wave 2 (Elshara's hands-on requests): elements can

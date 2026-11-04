@@ -4,7 +4,7 @@ Readable release history for Blind Designer (renamed from Transversion at 0.2.0)
 section is its GitHub release note, taken from this file by the release
 workflow.
 
-## Unreleased
+## 0.17.0
 
 - Every value broken into its parts, as sliders (Elshara's
   principle: every individual part of a value gets its own

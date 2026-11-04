@@ -18,7 +18,7 @@
 //!   sound and light are different phenomena.
 
 use crate::design::{Design, ShapeKind};
-use crate::Srgb;
+use crate::{ColorFormat, Srgb};
 
 /// The D65 reference white, XYZ on the 0..100 scale.
 pub const D65: Xyz = Xyz { x: 95.047, y: 100.0, z: 108.883 };
@@ -647,6 +647,34 @@ pub fn rotate_hue_ryb(color: Srgb, deg: f32) -> Srgb {
 	srgb_from_hsl(back, s, l)
 }
 
+/// sRGB from HSV (hue degrees, saturation and value in percent)
+/// — the inverse of `Srgb::to_hsv`.
+pub fn srgb_from_hsv(h: f32, s: f32, v: f32) -> Srgb {
+	let h = crate::wrap_hue(h) / 60.0;
+	let (s, v) = (s.clamp(0.0, 100.0) / 100.0, v.clamp(0.0, 100.0) / 100.0);
+	let c = v * s;
+	let x = c * (1.0 - (h % 2.0 - 1.0).abs());
+	let m = v - c;
+	let (r, g, b) = if h < 1.0 {
+		(c, x, 0.0)
+	} else if h < 2.0 {
+		(x, c, 0.0)
+	} else if h < 3.0 {
+		(0.0, c, x)
+	} else if h < 4.0 {
+		(0.0, x, c)
+	} else if h < 5.0 {
+		(x, 0.0, c)
+	} else {
+		(c, 0.0, x)
+	};
+	Srgb::new(
+		((r + m) * 255.0).round() as u8,
+		((g + m) * 255.0).round() as u8,
+		((b + m) * 255.0).round() as u8,
+	)
+}
+
 /// sRGB from HSL (hue degrees, saturation and lightness in percent)
 /// — the inverse of `Srgb::to_hsl`.
 pub fn srgb_from_hsl(h: f32, s: f32, l: f32) -> Srgb {
@@ -673,6 +701,319 @@ pub fn srgb_from_hsl(h: f32, s: f32, l: f32) -> Srgb {
 		((g + m) * 255.0).round() as u8,
 		((b + m) * 255.0).round() as u8,
 	)
+}
+
+// ---- Channel sliders -------------------------------------------------
+//
+// Elshara: "the hex/lch values should be just a selectable slider
+// rather than just editable" — every format's channels as sliders,
+// so you hear what you are changing while you change it. A channel
+// has an integer slider range; the fine-grained systems scale
+// (XYZ moves in tenths, xyY chromaticity in thousandths) so the
+// slider unit is always an integer and the fine step is the
+// smallest step there is. (XYZ speaks in tenths in its readout,
+// but its sliders move in hundredths: at the dark end a tenth of
+// a unit is several sRGB steps, too coarse to hold a color.) A color's channel values in a format
+// fully determine the color: `color_from_channels` runs the same
+// from_* conversions the readouts use, backwards.
+//
+// Two formats are honest exceptions, stated in the help file too:
+// - Decimal is ONE packed number (0 to 16777215). A single slider
+//   over sixteen million steps cannot be stepped through, so its
+//   channels are its three bytes — the base-256 digits of the
+//   number, which is what the number is made of.
+// - Binary is a readout, not an editing system: it writes the
+//   color out as bits, and bits are not values you slide.
+
+/// How a channel slider's value is spoken.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChannelUnit {
+	/// The number itself: "62".
+	Plain,
+	/// "62 percent".
+	Percent,
+	/// "187 degrees".
+	Degrees,
+	/// Two-digit hex: "5E" — the hex format's own voice.
+	HexByte,
+	/// Degrees with decimals: one slider unit is 10^-decimals of
+	/// a degree. LCH's hue needs the tenths — at high chroma a
+	/// whole degree of hue is several sRGB steps.
+	DegreesFixed(u8),
+	/// A fixed-point number with this many decimals: one slider
+	/// unit is 10^-decimals of the real value (XYZ hundredths, xyY
+	/// chromaticity ten-thousandths).
+	Fixed(u8),
+}
+
+/// One editable channel of a color format: its name ("lightness"),
+/// the system it belongs to ("LCH" — the label a screen reader
+/// hears is the two together, "LCH lightness"), its full slider
+/// range from the smallest to the largest value it can take, and
+/// its fine step (what the arrow keys should move — the smallest
+/// step there is).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ChannelDef {
+	pub name: &'static str,
+	pub system: &'static str,
+	pub min: i32,
+	pub max: i32,
+	pub step: i32,
+	pub unit: ChannelUnit,
+}
+
+impl ChannelDef {
+	/// The spoken name: system and channel together, "LCH hue".
+	pub fn label(&self) -> String {
+		format!("{} {}", self.system, self.name)
+	}
+
+	/// Bring a slider value inside this channel's range.
+	pub fn clamp(&self, value: i32) -> i32 {
+		value.clamp(self.min, self.max)
+	}
+
+	/// The value in words, as a readout shows it and an
+	/// announcement speaks it.
+	pub fn format_value(&self, value: i32) -> String {
+		let value = self.clamp(value);
+		match self.unit {
+			ChannelUnit::Plain => format!("{value}"),
+			ChannelUnit::Percent => format!("{value} percent"),
+			ChannelUnit::Degrees => format!("{value} degrees"),
+			ChannelUnit::DegreesFixed(d) => {
+				format!("{:.*} degrees", d as usize, value as f64 / 10f64.powi(d as i32))
+			}
+			ChannelUnit::HexByte => format!("{:02X}", value as u8),
+			ChannelUnit::Fixed(d) => {
+				format!("{:.*}", d as usize, value as f64 / 10f64.powi(d as i32))
+			}
+		}
+	}
+
+	/// Slider units to the real channel value.
+	fn real(&self, value: i32) -> f64 {
+		let value = self.clamp(value);
+		match self.unit {
+			ChannelUnit::Fixed(d) | ChannelUnit::DegreesFixed(d) => {
+				value as f64 / 10f64.powi(d as i32)
+			}
+			_ => value as f64,
+		}
+	}
+
+	/// A real channel value as slider units.
+	fn units(&self, real: f64) -> i32 {
+		match self.unit {
+			ChannelUnit::Fixed(d) | ChannelUnit::DegreesFixed(d) => {
+				(real * 10f64.powi(d as i32)).round() as i32
+			}
+			_ => real.round() as i32,
+		}
+	}
+}
+
+/// A format's channels: the sliders it offers, or the reason it
+/// offers none.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ChannelSet {
+	Sliders(Vec<ChannelDef>),
+	ReadoutOnly(&'static str),
+}
+
+const fn ch(
+	name: &'static str,
+	system: &'static str,
+	min: i32,
+	max: i32,
+	step: i32,
+	unit: ChannelUnit,
+) -> ChannelDef {
+	ChannelDef { name, system, min, max, step, unit }
+}
+
+/// The channels of a color format, in the order the format itself
+/// writes them (red, green, blue; lightness, chroma, hue; ...).
+/// Ranges cover every color sRGB can hold, with headroom: the XYZ
+/// family runs past 100 because the scale is D65-relative, not a
+/// percent (white's Z is 108.9); LUV's u reaches 175 in sRGB, so
+/// Lab's nominal ±128 would clip real colors there; Hunter Lab's
+/// b reaches −200 at blue. LCH chroma tops out near 134 in sRGB.
+pub fn channels(format: ColorFormat) -> ChannelSet {
+	use ChannelUnit::*;
+	let rgb = |system: &'static str, step: i32, unit: ChannelUnit| {
+		vec![
+			ch("red", system, 0, 255, step, unit),
+			ch("green", system, 0, 255, step, unit),
+			ch("blue", system, 0, 255, step, unit),
+		]
+	};
+	let hue = |system: &'static str| ch("hue", system, 0, 359, 1, Degrees);
+	// The Lab family moves in tenths: whole numbers visibly
+	// shift dark saturated colors on the way back (rounding a
+	// and b by half a unit is several sRGB steps of red at blue).
+	let light = |system: &'static str| ch("lightness", system, 0, 1000, 1, Fixed(1));
+	ChannelSet::Sliders(match format {
+		ColorFormat::Hex => rgb("Hex", 1, HexByte),
+		ColorFormat::Rgb => rgb("RGB", 1, Plain),
+		ColorFormat::Hsl => vec![
+			hue("HSL"),
+			ch("saturation", "HSL", 0, 100, 1, Percent),
+			ch("lightness", "HSL", 0, 100, 1, Percent),
+		],
+		ColorFormat::Hsv => vec![
+			hue("HSV"),
+			ch("saturation", "HSV", 0, 100, 1, Percent),
+			ch("value", "HSV", 0, 100, 1, Percent),
+		],
+		ColorFormat::Cmyk => vec![
+			ch("cyan", "CMYK", 0, 100, 1, Percent),
+			ch("magenta", "CMYK", 0, 100, 1, Percent),
+			ch("yellow", "CMYK", 0, 100, 1, Percent),
+			ch("black", "CMYK", 0, 100, 1, Percent),
+		],
+		ColorFormat::Xyz => vec![
+			ch("x", "XYZ", 0, 11000, 1, Fixed(2)),
+			ch("y", "XYZ", 0, 11000, 1, Fixed(2)),
+			ch("z", "XYZ", 0, 11000, 1, Fixed(2)),
+		],
+		ColorFormat::XyY => vec![
+			ch("x", "xyY", 0, 10000, 1, Fixed(4)),
+			ch("y", "xyY", 0, 10000, 1, Fixed(4)),
+			ch("luminance", "xyY", 0, 10000, 1, Fixed(2)),
+		],
+		ColorFormat::Lab => vec![
+			light("Lab"),
+			ch("a", "Lab", -1280, 1270, 1, Fixed(1)),
+			ch("b", "Lab", -1280, 1270, 1, Fixed(1)),
+		],
+		ColorFormat::Lch => vec![
+			light("LCH"),
+			ch("chroma", "LCH", 0, 1500, 1, Fixed(1)),
+			ch("hue", "LCH", 0, 3599, 1, DegreesFixed(1)),
+		],
+		ColorFormat::Luv => vec![
+			light("LUV"),
+			ch("u", "LUV", -2000, 2000, 1, Fixed(1)),
+			ch("v", "LUV", -2000, 2000, 1, Fixed(1)),
+		],
+		ColorFormat::HunterLab => vec![
+			light("Hunter Lab"),
+			ch("a", "Hunter Lab", -1400, 1400, 1, Fixed(1)),
+			ch("b", "Hunter Lab", -2200, 1100, 1, Fixed(1)),
+		],
+		ColorFormat::Decimal => vec![
+			ch("red byte", "Decimal", 0, 255, 1, Plain),
+			ch("green byte", "Decimal", 0, 255, 1, Plain),
+			ch("blue byte", "Decimal", 0, 255, 1, Plain),
+		],
+		ColorFormat::WebSafe => rgb("Web safe", 51, Plain),
+		ColorFormat::Binary => {
+			return ChannelSet::ReadoutOnly(
+				"Binary is a readout, not an editing system: it writes the color out as bits, \
+				 and bits are not values you can slide. Choose another color format to edit \
+				 its channels.",
+			);
+		}
+	})
+}
+
+/// A color's channel values in a format, in slider units, one per
+/// channel `channels` defines. Empty for binary (a readout).
+pub fn channel_values(format: ColorFormat, color: Srgb) -> Vec<i32> {
+	let ChannelSet::Sliders(defs) = channels(format) else { return Vec::new() };
+	let raw: Vec<f64> = match format {
+		ColorFormat::Hex | ColorFormat::Rgb | ColorFormat::Decimal => {
+			vec![color.r as f64, color.g as f64, color.b as f64]
+		}
+		ColorFormat::WebSafe => {
+			let s = color.to_web_safe();
+			vec![s.r as f64, s.g as f64, s.b as f64]
+		}
+		ColorFormat::Hsl => {
+			let (h, s, l) = color.to_hsl();
+			vec![h as f64, s as f64, l as f64]
+		}
+		ColorFormat::Hsv => {
+			let (h, s, v) = color.to_hsv();
+			vec![h as f64, s as f64, v as f64]
+		}
+		ColorFormat::Cmyk => {
+			let (c, m, y, k) = color.to_cmyk();
+			vec![c, m, y, k]
+		}
+		ColorFormat::Xyz => {
+			let xyz = color.to_xyz();
+			vec![xyz.x, xyz.y, xyz.z]
+		}
+		ColorFormat::XyY => {
+			let (x, y, lum) = color.to_xyy();
+			vec![x, y, lum]
+		}
+		ColorFormat::Lab => {
+			let lab = color.to_lab();
+			vec![lab.l, lab.a, lab.b]
+		}
+		ColorFormat::Lch => {
+			let (l, c, h) = color.to_lch();
+			vec![l, c, h]
+		}
+		ColorFormat::Luv => {
+			let (l, u, v) = color.to_luv();
+			vec![l, u, v]
+		}
+		ColorFormat::HunterLab => {
+			let (l, a, b) = color.to_hunter_lab();
+			vec![l, a, b]
+		}
+		ColorFormat::Binary => Vec::new(),
+	};
+	defs.iter().zip(raw).map(|(d, r)| d.clamp(d.units(r))).collect()
+}
+
+/// The color a format's channel values name, in slider units:
+/// the inverse of `channel_values`, through the same conversions.
+/// Values outside a channel's range clamp; a short value list
+/// reads its missing channels as each channel's minimum. Binary
+/// has no channels and names black — callers show its readout
+/// note instead of ever calling this.
+pub fn color_from_channels(format: ColorFormat, values: &[i32]) -> Srgb {
+	let ChannelSet::Sliders(defs) = channels(format) else { return Srgb::BLACK };
+	let real = |i: usize| defs.get(i).map_or(0.0, |d| d.real(*values.get(i).unwrap_or(&0)));
+	let byte = |i: usize| {
+		defs.get(i).map_or(0, |d| d.clamp(*values.get(i).unwrap_or(&0))) as u8
+	};
+	match format {
+		ColorFormat::Hex | ColorFormat::Rgb => Srgb::new(byte(0), byte(1), byte(2)),
+		ColorFormat::Decimal => Srgb::from_decimal(
+			(byte(0) as u32) << 16 | (byte(1) as u32) << 8 | byte(2) as u32,
+		),
+		ColorFormat::WebSafe => Srgb::new(byte(0), byte(1), byte(2)).to_web_safe(),
+		ColorFormat::Hsl => srgb_from_hsl(real(0) as f32, real(1) as f32, real(2) as f32),
+		ColorFormat::Hsv => srgb_from_hsv(real(0) as f32, real(1) as f32, real(2) as f32),
+		ColorFormat::Cmyk => Srgb::from_cmyk(real(0), real(1), real(2), real(3)),
+		ColorFormat::Xyz => Srgb::from_xyz(Xyz { x: real(0), y: real(1), z: real(2) }),
+		ColorFormat::XyY => Srgb::from_xyy(real(0), real(1), real(2)),
+		ColorFormat::Lab => Srgb::from_lab(Lab { l: real(0), a: real(1), b: real(2) }),
+		ColorFormat::Lch => Srgb::from_lch(real(0), real(1), real(2)),
+		ColorFormat::Luv => Srgb::from_luv(real(0), real(1), real(2)),
+		ColorFormat::HunterLab => Srgb::from_hunter_lab(real(0), real(1), real(2)),
+		ColorFormat::Binary => Srgb::BLACK,
+	}
+}
+
+/// A color with one channel set to an absolute slider value —
+/// the channel sliders' direct-set semantics in one call: the
+/// other channels keep the values they have in this format.
+pub fn set_channel(format: ColorFormat, color: Srgb, index: usize, value: i32) -> Srgb {
+	let mut values = channel_values(format, color);
+	match values.get_mut(index) {
+		Some(slot) => {
+			*slot = value;
+			color_from_channels(format, &values)
+		}
+		None => color,
+	}
 }
 
 #[cfg(test)]
@@ -971,4 +1312,190 @@ mod tests {
 		let c = Srgb::new(200, 60, 40);
 		assert!(channel_close(rotate_hue_ryb(c, 360.0), c, 1));
 	}
+
+	#[test]
+	fn every_format_has_channels_or_an_honest_reason() {
+		let counts: &[(ColorFormat, usize)] = &[
+			(ColorFormat::Hex, 3),
+			(ColorFormat::Rgb, 3),
+			(ColorFormat::Hsl, 3),
+			(ColorFormat::Hsv, 3),
+			(ColorFormat::Cmyk, 4),
+			(ColorFormat::Xyz, 3),
+			(ColorFormat::XyY, 3),
+			(ColorFormat::Lab, 3),
+			(ColorFormat::Lch, 3),
+			(ColorFormat::Luv, 3),
+			(ColorFormat::HunterLab, 3),
+			(ColorFormat::Decimal, 3),
+			(ColorFormat::WebSafe, 3),
+		];
+		for f in ColorFormat::ALL {
+			match channels(*f) {
+				ChannelSet::Sliders(defs) => {
+					let want = counts.iter().find(|(cf, _)| cf == f).map(|(_, n)| *n);
+					assert_eq!(Some(defs.len()), want, "{} channel count", f.name());
+					for d in &defs {
+						assert!(d.min < d.max, "{} {} has an empty range", f.name(), d.name);
+						assert!(d.step >= 1, "{} {} has no fine step", f.name(), d.name);
+						assert!(!d.label().is_empty());
+					}
+				}
+				ChannelSet::ReadoutOnly(note) => {
+					assert_eq!(*f, ColorFormat::Binary, "only binary is readout-only");
+					assert!(note.contains("readout, not an editing system"), "{note}");
+				}
+			}
+		}
+		// Web safe steps land on the 51 grid and nothing else.
+		let ChannelSet::Sliders(defs) = channels(ColorFormat::WebSafe) else {
+			panic!("web safe has sliders")
+		};
+		assert!(defs.iter().all(|d| d.step == 51 && d.min == 0 && d.max == 255));
+	}
+
+	#[test]
+	fn channel_values_speak_in_words() {
+		let defs = |f: ColorFormat| match channels(f) {
+			ChannelSet::Sliders(d) => d,
+			_ => panic!("{} has sliders", f.name()),
+		};
+		// Hex speaks its bytes as two-digit hex.
+		assert_eq!(defs(ColorFormat::Hex)[0].format_value(0x5E), "5E");
+		assert_eq!(defs(ColorFormat::Hex)[0].format_value(5), "05");
+		assert_eq!(defs(ColorFormat::Hex)[0].label(), "Hex red");
+		// LCH: lightness in tenths, degrees for hue.
+		assert_eq!(defs(ColorFormat::Lch)[0].format_value(620), "62.0");
+		assert_eq!(defs(ColorFormat::Lch)[2].format_value(1870), "187.0 degrees");
+		assert_eq!(defs(ColorFormat::Lch)[2].label(), "LCH hue");
+		// Percents say so.
+		assert_eq!(defs(ColorFormat::Hsl)[1].format_value(75), "75 percent");
+		assert_eq!(defs(ColorFormat::Cmyk)[3].format_value(10), "10 percent");
+		// XYZ speaks hundredths, xyY chromaticity ten-thousandths
+		// (thousandths visibly shift saturated colors near the
+		// gamut edge, where a small y magnifies rounding).
+		assert_eq!(defs(ColorFormat::Xyz)[0].format_value(4125), "41.25");
+		assert_eq!(defs(ColorFormat::XyY)[0].format_value(3127), "0.3127");
+		assert_eq!(defs(ColorFormat::XyY)[2].format_value(235), "2.35");
+		// Decimal names its bytes as bytes.
+		assert_eq!(defs(ColorFormat::Decimal)[1].label(), "Decimal green byte");
+	}
+
+	#[test]
+	fn set_channel_matches_the_direct_conversions() {
+		let c = Srgb::new(15, 94, 104);
+		// Hex red is the byte itself.
+		assert_eq!(set_channel(ColorFormat::Hex, c, 0, 0xAB), Srgb::new(0xAB, 94, 104));
+		// LCH hue: setting the hue channel is from_lch at that hue
+		// (LCH lightness and chroma ride in tenths).
+		let (l, ch, _) = c.to_lch();
+		let t1 = |x: f64| (x * 10.0).round() / 10.0;
+		assert_eq!(set_channel(ColorFormat::Lch, c, 2, 0), Srgb::from_lch(t1(l), t1(ch), 0.0));
+		// Lab a likewise: 200 tenths is a 20.0.
+		let lab = c.to_lab();
+		assert_eq!(
+			set_channel(ColorFormat::Lab, c, 1, 200),
+			Srgb::from_lab(Lab { l: t1(lab.l), a: 20.0, b: t1(lab.b) })
+		);
+		// CMYK key to 50.
+		let (cm, mm, ym, _) = c.to_cmyk();
+		assert_eq!(
+			set_channel(ColorFormat::Cmyk, c, 3, 50),
+			Srgb::from_cmyk(cm.round(), mm.round(), ym.round(), 50.0)
+		);
+		// HSL lightness to 50.
+		let (h, s, _) = c.to_hsl();
+		assert_eq!(
+			set_channel(ColorFormat::Hsl, c, 2, 50),
+			srgb_from_hsl(h.round(), s.round(), 50.0)
+		);
+		// XYZ's Y channel is in hundredths: 5000 is Y 50.0.
+		let xyz = c.to_xyz();
+		assert_eq!(
+			set_channel(ColorFormat::Xyz, c, 1, 5000),
+			Srgb::from_xyz(Xyz { x: (xyz.x * 100.0).round() / 100.0, y: 50.0, z: (xyz.z * 100.0).round() / 100.0 })
+		);
+		// Decimal's green byte is the packed number's middle byte.
+		assert_eq!(set_channel(ColorFormat::Decimal, c, 1, 0), Srgb::new(15, 0, 104));
+		// Web safe snaps: 51 is a grid point, and setting red to it
+		// gives exactly the snapped color with red 51.
+		assert_eq!(
+			set_channel(ColorFormat::WebSafe, c, 0, 51),
+			Srgb::new(51, 102, 102)
+		);
+		// Binary has no channels to set.
+		assert_eq!(set_channel(ColorFormat::Binary, c, 0, 1), c);
+		assert!(channel_values(ColorFormat::Binary, c).is_empty());
+	}
+
+	#[test]
+	fn channel_round_trips_rebuild_the_color() {
+		// Exact formats rebuild exactly.
+		for f in [ColorFormat::Hex, ColorFormat::Rgb, ColorFormat::Decimal] {
+			for c in grid() {
+				assert_eq!(color_from_channels(f, &channel_values(f, c)), c, "{} {c}", f.name());
+			}
+		}
+		// Web safe rebuilds the snapped color, exactly.
+		for c in grid() {
+			assert_eq!(
+				color_from_channels(ColorFormat::WebSafe, &channel_values(ColorFormat::WebSafe, c)),
+				c.to_web_safe()
+			);
+		}
+		// The converted systems rebuild within two sRGB steps —
+		// the same tolerance the conversions' own round-trips use.
+		// LCH gets four, at one known spot: a saturated gamut-edge
+		// color (pure green is the worst) has a channel at exactly
+		// zero that polar rounding can only push up, and L, C and
+		// hue each rounded to a tenth lands it a few steps high.
+		for (f, tol) in [
+			(ColorFormat::Hsl, 2),
+			(ColorFormat::Hsv, 2),
+			(ColorFormat::Cmyk, 2),
+			(ColorFormat::Xyz, 2),
+			(ColorFormat::XyY, 2),
+			(ColorFormat::Lab, 2),
+			(ColorFormat::Lch, 4),
+			(ColorFormat::Luv, 2),
+			(ColorFormat::HunterLab, 2),
+		] {
+			for c in grid() {
+				let back = color_from_channels(f, &channel_values(f, c));
+				assert!(channel_close(back, c, tol), "{} {c} -> {back}", f.name());
+			}
+		}
+	}
+
+	#[test]
+	fn channel_values_stay_inside_their_ranges() {
+		// Gamut extremes included: saturated blue stresses LUV's u
+		// and Hunter's b, white stresses XYZ's z.
+		let extremes = [
+			Srgb::new(0, 0, 255),
+			Srgb::new(0, 255, 0),
+			Srgb::new(255, 0, 0),
+			Srgb::WHITE,
+			Srgb::BLACK,
+			Srgb::new(255, 0, 255),
+		];
+		for f in ColorFormat::ALL {
+			let ChannelSet::Sliders(defs) = channels(*f) else { continue };
+			for c in grid().into_iter().chain(extremes) {
+				let values = channel_values(*f, c);
+				assert_eq!(values.len(), defs.len());
+				for (d, v) in defs.iter().zip(&values) {
+					assert!(
+						(d.min..=d.max).contains(v),
+						"{} {} value {v} outside {}..={} for {c}",
+						f.name(),
+						d.name,
+						d.min,
+						d.max
+					);
+				}
+			}
+		}
+	}
 }
+

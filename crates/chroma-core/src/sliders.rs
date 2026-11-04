@@ -32,6 +32,12 @@ pub enum SliderTarget {
 	ColorGreen,
 	/// The current color's blue channel.
 	ColorBlue,
+	/// The color-channels group: one slider per channel of the
+	/// current color format (see `crate::formats::channels`). A
+	/// group, not a single slider — this def exists so the group
+	/// is pin-able in Project Options like every other slider;
+	/// the app renders the group where its row would be.
+	ColorChannels,
 	/// How opaque new elements are when they are added, percent.
 	CurrentAlpha,
 	/// The selected element's opacity, percent.
@@ -140,6 +146,9 @@ impl SliderDef {
 			SliderTarget::ColorRed
 			| SliderTarget::ColorGreen
 			| SliderTarget::ColorBlue => format!("{value} of 255"),
+			SliderTarget::ColorChannels => {
+				"one slider per channel of the current color format".to_string()
+			}
 			SliderTarget::CurrentAlpha | SliderTarget::ElementOpacity => {
 				opacity_words(value)
 			}
@@ -269,6 +278,14 @@ pub const SLIDERS: &[SliderDef] = &[
 	def("color-red", "Color red", 0, 255, 1, SliderTarget::ColorRed),
 	def("color-green", "Color green", 0, 255, 1, SliderTarget::ColorGreen),
 	def("color-blue", "Color blue", 0, 255, 1, SliderTarget::ColorBlue),
+	def(
+		"color-channels",
+		"Color channels (in current format)",
+		0,
+		100,
+		1,
+		SliderTarget::ColorChannels,
+	),
 	def("transparency", "Transparency", 0, 100, 1, SliderTarget::CurrentAlpha),
 	def("element-opacity", "Element transparency", 0, 100, 1, SliderTarget::ElementOpacity),
 	def("element-scale", "Element scale", 10, 400, 1, SliderTarget::ElementScale),

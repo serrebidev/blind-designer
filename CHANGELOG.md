@@ -4,6 +4,23 @@ Readable release history for Blind Designer (renamed from Transversion at 0.2.0)
 section is its GitHub release note, taken from this file by the release
 workflow.
 
+## Unreleased
+
+- Color channels as sliders (Elshara: "the hex/lch values
+  should be just a selectable slider rather than just editable"):
+  pin "Color channels (in current format)" in Project Options
+  and the Sliders tab gains one slider per channel of the
+  current View color format — hex bytes spoken as hex, LCH
+  lightness/chroma/hue, CMYK inks, XYZ in hundredths, xyY
+  chromaticity in ten-thousandths, the Lab family in tenths —
+  each with a spoken name and readout, announcing what changed
+  as it changes. The channels edit the adjustments' target
+  color (current color or selected element) with direct-set
+  semantics, and changing format rebuilds the group. Decimal
+  edits as its three bytes (one packed number cannot be
+  stepped through); binary stays a readout, and the group says
+  why instead of offering sliders.
+
 ## 0.10.0
 
 - Depth (Elshara's vision: shape, movement, depth of

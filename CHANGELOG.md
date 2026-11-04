@@ -4,7 +4,7 @@ Readable release history for Blind Designer (renamed from Transversion at 0.2.0)
 section is its GitHub release note, taken from this file by the release
 workflow.
 
-## Unreleased
+## 0.15.0
 
 - Text Studio wave — styled text, text transforms, embeds,
   practice sheets, PDF and document/presentation exports.

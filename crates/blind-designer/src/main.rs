@@ -26,6 +26,10 @@ use chroma_core::sliders::{
 	change_announcement, page_jump, slider_by_id, AdjustTarget, ColorAdjust, SliderDef,
 	SliderTarget, SLIDERS,
 };
+use chroma_core::formats::{
+	blend, contrast_verdict, frequency_to_color, gradient, random_color, rotate_hue_ryb,
+	subtract, text_readability,
+};
 use chroma_core::sound::{cue_at, cue_for_shape, tone_wav_at, Cue};
 use chroma_core::symbols;
 use chroma_core::tactile::{compare_images, tactile_grid};
@@ -96,6 +100,38 @@ const ID_FORMAT_RGB: Id = 502;
 const ID_FORMAT_HSL: Id = 503;
 const ID_FORMAT_HSV: Id = 504;
 const ID_ANNOUNCE_SLIDERS: Id = 505;
+const ID_FORMAT_CMYK: Id = 506;
+const ID_FORMAT_XYZ: Id = 507;
+const ID_FORMAT_XYY: Id = 508;
+const ID_FORMAT_LAB: Id = 509;
+const ID_FORMAT_LCH: Id = 510;
+const ID_FORMAT_LUV: Id = 511;
+const ID_FORMAT_HUNTER: Id = 512;
+const ID_FORMAT_DECIMAL: Id = 513;
+const ID_FORMAT_WEBSAFE: Id = 514;
+const ID_FORMAT_BINARY: Id = 515;
+const ID_COLOR_TOOLS: Id = 211;
+const ID_TEXT_READABILITY: Id = 212;
+const ID_SCHEME_SETTINGS: Id = 213;
+
+/// Every View-menu color format item, in menu order: the checkable
+/// list the format handler walks to tick exactly one.
+const FORMAT_IDS: &[(Id, ColorFormat)] = &[
+	(ID_FORMAT_HEX, ColorFormat::Hex),
+	(ID_FORMAT_RGB, ColorFormat::Rgb),
+	(ID_FORMAT_HSL, ColorFormat::Hsl),
+	(ID_FORMAT_HSV, ColorFormat::Hsv),
+	(ID_FORMAT_CMYK, ColorFormat::Cmyk),
+	(ID_FORMAT_XYZ, ColorFormat::Xyz),
+	(ID_FORMAT_XYY, ColorFormat::XyY),
+	(ID_FORMAT_LAB, ColorFormat::Lab),
+	(ID_FORMAT_LCH, ColorFormat::Lch),
+	(ID_FORMAT_LUV, ColorFormat::Luv),
+	(ID_FORMAT_HUNTER, ColorFormat::HunterLab),
+	(ID_FORMAT_DECIMAL, ColorFormat::Decimal),
+	(ID_FORMAT_WEBSAFE, ColorFormat::WebSafe),
+	(ID_FORMAT_BINARY, ColorFormat::Binary),
+];
 
 /// Every custom menu ID in the app. wxWidgets window IDs: a custom ID
 /// must be positive and at or below wxID_HIGHEST (5999); the only
@@ -167,6 +203,19 @@ const MENU_IDS: &[Id] = &[
 	ID_FORMAT_RGB,
 	ID_FORMAT_HSL,
 	ID_FORMAT_HSV,
+	ID_FORMAT_CMYK,
+	ID_FORMAT_XYZ,
+	ID_FORMAT_XYY,
+	ID_FORMAT_LAB,
+	ID_FORMAT_LCH,
+	ID_FORMAT_LUV,
+	ID_FORMAT_HUNTER,
+	ID_FORMAT_DECIMAL,
+	ID_FORMAT_WEBSAFE,
+	ID_FORMAT_BINARY,
+	ID_COLOR_TOOLS,
+	ID_TEXT_READABILITY,
+	ID_SCHEME_SETTINGS,
 ];
 
 const _: () = {
@@ -196,6 +245,12 @@ struct State {
 	sound_cues: bool,
 	/// How color values are spoken and displayed (View menu).
 	color_format: ColorFormat,
+	/// The analogous scheme's spread in degrees (Color, Schemes,
+	/// Scheme Settings). Session-only, like the color format.
+	scheme_spread: f32,
+	/// True when scheme hue rotations run on the RYB paint wheel
+	/// instead of the screen wheel (Scheme Settings). Session-only.
+	wheel_ryb: bool,
 	/// The current stroke brush: width, color and pattern new strokes
 	/// are painted with. Applying a saved brush replaces it.
 	brush: Brush,
@@ -2027,6 +2082,336 @@ fn report_dialog(win: &Win, title: &str, label: &str, text: &str) {
 	dialog.show_modal();
 }
 
+/// The Scheme Settings dialog (Color, Schemes, Scheme Settings):
+/// the two scheme parameters — which wheel hue rotations run on
+/// (the screen wheel, or the RYB paint wheel where red's opposite
+/// is green) and the analogous spread in degrees. Every control is
+/// labelled in words; OK applies both to the session.
+fn scheme_settings_dialog(win: &Win, shared: &Shared) {
+	let frame = win.frame;
+	let (wheel_ryb, spread) = {
+		let state = shared.borrow();
+		(state.wheel_ryb, state.scheme_spread)
+	};
+	let dialog = Dialog::builder(&frame, "Scheme Settings").build();
+	let sizer = BoxSizer::builder(Orientation::Vertical).build();
+	let wheel_label = StaticText::builder(&dialog).with_label("Harmony wheel").build();
+	sizer.add(&wheel_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	let wheel = Choice::builder(&dialog).build();
+	wheel.append("Screen wheel (RGB hues)");
+	wheel.append("Paint wheel (RYB: red is opposite green)");
+	wheel.set_selection(if wheel_ryb { 1 } else { 0 });
+	sizer.add(&wheel, 0, SizerFlag::Expand | SizerFlag::All, 5);
+	let spread_label =
+		StaticText::builder(&dialog).with_label("Analogous spread in degrees").build();
+	sizer.add(&spread_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	let spread_spin = SpinCtrl::builder(&dialog).with_range(5, 90).build();
+	spread_spin.set_value(spread as i32);
+	sizer.add(&spread_spin, 0, SizerFlag::Expand | SizerFlag::All, 5);
+	let ok = Button::builder(&dialog).with_label("OK").build();
+	let cancel = Button::builder(&dialog).with_label("Cancel").build();
+	let buttons = BoxSizer::builder(Orientation::Horizontal).build();
+	buttons.add(&ok, 0, SizerFlag::All, 5);
+	buttons.add(&cancel, 0, SizerFlag::All, 5);
+	sizer.add_sizer(&buttons, 0, SizerFlag::All, 5);
+	dialog.set_sizer(sizer, true);
+	let d = dialog.clone();
+	ok.on_click(move |_| d.end_modal(ID_OK));
+	let d = dialog.clone();
+	cancel.on_click(move |_| d.end_modal(ID_CANCEL));
+	if dialog.show_modal() == ID_OK {
+		let mut state = shared.borrow_mut();
+		state.wheel_ryb = wheel.get_selection() == Some(1);
+		state.scheme_spread = spread_spin.value() as f32;
+		frame.set_status_text(
+			&format!(
+				"Scheme settings saved: {} wheel, analogous spread {:.0} degrees.",
+				if state.wheel_ryb { "paint (RYB)" } else { "screen (RGB)" },
+				state.scheme_spread
+			),
+			0,
+		);
+	}
+}
+
+/// The Color Tools dialog (Color, Color Tools): the colorhexa-style
+/// workshop. Two palette colors are picked by their spoken rows; the
+/// tools blend them (in OKLab, at the slider's percent), subtract,
+/// build a gradient ramp into the palette, check their WCAG
+/// contrast, and report the first color's dominant wavelength. Two
+/// more tools need no picked colors: a random color, and the
+/// experimental sound-frequency-to-color. Every outcome lands in
+/// the labelled Result field; colors the tools make join the
+/// palette with Generated provenance. The dialog stays open so
+/// several tools can run in one visit; focus is never moved.
+fn color_tools_dialog(win: &Rc<Win>, shared: &Shared) {
+	let frame = win.frame;
+	let dialog = Dialog::builder(&frame, "Color Tools").with_size(640, 560).build();
+	let sizer = BoxSizer::builder(Orientation::Vertical).build();
+	let first_label = StaticText::builder(&dialog).with_label("First color").build();
+	sizer.add(&first_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	let first = Choice::builder(&dialog).build();
+	sizer.add(&first, 0, SizerFlag::Expand | SizerFlag::All, 5);
+	let second_label = StaticText::builder(&dialog).with_label("Second color").build();
+	sizer.add(&second_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	let second = Choice::builder(&dialog).build();
+	sizer.add(&second, 0, SizerFlag::Expand | SizerFlag::All, 5);
+	let blend_label =
+		StaticText::builder(&dialog).with_label("Blend: percent of the second color").build();
+	sizer.add(&blend_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	let blend_row = BoxSizer::builder(Orientation::Horizontal).build();
+	let blend_slider = Slider::builder(&dialog)
+		.with_min_value(0)
+		.with_max_value(100)
+		.with_value(50)
+		.build();
+	blend_slider.set_name("Blend percent of second color");
+	blend_row.add(&blend_slider, 1, SizerFlag::Expand | SizerFlag::All, 5);
+	let blend_readout = StaticText::builder(&dialog).with_label("50 percent").build();
+	blend_row.add(&blend_readout, 0, SizerFlag::All, 5);
+	sizer.add_sizer(&blend_row, 0, SizerFlag::Expand, 0);
+	let blend_btn = Button::builder(&dialog).with_label("Blend").build();
+	let subtract_btn = Button::builder(&dialog).with_label("Subtract Second from First").build();
+	let gradient_btn = Button::builder(&dialog).with_label("Gradient…").build();
+	let row1 = BoxSizer::builder(Orientation::Horizontal).build();
+	for b in [&blend_btn, &subtract_btn, &gradient_btn] {
+		row1.add(b, 0, SizerFlag::All, 5);
+	}
+	sizer.add_sizer(&row1, 0, SizerFlag::All, 5);
+	let contrast_btn = Button::builder(&dialog).with_label("Contrast Check").build();
+	let wavelength_btn = Button::builder(&dialog).with_label("Dominant Wavelength").build();
+	let random_btn = Button::builder(&dialog).with_label("Random Color").build();
+	let row2 = BoxSizer::builder(Orientation::Horizontal).build();
+	for b in [&contrast_btn, &wavelength_btn, &random_btn] {
+		row2.add(b, 0, SizerFlag::All, 5);
+	}
+	sizer.add_sizer(&row2, 0, SizerFlag::All, 5);
+	let freq_btn = Button::builder(&dialog)
+		.with_label("Frequency to Color (experimental)…")
+		.build();
+	let close = Button::builder(&dialog).with_label("Close").build();
+	let row3 = BoxSizer::builder(Orientation::Horizontal).build();
+	row3.add(&freq_btn, 0, SizerFlag::All, 5);
+	row3.add(&close, 0, SizerFlag::All, 5);
+	sizer.add_sizer(&row3, 0, SizerFlag::All, 5);
+	let result_label = StaticText::builder(&dialog).with_label("Result").build();
+	sizer.add(&result_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	let result = TextCtrl::builder(&dialog)
+		.with_style(TextCtrlStyle::MultiLine | TextCtrlStyle::ReadOnly)
+		.build();
+	sizer.add(&result, 1, SizerFlag::Expand | SizerFlag::All, 5);
+	dialog.set_sizer(sizer, true);
+
+	{
+		let state = shared.borrow();
+		for pc in &state.palette {
+			let row = pc.spoken(state.color_format);
+			first.append(&row);
+			second.append(&row);
+		}
+		if !state.palette.is_empty() {
+			let sel = win
+				.palette_list
+				.selected()
+				.filter(|i| *i < state.palette.len())
+				.unwrap_or(0);
+			first.set_selection(sel as u32);
+			second.set_selection(if state.palette.len() > 1 { 1 } else { 0 });
+		} else {
+			result.set_value(
+				"The palette is empty. Add colors first (type a hex value, open an image, or use Color, Load Starter Colors); the Random Color and Frequency tools below work anyway.",
+			);
+		}
+	}
+	let first = Rc::new(first);
+	let second = Rc::new(second);
+	let blend_slider = Rc::new(blend_slider);
+	let result = Rc::new(result);
+	{
+		let (for_closure, readout) = (blend_slider.clone(), blend_readout.clone());
+		blend_slider.on_slider(move |_| {
+			readout.set_label(&format!("{} percent", for_closure.get_value()));
+		});
+	}
+	// The two picked palette colors, or a note in the Result field.
+	let picked = {
+		let (first, second, result) = (first.clone(), second.clone(), result.clone());
+		move |state: &State| -> Option<(Srgb, Srgb)> {
+			let (Some(i), Some(j)) = (first.get_selection(), second.get_selection()) else {
+				result.set_value("Pick a first and a second color from the palette first.");
+				return None;
+			};
+			match (state.palette.get(i as usize), state.palette.get(j as usize)) {
+				(Some(a), Some(b)) => Some((a.color, b.color)),
+				_ => {
+					result.set_value("Pick a first and a second color from the palette first.");
+					None
+				}
+			}
+		}
+	};
+	let picked = Rc::new(picked);
+	{
+		let (shared, win, result, slider, picked) = (
+			shared.clone(),
+			win.clone(),
+			result.clone(),
+			blend_slider.clone(),
+			picked.clone(),
+		);
+		blend_btn.on_click(move |_| {
+			let mut state = shared.borrow_mut();
+			let Some((a, b)) = picked(&state) else { return };
+			let percent = slider.get_value().clamp(0, 100) as u8;
+			let c = blend(a, b, percent);
+			let provenance = Provenance::Generated {
+				scheme: format!("blend of {} and {}", a.to_hex(), b.to_hex()),
+			};
+			let text = format!(
+				"Blend at {percent} percent of the second color: {}. Added to the palette.",
+				describe_in(c, state.color_format)
+			);
+			add_colors(&win, &mut state, &[c], "blend", &provenance);
+			result.set_value(&text);
+		});
+	}
+	{
+		let (shared, win, result, picked) =
+			(shared.clone(), win.clone(), result.clone(), picked.clone());
+		subtract_btn.on_click(move |_| {
+			let mut state = shared.borrow_mut();
+			let Some((a, b)) = picked(&state) else { return };
+			let c = subtract(a, b);
+			let provenance = Provenance::Generated {
+				scheme: format!("{} minus {}", a.to_hex(), b.to_hex()),
+			};
+			let text = format!(
+				"Subtraction, each channel of the second taken from the first: {}. Added to the palette.",
+				describe_in(c, state.color_format)
+			);
+			add_colors(&win, &mut state, &[c], "subtraction", &provenance);
+			result.set_value(&text);
+		});
+	}
+	{
+		let (shared, win, result, picked) =
+			(shared.clone(), win.clone(), result.clone(), picked.clone());
+		gradient_btn.on_click(move |_| {
+			let Some(v) = numbers_dialog(
+				&frame,
+				"Gradient steps",
+				&[("Steps in the ramp, both end colors included", 2, 32, 7)],
+			) else {
+				return;
+			};
+			let mut state = shared.borrow_mut();
+			let Some((a, b)) = picked(&state) else { return };
+			let ramp = gradient(a, b, v[0] as usize);
+			let provenance = Provenance::Generated {
+				scheme: format!("gradient from {} to {}", a.to_hex(), b.to_hex()),
+			};
+			let text = format!(
+				"Gradient of {} steps from {} to {} added to the palette.",
+				ramp.len(),
+				describe_in(a, state.color_format),
+				describe_in(b, state.color_format)
+			);
+			add_colors(&win, &mut state, &ramp, "gradient", &provenance);
+			result.set_value(&text);
+		});
+	}
+	{
+		let (shared, result, picked) = (shared.clone(), result.clone(), picked.clone());
+		contrast_btn.on_click(move |_| {
+			let state = shared.borrow();
+			let Some((a, b)) = picked(&state) else { return };
+			let ratio = a.contrast(b);
+			result.set_value(&format!(
+				"{} against {}: contrast {:.1} to 1 — {}.",
+				describe_in(a, state.color_format),
+				describe_in(b, state.color_format),
+				ratio,
+				contrast_verdict(ratio)
+			));
+		});
+	}
+	{
+		let (shared, result, first) = (shared.clone(), result.clone(), first.clone());
+		wavelength_btn.on_click(move |_| {
+			let state = shared.borrow();
+			let Some(i) = first.get_selection() else {
+				result.set_value("Pick a first color from the palette first.");
+				return;
+			};
+			let Some(pc) = state.palette.get(i as usize) else { return };
+			match pc.color.dominant_wavelength() {
+				Some(w) => result.set_value(&format!(
+					"{}: {}.",
+					describe_in(pc.color, state.color_format),
+					w.spoken()
+				)),
+				None => result.set_value(&format!(
+					"{} has no dominant wavelength: it is achromatic, a gray with no hue direction.",
+					describe_in(pc.color, state.color_format)
+				)),
+			}
+		});
+	}
+	{
+		let (shared, win, result) = (shared.clone(), win.clone(), result.clone());
+		random_btn.on_click(move |_| {
+			let seed = std::time::SystemTime::now()
+				.duration_since(std::time::UNIX_EPOCH)
+				.map(|d| d.as_nanos() as u64)
+				.unwrap_or(0x5EED);
+			let c = random_color(seed);
+			let mut state = shared.borrow_mut();
+			let provenance =
+				Provenance::Generated { scheme: "random color".to_string() };
+			let text = format!(
+				"Random color: {}. Added to the palette.",
+				describe_in(c, state.color_format)
+			);
+			add_colors(&win, &mut state, &[c], "random color", &provenance);
+			drop(state);
+			result.set_value(&text);
+		});
+	}
+	{
+		let (shared, win, result) = (shared.clone(), win.clone(), result.clone());
+		freq_btn.on_click(move |_| {
+			let Some(v) = numbers_dialog(
+				&frame,
+				"Frequency to color (experimental)",
+				&[("Sound frequency in hertz", 1, 1_000_000, 440)],
+			) else {
+				return;
+			};
+			let hz = v[0] as f64;
+			let Some((c, nm)) = frequency_to_color(hz) else {
+				result.set_value("That frequency could not be folded into the visible band.");
+				return;
+			};
+			let mut state = shared.borrow_mut();
+			let provenance = Provenance::Generated {
+				scheme: format!("frequency {hz:.0} hertz (experimental)"),
+			};
+			let text = format!(
+				"Experimental: {hz:.0} hertz folded up by octaves lands at {nm:.0} nanometres: {}. Added to the palette. Octaves of sound are mapped to octaves of light by convention, not by physics.",
+				describe_in(c, state.color_format)
+			);
+			add_colors(&win, &mut state, &[c], "frequency color", &provenance);
+			drop(state);
+			result.set_value(&text);
+		});
+	}
+	{
+		let dialog = dialog.clone();
+		close.on_click(move |_| dialog.end_modal(ID_CANCEL));
+	}
+	dialog.show_modal();
+}
+
 fn template_rows() -> Vec<(usize, String)> {
 	templates::TEMPLATE_NAMES
 		.iter()
@@ -2374,25 +2759,19 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 				}
 			}
 		}
-		ID_FORMAT_HEX | ID_FORMAT_RGB | ID_FORMAT_HSL | ID_FORMAT_HSV => {
-			let format = match id {
-				ID_FORMAT_HEX => ColorFormat::Hex,
-				ID_FORMAT_RGB => ColorFormat::Rgb,
-				ID_FORMAT_HSL => ColorFormat::Hsl,
-				_ => ColorFormat::Hsv,
+		ID_FORMAT_HEX | ID_FORMAT_RGB | ID_FORMAT_HSL | ID_FORMAT_HSV | ID_FORMAT_CMYK
+		| ID_FORMAT_XYZ | ID_FORMAT_XYY | ID_FORMAT_LAB | ID_FORMAT_LCH | ID_FORMAT_LUV
+		| ID_FORMAT_HUNTER | ID_FORMAT_DECIMAL | ID_FORMAT_WEBSAFE | ID_FORMAT_BINARY => {
+			let Some(&(_, format)) = FORMAT_IDS.iter().find(|(fid, _)| *fid == id) else {
+				return;
 			};
 			let current;
 			{
 				let mut state = shared.borrow_mut();
 				state.color_format = format;
 				if let Some(bar) = frame.get_menu_bar() {
-					for (fid, on) in [
-						(ID_FORMAT_HEX, format == ColorFormat::Hex),
-						(ID_FORMAT_RGB, format == ColorFormat::Rgb),
-						(ID_FORMAT_HSL, format == ColorFormat::Hsl),
-						(ID_FORMAT_HSV, format == ColorFormat::Hsv),
-					] {
-						bar.check_item(fid, on);
+					for (fid, f) in FORMAT_IDS {
+						bar.check_item(*fid, *f == format);
 					}
 				}
 				refresh_lists(win, &state);
@@ -2641,6 +3020,20 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 			};
 			report_dialog(win, "Project statistics", "What is in this project", &report);
 		}
+		ID_SCHEME_SETTINGS => scheme_settings_dialog(win, shared),
+		ID_COLOR_TOOLS => color_tools_dialog(win, shared),
+		ID_TEXT_READABILITY => {
+			let report = {
+				let state = shared.borrow();
+				text_readability(&state.drawing.flatten())
+			};
+			report_dialog(
+				win,
+				"Text Readability",
+				"How readable each text element is",
+				&report,
+			);
+		}
 		ID_COMPLEMENTARY | ID_SPLIT | ID_ANALOGOUS | ID_TRIADIC | ID_TETRADIC | ID_SHADES
 		| ID_TINTS | ID_TONES => {
 			let mut state = shared.borrow_mut();
@@ -2649,25 +3042,42 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 				return;
 			};
 			let o = base.to_oklch();
-			let (colors, what): (Vec<Srgb>, &str) = match id {
-				ID_COMPLEMENTARY => (vec![o.complementary().to_srgb()], "complementary"),
-				ID_SPLIT => (
-					o.split_complementary().iter().map(|c| c.to_srgb()).collect(),
-					"split complementary",
-				),
-				ID_ANALOGOUS => (
-					o.analogous(30.0).iter().map(|c| c.to_srgb()).collect(),
-					"analogous (30 degrees)",
-				),
-				ID_TRIADIC => (o.triadic().iter().map(|c| c.to_srgb()).collect(), "triadic"),
-				ID_TETRADIC => (o.tetradic().iter().map(|c| c.to_srgb()).collect(), "tetradic"),
-				ID_SHADES => (o.shades(4).iter().map(|c| c.to_srgb()).collect(), "shades"),
-				ID_TINTS => (o.tints(4).iter().map(|c| c.to_srgb()).collect(), "tints"),
-				_ => (o.tones(4).iter().map(|c| c.to_srgb()).collect(), "tones"),
+			// Hue schemes rotate by their offsets, on the screen
+			// wheel (OKLCH hue) or the RYB paint wheel per Scheme
+			// Settings; shades/tints/tones are lightness/chroma
+			// ladders and never touch the wheel.
+			let (colors, what): (Vec<Srgb>, String) = match id {
+				ID_SHADES => (o.shades(4).iter().map(|c| c.to_srgb()).collect(), "shades".to_string()),
+				ID_TINTS => (o.tints(4).iter().map(|c| c.to_srgb()).collect(), "tints".to_string()),
+				ID_TONES => (o.tones(4).iter().map(|c| c.to_srgb()).collect(), "tones".to_string()),
+				_ => {
+					let spread = state.scheme_spread;
+					let (offsets, label): (Vec<f32>, String) = match id {
+						ID_COMPLEMENTARY => (vec![180.0], "complementary".to_string()),
+						ID_SPLIT => (vec![150.0, -150.0], "split complementary".to_string()),
+						ID_ANALOGOUS => (
+							vec![-spread, spread],
+							format!("analogous ({spread:.0} degrees)"),
+						),
+						ID_TRIADIC => (vec![120.0, 240.0], "triadic".to_string()),
+						_ => (vec![60.0, 180.0, 240.0], "tetradic".to_string()),
+					};
+					let colors = if state.wheel_ryb {
+						offsets.iter().map(|d| rotate_hue_ryb(base, *d)).collect()
+					} else {
+						offsets.iter().map(|d| o.rotate(*d).to_srgb()).collect()
+					};
+					let label = if state.wheel_ryb {
+						format!("{label} (paint wheel)")
+					} else {
+						label
+					};
+					(colors, label)
+				}
 			};
 			let provenance =
 				Provenance::Generated { scheme: format!("{what} of {}", base.to_hex()) };
-			add_colors(win, &mut state, &colors, what, &provenance);
+			add_colors(win, &mut state, &colors, &what, &provenance);
 		}
 		ID_REMOVE_COLOR => {
 			let mut state = shared.borrow_mut();
@@ -3285,9 +3695,11 @@ fn build_menus(frame: &Frame) {
 	let schemes = Menu::builder().build();
 	schemes.append(ID_COMPLEMENTARY, "&Complementary (hue + 180)", "Add the color opposite the selected one on the hue circle.", ItemKind::Normal);
 	schemes.append(ID_SPLIT, "&Split Complementary (hue ± 150)", "Add the two colors 150 degrees either side of the selected one.", ItemKind::Normal);
-	schemes.append(ID_ANALOGOUS, "&Analogous (hue ± 30)", "Add the two neighboring colors, 30 degrees either side.", ItemKind::Normal);
+	schemes.append(ID_ANALOGOUS, "&Analogous (hue ± spread)", "Add the two neighboring colors, the Scheme Settings spread either side (30 degrees to start).", ItemKind::Normal);
 	schemes.append(ID_TRIADIC, "&Triadic (hue ± 120)", "Add the two colors a third of the circle away, either side.", ItemKind::Normal);
 	schemes.append(ID_TETRADIC, "T&etradic", "Add the three colors that complete a rectangle on the hue circle.", ItemKind::Normal);
+	schemes.append_separator();
+	schemes.append(ID_SCHEME_SETTINGS, "Scheme &Settings…", "Choose the harmony wheel (screen or paint) and the analogous spread in degrees.", ItemKind::Normal);
 
 	let variations = Menu::builder().build();
 	variations.append(ID_SHADES, "Add 4 S&hades (lightness down)", "Add four darker versions of the selected color.", ItemKind::Normal);
@@ -3297,6 +3709,9 @@ fn build_menus(frame: &Frame) {
 	let color = Menu::builder().build();
 	color.append_submenu(schemes, "&Schemes", "New colors computed from the selected color.");
 	color.append_submenu(variations, "&Shades, Tints and Tones", "Darker, lighter and softer versions of the selected color.");
+	color.append_separator();
+	color.append(ID_COLOR_TOOLS, "Color &Tools…", "Blend, subtract and gradient between two palette colors, random colors, contrast checks, dominant wavelength, and sound frequency to color.", ItemKind::Normal);
+	color.append(ID_TEXT_READABILITY, "Te&xt Readability…", "How readable every text element in the design is against its background.", ItemKind::Normal);
 	color.append_separator();
 	color.append(ID_LOAD_STARTER, "&Load Starter Colors", "Add the starter colors to the palette. A new palette starts empty; these join only when you ask.", ItemKind::Normal);
 	color.append(ID_REMOVE_COLOR, "&Remove Selected Color", "Take the selected color out of the palette.", ItemKind::Normal);
@@ -3339,6 +3754,16 @@ fn build_menus(frame: &Frame) {
 	view.append(ID_FORMAT_RGB, "Color Values as &RGB", "Show and speak color values as red, green and blue numbers, 0 to 255.", ItemKind::Check);
 	view.append(ID_FORMAT_HSL, "Color Values as HS&L", "Show and speak color values as hue, saturation and lightness.", ItemKind::Check);
 	view.append(ID_FORMAT_HSV, "Color Values as HS&V", "Show and speak color values as hue, saturation and value.", ItemKind::Check);
+	view.append(ID_FORMAT_CMYK, "Color Values as CM&YK", "Show and speak color values as cyan, magenta, yellow and black ink percents.", ItemKind::Check);
+	view.append(ID_FORMAT_XYZ, "Color Values as CIE &XYZ", "Show and speak color values as CIE XYZ tristimulus numbers.", ItemKind::Check);
+	view.append(ID_FORMAT_XYY, "Color Values as x&yY", "Show and speak color values as chromaticity x and y plus luminance Y.", ItemKind::Check);
+	view.append(ID_FORMAT_LAB, "Color Values as CIE L&ab", "Show and speak color values as CIE lightness and the a and b opponent axes.", ItemKind::Check);
+	view.append(ID_FORMAT_LCH, "Color Values as CIE LC&H", "Show and speak color values as CIE lightness, chroma and hue.", ItemKind::Check);
+	view.append(ID_FORMAT_LUV, "Color Values as CIE LU&V", "Show and speak color values as CIE lightness and the u and v axes.", ItemKind::Check);
+	view.append(ID_FORMAT_HUNTER, "Color Values as &Hunter Lab", "Show and speak color values in the 1948 Hunter Lab system (different numbers from CIE Lab).", ItemKind::Check);
+	view.append(ID_FORMAT_DECIMAL, "Color Values as &Decimal", "Show and speak color values as one decimal number, 0 to 16777215.", ItemKind::Check);
+	view.append(ID_FORMAT_WEBSAFE, "Color Values as &Web Safe", "Show and speak each color snapped to the nearest web-safe color.", ItemKind::Check);
+	view.append(ID_FORMAT_BINARY, "Color Values as &Binary", "Show and speak color values as a 24-bit binary string.", ItemKind::Check);
 	view.append_separator();
 	view.append(ID_ANNOUNCE_SLIDERS, "&Announce Slider Changes", "Moving a slider says what changed and that everything else stayed the same. Off: only the slider's name and new value are said.", ItemKind::Check);
 
@@ -3476,6 +3901,8 @@ fn main() {
 			layer: 0,
 			sound_cues: true,
 			color_format: ColorFormat::Hex,
+			scheme_spread: 30.0,
+			wheel_ryb: false,
 			brush: Brush::new("", 3, start, "solid"),
 			brushes: load_brushes(),
 			// A new project starts from scratch (Elshara): no

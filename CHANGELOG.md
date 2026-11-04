@@ -6,6 +6,22 @@ workflow.
 
 ## Unreleased
 
+- Every color system (Elshara's colorhexa ask): the View menu's
+  color format choice grows from 4 to 14 — CMYK, CIE XYZ, xyY,
+  CIE Lab, CIE LCH, CIE LUV, Hunter Lab, decimal, web safe and
+  binary join hex, RGB, HSL and HSV, and every spoken color value
+  follows the choice. New Color, Color Tools dialog: blend two
+  palette colors in OKLab at a slider percent, subtract, build a
+  gradient ramp into the palette, random colors, a WCAG contrast
+  checker with verdicts, and a dominant-wavelength readout —
+  purples honestly report a complementary wavelength, grays none.
+  Color, Text Readability reports every text element's contrast
+  against the background as easy to read, hard to read, or
+  unreadable. Scheme Settings (Color, Schemes) exposes the
+  analogous spread in degrees and a second harmony wheel: RYB
+  paint, where red's opposite is green. Experimental frequency
+  to color folds a sound frequency up by octaves into the visible
+  band, labelled experimental in the dialog and the help.
 - Sliders (Elshara's request): a fourth notebook tab, Sliders,
   holds the settings a project wants to keep as native sliders —
   brush width, the current color's red/green/blue, transparency,

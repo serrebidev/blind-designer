@@ -317,12 +317,79 @@ truth about the latest way a color arrived.
 
 COLOR VALUES YOUR WAY
 
-View menu: Color Values as Hex, RGB, HSL or HSV. Every spoken and
-displayed color value follows the choice — the palette list, the
-selected-color readout, the status line. Captions and the summary
-(recreation) file keep hex, because those are saved file formats
-and stay stable. The choice is yours per session; the app starts
-in hex.
+View menu: Color Values as Hex, RGB, HSL or HSV — and now also
+CMYK, CIE XYZ, xyY, CIE Lab, CIE LCH, CIE LUV, Hunter Lab, decimal,
+web safe and binary. Every spoken and displayed color value follows
+the choice — the palette list, the selected-color readout, the
+status line. Captions and the summary (recreation) file keep hex,
+because those are saved file formats and stay stable. The choice is
+yours per session; the app starts in hex.
+
+What each system is:
+
+- Hex, RGB, HSL, HSV: the screen systems, as before.
+- CMYK: print inks — cyan, magenta, yellow and black percents.
+- CIE XYZ: the master numbers every CIE system is computed from
+  (D65 white). xyY is the same color as chromaticity x and y plus
+  luminance — the form the wavelength math uses.
+- CIE Lab and CIE LCH: lightness with opponent axes (Lab), or
+  lightness, chroma and hue (LCH, the polar form of Lab).
+- CIE LUV: Lab's sibling system, built for lights and displays.
+- Hunter Lab: the older 1948 system. It shares Lab's name and
+  nothing else — its numbers for a color are different numbers.
+- Decimal: the color as one number, 0 (black) to 16777215 (white).
+- Web safe: the color snapped to the nearest of the 216 web-safe
+  colors (channels in steps of 51). This one shows the snapped
+  color, not your exact color.
+- Binary: the color as 24 ones and zeros, one byte per channel.
+
+COLOR TOOLS
+
+Color, Color Tools is the workshop. Pick a first and a second
+palette color, then:
+
+- Blend mixes them in OKLab — perceptual mixing, so 50 percent
+  looks halfway, not just averaged. The slider sets how much of
+  the second color is in the mix.
+- Subtract takes each channel of the second color away from the
+  first (floored at zero). Subtracting black changes nothing;
+  subtracting white gives black.
+- Gradient builds a ramp between the two colors — you say how
+  many steps — and adds the whole ramp to the palette.
+- Contrast Check reports the WCAG contrast ratio between the two
+  colors with a verdict: excellent (7 to 1 and up, any text size),
+  good (4.5, normal text), fair (3, large text only), poor.
+- Dominant Wavelength reports the first color's dominant
+  wavelength in nanometres, with its excitation purity. Honest
+  limits: grays have no wavelength at all, and purple-family
+  colors have no *dominant* wavelength — theirs is reported as a
+  complementary wavelength (the spectrum color that mixes with
+  them to make white), never silently swapped.
+- Random Color adds a color nobody picked.
+- Frequency to Color (experimental) folds a sound frequency up
+  by octaves into the visible band and gives that light's color:
+  440 hertz lands at about 620 nanometres, orange-red. This is an
+  artistic convention — octaves mapped to octaves because both
+  are waves — not physics; a note is not really a color.
+
+Color, Text Readability checks every text element in the design
+against the design background and reports each one as easy to
+read (contrast 4.5 to 1 or better), hard to read (3 to 1), or
+unreadable (below 3 to 1). It measures against the background
+only; a shape painted directly behind a text element is not
+accounted for, and the report says so.
+
+SCHEME SETTINGS: TWO WHEELS AND A SPREAD
+
+Color, Schemes, Scheme Settings holds the scheme parameters.
+The harmony wheel chooses how hue schemes rotate: the screen
+wheel (RGB hues, what the app has always done) or the paint
+wheel (RYB — the artists' wheel, where red's opposite is green
+and yellow's opposite is violet, the way paint actually mixes).
+The analogous spread sets how far the Analogous scheme steps
+either side of the base color, 5 to 90 degrees (30 to start).
+Shades, tints and tones are lightness and chroma ladders; the
+wheel never affects them.
 
 EXTRACTING MORE COLORS
 

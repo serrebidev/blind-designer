@@ -16,6 +16,7 @@ pub mod design;
 pub mod dictionary;
 pub mod drawing;
 pub mod font;
+pub mod formats;
 pub mod palette;
 pub mod plain;
 pub mod project;
@@ -36,15 +37,53 @@ pub enum ColorFormat {
 	Rgb,
 	Hsl,
 	Hsv,
+	Cmyk,
+	Xyz,
+	XyY,
+	Lab,
+	Lch,
+	Luv,
+	HunterLab,
+	Decimal,
+	WebSafe,
+	Binary,
 }
 
 impl ColorFormat {
+	/// Every format, in the order the View menu lists them.
+	pub const ALL: &[ColorFormat] = &[
+		ColorFormat::Hex,
+		ColorFormat::Rgb,
+		ColorFormat::Hsl,
+		ColorFormat::Hsv,
+		ColorFormat::Cmyk,
+		ColorFormat::Xyz,
+		ColorFormat::XyY,
+		ColorFormat::Lab,
+		ColorFormat::Lch,
+		ColorFormat::Luv,
+		ColorFormat::HunterLab,
+		ColorFormat::Decimal,
+		ColorFormat::WebSafe,
+		ColorFormat::Binary,
+	];
+
 	pub fn name(self) -> &'static str {
 		match self {
 			ColorFormat::Hex => "hex",
 			ColorFormat::Rgb => "RGB",
 			ColorFormat::Hsl => "HSL",
 			ColorFormat::Hsv => "HSV",
+			ColorFormat::Cmyk => "CMYK",
+			ColorFormat::Xyz => "CIE XYZ",
+			ColorFormat::XyY => "xyY",
+			ColorFormat::Lab => "CIE Lab",
+			ColorFormat::Lch => "CIE LCH",
+			ColorFormat::Luv => "CIE LUV",
+			ColorFormat::HunterLab => "Hunter Lab",
+			ColorFormat::Decimal => "decimal",
+			ColorFormat::WebSafe => "web safe",
+			ColorFormat::Binary => "binary",
 		}
 	}
 }
@@ -130,8 +169,10 @@ impl Srgb {
 	}
 
 	/// The color written in one of the spoken/displayed formats:
-	/// `#0F5E68`, `rgb(15, 94, 104)`, `hsl(187, 75%, 23%)` or
-	/// `hsv(187, 86%, 41%)`.
+	/// `#0F5E68`, `rgb(15, 94, 104)`, `hsl(187, 75%, 23%)`,
+	/// `hsv(187, 86%, 41%)`, and the colorhexa-style systems from
+	/// `crate::formats` (CMYK, XYZ, xyY, Lab, LCH, LUV, Hunter Lab,
+	/// decimal, web safe, binary).
 	pub fn format(self, format: ColorFormat) -> String {
 		match format {
 			ColorFormat::Hex => self.to_hex(),
@@ -144,6 +185,37 @@ impl Srgb {
 				let (h, s, v) = self.to_hsv();
 				format!("hsv({h:.0}, {s:.0}%, {v:.0}%)")
 			}
+			ColorFormat::Cmyk => {
+				let (c, m, y, k) = self.to_cmyk();
+				format!("cmyk({c:.0}%, {m:.0}%, {y:.0}%, {k:.0}%)")
+			}
+			ColorFormat::Xyz => {
+				let xyz = self.to_xyz();
+				format!("xyz({:.1}, {:.1}, {:.1})", xyz.x, xyz.y, xyz.z)
+			}
+			ColorFormat::XyY => {
+				let (x, y, lum) = self.to_xyy();
+				format!("xyY({x:.3}, {y:.3}, {lum:.1})")
+			}
+			ColorFormat::Lab => {
+				let lab = self.to_lab();
+				format!("lab({:.0}, {:.0}, {:.0})", lab.l, lab.a, lab.b)
+			}
+			ColorFormat::Lch => {
+				let (l, c, h) = self.to_lch();
+				format!("lch({l:.0}, {c:.0}, {h:.0})")
+			}
+			ColorFormat::Luv => {
+				let (l, u, v) = self.to_luv();
+				format!("luv({l:.0}, {u:.0}, {v:.0})")
+			}
+			ColorFormat::HunterLab => {
+				let (l, a, b) = self.to_hunter_lab();
+				format!("hunter lab({l:.0}, {a:.0}, {b:.0})")
+			}
+			ColorFormat::Decimal => format!("decimal {}", self.to_decimal()),
+			ColorFormat::WebSafe => format!("web safe {}", self.to_web_safe().to_hex()),
+			ColorFormat::Binary => format!("binary {}", self.to_binary()),
 		}
 	}
 
@@ -650,6 +722,36 @@ mod tests {
 		assert!(describe_in(teal, ColorFormat::Hsl).contains("(hsl(187, 75%, 23%))"));
 		assert!(describe_in(gray, ColorFormat::Hsv).contains("(hsv(0, 0%, 47%))"));
 		assert_eq!(describe(teal), describe_in(teal, ColorFormat::Hex));
+	}
+
+	#[test]
+	fn extended_color_formats_write_the_same_color() {
+		let teal = Srgb::new(15, 94, 104);
+		assert_eq!(ColorFormat::ALL.len(), 14);
+		assert_eq!(teal.format(ColorFormat::Cmyk), "cmyk(86%, 10%, 0%, 59%)");
+		assert_eq!(teal.format(ColorFormat::Decimal), "decimal 1007208");
+		assert_eq!(teal.format(ColorFormat::WebSafe), "web safe #006666");
+		assert_eq!(
+			teal.format(ColorFormat::Binary),
+			"binary 00001111 01011110 01101000"
+		);
+		// The XYZ-family formats carry the teal's values (checked in
+		// detail in formats.rs); here just that they render and that
+		// describe_in threads the choice through.
+		for f in [
+			ColorFormat::Xyz,
+			ColorFormat::XyY,
+			ColorFormat::Lab,
+			ColorFormat::Lch,
+			ColorFormat::Luv,
+			ColorFormat::HunterLab,
+		] {
+			let v = teal.format(f);
+			assert!(v.contains('(') && v.ends_with(')'), "{f:?}: {v}");
+			assert!(describe_in(teal, f).contains(&v), "{f:?}");
+		}
+		assert_eq!(ColorFormat::Lab.name(), "CIE Lab");
+		assert_eq!(ColorFormat::HunterLab.name(), "Hunter Lab");
 	}
 
 	#[test]

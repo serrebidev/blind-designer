@@ -4,6 +4,46 @@ Readable release history for Blind Designer (renamed from Transversion at 0.2.0)
 section is its GitHub release note, taken from this file by the release
 workflow.
 
+## Unreleased
+
+- Text Studio wave — styled text, text transforms, embeds,
+  practice sheets, PDF and document/presentation exports.
+  Text elements gain a style: bold, italic, underline, a
+  heading level (body, heading 1–3) and alignment (left,
+  centered, right), persisted as one trailing note in the
+  design file (unstyled files are byte-identical) and spoken
+  in every description. Design, Text Studio: an editor over
+  the project's text elements — rewrite words, set the
+  style, sort an element's lines A–Z or Z–A, spread all text
+  elements into N columns in reading order, and build a
+  grid of text elements from a pasted tab/newline table,
+  each change one logged step. HTML export honors styles as
+  real markup (strong/em/u, h1–h3, text-align); the PNG
+  renderer draws bold heavier, underlines, and aligns the
+  block — italic is spoken and real in markup but drawn
+  upright, because the built-in block font has no slanted
+  letters. Design, Embed Feed Snapshot: fetch an RSS/Atom
+  feed and place its latest item titles as one captioned
+  text element — a snapshot that refreshes only when you
+  re-embed; fetch failures are reported in plain words.
+  Design, Embed Pasted Post: paste any copied text (a
+  Facebook post, another Serrebi tool's words) as a text
+  element captioned as pasted. File, Export, Print-Writing
+  Practice Sheet: every text element printed large as block
+  letters with a legibility line (size in words, contrast
+  verdict labeled a rough guide). File, Export, PDF: a
+  hand-built two-page PDF — the design raster as a
+  FlateDecode image, then the words as real selectable text
+  (Helvetica). File, Export, Presentation HTML: one slide
+  per animation frame (or one for a still design), picture
+  and words side by side. File, Export, Document
+  (Markdown): the styled words in reading order plus every
+  element's caption, with the design's PNG written beside
+  it and referenced. File, Print via PDF: writes the PDF
+  to a temp file and opens it in the default viewer —
+  print from the viewer; the app does not drive the
+  printer itself.
+
 ## 0.14.0
 
 - Workflow wave B — replacement variables, focus mode,

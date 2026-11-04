@@ -742,6 +742,69 @@ cannot be found when the design is drawn, a framed placeholder in
 the color you chose shows where it belongs, captioned with the
 file's name.
 
+TEXT STUDIO
+
+Design, Text Studio is the project's words, gathered in one editor.
+The list holds every text element in reading order; selecting one
+loads its words and its style into the controls below. Change the
+words, tick Bold, Italic or Underline, pick a heading level (body
+text, heading 1, 2 or 3) and an alignment (left, centered, right),
+then Apply Words and Style: the change is one logged step, and the
+element's spoken description now carries its style in words, like
+"bold, underlined, heading 1, centered".
+
+Styles travel with the design. A saved file stays exactly as it was
+for elements with no style; styled elements carry one extra note in
+the file. Exports honor styles in full: the HTML page uses real
+markup (strong, emphasis, underline, heading tags, centered or
+right-aligned text), and the Markdown document export keeps bold,
+italic, underline and heading levels. In the PNG picture, bold is
+drawn heavier and underline is drawn as a rule under the words, and
+alignment positions the words in their box. One honest limit:
+italic is spoken in descriptions and real in HTML and Markdown, but
+the PNG's built-in block font has no slanted letters, so italic
+words are drawn upright in the picture.
+
+The Studio also transforms text. Sort Lines A to Z (or Z to A)
+reorders the lines inside the selected element. Spread into Columns
+repositions every text element in the design in reading order,
+across the number of columns you choose. Build Text Grid turns a
+pasted table — rows on separate lines, columns separated by tabs,
+exactly as a spreadsheet copies them — into a grid of text
+elements, one per cell, placed evenly on the current layer.
+
+Design, Embed Feed Snapshot places the latest items of a feed (RSS
+or Atom) in the design as one text element, one title per line,
+captioned with how many items came from where. It is a snapshot:
+the words are frozen at the moment you embed, and change only when
+you embed the feed again. The app pauses while it fetches — give it
+a moment — and if the fetch fails, the status line says so in plain
+words and nothing is added. Design, Embed Pasted Post does the same
+for words you paste yourself — a Facebook post, text copied from any
+other tool — and captions the element as a pasted post, so its
+origin is never a mystery later.
+
+File, Export, Print-Writing Practice Sheet writes a text sheet for
+handwriting practice: every text element printed large, letter by
+letter as block letters you can trace or copy, each with a
+legibility line — the letter size in plain words and a contrast
+verdict against the background. That verdict is a rough guide from
+the numbers, not a measurement of your design.
+
+File, Export, PDF saves a two-page PDF: page 1 is the design as a
+picture, page 2 is the design's words as real text you can select,
+copy and read with a screen reader. File, Export, Presentation HTML
+makes slides — one per animation frame, or one for a still design —
+each laying the picture and its words side by side under a slide
+title taken from the first text element. File, Export, Document
+(Markdown) writes a document with the design's styled words in
+reading order, then every element's caption; the picture is saved
+beside the document under the same name and referenced from it, so
+keep the two files together. File, Print via PDF writes the same
+PDF to a temporary file and opens it in your usual PDF viewer —
+print from the viewer. Blind Designer does not drive the printer
+itself.
+
 THE ELEMENTS DIALOG
 
 Design, Elements lists everything in the design in plain language:

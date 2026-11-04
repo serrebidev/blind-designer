@@ -14,3 +14,5 @@ chroma-core = { path = "../chroma-core" }
 wxdragon = "*"
 quiet-list = "*"
 image = { version = "*", default-features = false, features = ["png", "jpeg", "webp"] }
+# Blocking HTTP for the feed-snapshot embed: one GET, no runtime.
+ureq = "3"

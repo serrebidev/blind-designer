@@ -30,6 +30,188 @@ impl ShapeKind {
 	}
 }
 
+/// How much a text element speaks like a heading: plain body
+/// text, or one of three heading levels. The level matters to
+/// the document-shaped exports (HTML headings, markdown
+/// headings) and to how the text describes itself; it never
+/// changes the glyph size — that stays the font size's business.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Heading {
+	#[default]
+	Body,
+	H1,
+	H2,
+	H3,
+}
+
+impl Heading {
+	/// Every level, body first: the order choosers list them.
+	pub const ALL: [Heading; 4] = [Heading::Body, Heading::H1, Heading::H2, Heading::H3];
+
+	/// The spoken name: "body text", "heading 1", and so on.
+	pub fn name(self) -> &'static str {
+		match self {
+			Heading::Body => "body text",
+			Heading::H1 => "heading 1",
+			Heading::H2 => "heading 2",
+			Heading::H3 => "heading 3",
+		}
+	}
+
+	/// The stable token project files store.
+	pub fn token(self) -> &'static str {
+		match self {
+			Heading::Body => "body",
+			Heading::H1 => "h1",
+			Heading::H2 => "h2",
+			Heading::H3 => "h3",
+		}
+	}
+
+	pub fn from_token(token: &str) -> Option<Heading> {
+		Heading::ALL.iter().find(|h| h.token() == token).copied()
+	}
+}
+
+/// Where a text element's lines sit inside its box.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TextAlign {
+	#[default]
+	Left,
+	Center,
+	Right,
+}
+
+impl TextAlign {
+	/// Every alignment, left first: the order choosers list them.
+	pub const ALL: [TextAlign; 3] = [TextAlign::Left, TextAlign::Center, TextAlign::Right];
+
+	/// The spoken name: "left", "centered", "right-aligned".
+	pub fn name(self) -> &'static str {
+		match self {
+			TextAlign::Left => "left",
+			TextAlign::Center => "centered",
+			TextAlign::Right => "right-aligned",
+		}
+	}
+
+	/// The plain chooser label: "Left", "Center", "Right".
+	pub fn label(self) -> &'static str {
+		match self {
+			TextAlign::Left => "Left",
+			TextAlign::Center => "Center",
+			TextAlign::Right => "Right",
+		}
+	}
+
+	/// The stable token project files store.
+	pub fn token(self) -> &'static str {
+		match self {
+			TextAlign::Left => "left",
+			TextAlign::Center => "center",
+			TextAlign::Right => "right",
+		}
+	}
+
+	pub fn from_token(token: &str) -> Option<TextAlign> {
+		TextAlign::ALL.iter().find(|a| a.token() == token).copied()
+	}
+}
+
+/// The style a text element carries: emphasis flags, a heading
+/// level, and an alignment. The default — no emphasis, body
+/// text, left-aligned — is the state every text element made
+/// before styles existed is in, and it writes nothing extra to
+/// the project file.
+///
+/// Rendering honesty: the HTML export turns every part of the
+/// style into real markup. The PNG renderer paints bold (drawn
+/// twice, a pixel over), underline (a ruled line under the
+/// words) and alignment (where each line starts in the box),
+/// but italic is spoken, not slanted — the built-in bitmap font
+/// has no italic letterforms.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct TextStyle {
+	pub bold: bool,
+	pub italic: bool,
+	pub underline: bool,
+	pub heading: Heading,
+	pub align: TextAlign,
+}
+
+impl TextStyle {
+	/// True when the style is the plain default: no emphasis,
+	/// body text, left-aligned.
+	pub fn is_default(&self) -> bool {
+		*self == TextStyle::default()
+	}
+
+	/// The style in words, as descriptions speak it: "bold",
+	/// "italic", "underlined", "heading 1", "centered" — only
+	/// the parts that differ from plain body text, in a stable
+	/// order. Empty for the default style.
+	pub fn words(&self) -> Vec<&'static str> {
+		let mut out = Vec::new();
+		if self.bold {
+			out.push("bold");
+		}
+		if self.italic {
+			out.push("italic");
+		}
+		if self.underline {
+			out.push("underlined");
+		}
+		if self.heading != Heading::Body {
+			out.push(self.heading.name());
+		}
+		if self.align != TextAlign::Left {
+			out.push(self.align.name());
+		}
+		out
+	}
+
+	/// The project-file token: `style:` plus the emphasis flags
+	/// (b, i, u, in that order, any subset, possibly none), the
+	/// heading token and the alignment token, dash-joined —
+	/// "style:bi-h2-center". Written only for styled text, so
+	/// plain text files keep their old shape byte for byte.
+	pub fn file_token(&self) -> String {
+		let mut flags = String::new();
+		if self.bold {
+			flags.push('b');
+		}
+		if self.italic {
+			flags.push('i');
+		}
+		if self.underline {
+			flags.push('u');
+		}
+		format!("style:{flags}-{}-{}", self.heading.token(), self.align.token())
+	}
+
+	/// Parse a file token written by `file_token`.
+	pub fn from_file_token(token: &str) -> Option<TextStyle> {
+		let spec = token.strip_prefix("style:")?;
+		let mut parts = spec.split('-');
+		let flags = parts.next()?;
+		let heading = Heading::from_token(parts.next()?)?;
+		let align = TextAlign::from_token(parts.next()?)?;
+		if parts.next().is_some() {
+			return None;
+		}
+		let mut style = TextStyle { heading, align, ..Default::default() };
+		for c in flags.chars() {
+			match c {
+				'b' => style.bold = true,
+				'i' => style.italic = true,
+				'u' => style.underline = true,
+				_ => return None,
+			}
+		}
+		Some(style)
+	}
+}
+
 #[derive(Debug, Clone)]
 pub struct Shape {
 	pub kind: ShapeKind,
@@ -53,6 +235,9 @@ pub struct Shape {
 	pub font: String,
 	/// Font size in points (Text kind only).
 	pub font_size: u32,
+	/// The text's style: emphasis, heading level, alignment
+	/// (Text kind only). See `TextStyle`.
+	pub style: TextStyle,
 	/// Image file path an Image shape draws (Image kind only).
 	pub image_path: String,
 	/// Rotation in degrees, clockwise, around the shape's centre.
@@ -94,6 +279,7 @@ impl Shape {
 			text: String::new(),
 			font: String::new(),
 			font_size: 0,
+			style: TextStyle::default(),
 			image_path: String::new(),
 			angle: 0.0,
 			corner: 0,
@@ -438,8 +624,14 @@ impl Design {
 				} else {
 					format!("{} font", shape.font)
 				};
+				let style_words = shape.style.words();
+				let style = if style_words.is_empty() {
+					String::new()
+				} else {
+					format!(", {}", style_words.join(", "))
+				};
 				format!(
-					"text \"{}\" in {font} at {} point, at {at}, {words}",
+					"text \"{}\" in {font} at {} point{style}, at {at}, {words}",
 					shape.text, shape.font_size
 				)
 			}
@@ -633,37 +825,81 @@ impl Design {
 
 	/// Paint a text element with the built-in bitmap font: each glyph
 	/// cell scales to the font size (7 rows to `font_size` pixels),
-	/// characters advance 6 cells, and the line clips at the canvas
-	/// edge. The named font is not rasterized — see the field docs.
+	/// characters advance 6 cells, and the text clips at the canvas
+	/// edge. The phrase may run over several lines (feed snapshots
+	/// and pasted posts do): each line starts lower by a glyph
+	/// height plus a gap row, and the style positions every line
+	/// inside the shape's box — left at the box's edge, centered,
+	/// or right. Bold paints every glyph twice, the second pass a
+	/// glyph pixel over; underline rules a line under each text
+	/// line. Italic is spoken in the description but NOT slanted
+	/// here: the bitmap font has no italic letterforms. The named
+	/// font is not rasterized — see the field docs.
 	fn paint_text(img: &mut image::RgbImage, shape: &Shape, px: image::Rgb<u8>) {
 		let scale = ((shape.font_size.max(1) as f64 / font::GLYPH_H as f64).round() as i32).max(1);
 		let (iw, ih) = (img.width() as i32, img.height() as i32);
 		let fallback = font::glyph('?').unwrap();
-		let mut cx = shape.x;
-		for ch in shape.text.chars() {
-			if ch == '\n' {
-				break; // one line; the phrase is a label, not a paragraph
+		let line_step = (font::GLYPH_H as i32 + 2) * scale;
+		for (li, line) in shape.text.split('\n').enumerate() {
+			let ly = shape.y + li as i32 * line_step;
+			if ly >= ih {
+				break;
 			}
-			let g = font::glyph(ch).unwrap_or(fallback);
-			for (row, &bits) in g.iter().enumerate() {
-				for col in 0..font::GLYPH_W {
-					if (bits >> (font::GLYPH_W - 1 - col)) & 1 == 0 {
-						continue;
-					}
-					for dy in 0..scale {
-						for dx in 0..scale {
-							let (x, y) = (
-								cx + col as i32 * scale + dx,
-								shape.y + row as i32 * scale + dy,
-							);
-							if x >= 0 && y >= 0 && x < iw && y < ih {
-								put_shape_pixel(img, x as u32, y as u32, px, shape.opacity);
+			let chars = line.chars().count() as i32;
+			let line_w = if chars == 0 {
+				0
+			} else {
+				chars * font::ADVANCE as i32 * scale - scale
+			};
+			let start_x = match shape.style.align {
+				TextAlign::Left => shape.x,
+				TextAlign::Center => shape.x + (shape.w as i32 - line_w) / 2,
+				TextAlign::Right => shape.x + shape.w as i32 - line_w,
+			};
+			let mut cx = start_x;
+			for ch in line.chars() {
+				let g = font::glyph(ch).unwrap_or(fallback);
+				for (row, &bits) in g.iter().enumerate() {
+					for col in 0..font::GLYPH_W {
+						if (bits >> (font::GLYPH_W - 1 - col)) & 1 == 0 {
+							continue;
+						}
+						// Bold's second pass sits one glyph pixel
+						// to the right of the first.
+						for pass in 0..if shape.style.bold { 2 } else { 1 } {
+							for dy in 0..scale {
+								for dx in 0..scale {
+									let (x, y) = (
+										cx + col as i32 * scale + dx + pass * scale,
+										ly + row as i32 * scale + dy,
+									);
+									if x >= 0 && y >= 0 && x < iw && y < ih {
+										put_shape_pixel(
+											img,
+											x as u32,
+											y as u32,
+											px,
+											shape.opacity,
+										);
+									}
+								}
 							}
 						}
 					}
 				}
+				cx += font::ADVANCE as i32 * scale;
 			}
-			cx += font::ADVANCE as i32 * scale;
+			if shape.style.underline && chars > 0 {
+				let uy = ly + font::GLYPH_H as i32 * scale + scale / 2;
+				for x in start_x..start_x + line_w {
+					for dy in 0..scale {
+						let y = uy + dy;
+						if x >= 0 && y >= 0 && x < iw && y < ih {
+							put_shape_pixel(img, x as u32, y as u32, px, shape.opacity);
+						}
+					}
+				}
+			}
 		}
 	}
 
@@ -990,6 +1226,83 @@ mod tests {
 		assert!(s.points.len() < raw.len());
 		assert_eq!((s.x, s.y, s.w, s.h), (0, 0, 20, 10));
 		assert_eq!(s.brush, 3);
+	}
+
+	#[test]
+	fn text_styles_speak_their_words_and_default_speaks_none() {
+		let mut d = Design::new(300, 100, Srgb::WHITE);
+		let plain = Shape::text("Notes", "Arial", 14, 5, 5, 100, 20, Srgb::BLACK);
+		assert!(plain.style.is_default());
+		let words = d.describe_plain(&plain);
+		assert!(!words.contains("bold"), "{words}");
+		assert!(!words.contains("heading"), "{words}");
+		assert!(!words.contains("centered"), "{words}");
+		let mut styled = plain.clone();
+		styled.style = TextStyle {
+			bold: true,
+			underline: true,
+			heading: Heading::H1,
+			align: TextAlign::Center,
+			..Default::default()
+		};
+		let words = d.describe_plain(&styled);
+		assert!(words.contains("bold, underlined, heading 1, centered"), "{words}");
+		// The file token round-trips through its parser.
+		assert_eq!(TextStyle::from_file_token(&styled.style.file_token()), Some(styled.style));
+		assert_eq!(styled.style.file_token(), "style:bu-h1-center");
+		assert_eq!(
+			TextStyle::from_file_token("style:-body-left"),
+			Some(TextStyle::default())
+		);
+		assert_eq!(TextStyle::from_file_token("style:x-body-left"), None);
+		assert_eq!(TextStyle::from_file_token("style:b-h9-left"), None);
+	}
+
+	#[test]
+	fn styled_text_renders_bold_wider_underlined_and_centered() {
+		let render = |style: TextStyle| {
+			let mut d = Design::new(200, 60, Srgb::WHITE);
+			let mut t = Shape::text("I", "Arial", 14, 10, 4, 100, 40, Srgb::BLACK);
+			t.style = style;
+			d.shapes.push(t);
+			d.render()
+		};
+		let count = |img: &image::RgbImage| {
+			img.pixels().filter(|p| **p == image::Rgb([0, 0, 0])).count()
+		};
+		let plain = render(TextStyle::default());
+		// Bold paints the glyph twice over: strictly more ink.
+		let bold = render(TextStyle { bold: true, ..Default::default() });
+		assert!(count(&bold) > count(&plain), "bold {} vs plain {}", count(&bold), count(&plain));
+		// Underline adds a rule BELOW the glyph rows (glyph rows
+		// end at y = 4 + 7*2 = 18 at this scale; the rule sits
+		// at 4 + 14 + 1 = 19).
+		let under = render(TextStyle { underline: true, ..Default::default() });
+		assert_eq!(*under.get_pixel(10, 19), image::Rgb([0, 0, 0]));
+		assert_eq!(*plain.get_pixel(10, 19), image::Rgb([255, 255, 255]));
+		// Centered: the narrow glyph moves to the middle of its
+		// box. 'I' row 1 sets only its middle column: at scale 2
+		// that is x = 10 + 2*2 = 14 from the left edge, and
+		// x = 55 + 4 = 59 when the 10-pixel line is centered in
+		// the 100-pixel box starting at 10.
+		assert_eq!(*plain.get_pixel(14, 6), image::Rgb([0, 0, 0]));
+		let centered = render(TextStyle { align: TextAlign::Center, ..Default::default() });
+		assert_eq!(*centered.get_pixel(14, 6), image::Rgb([255, 255, 255]));
+		assert_eq!(*centered.get_pixel(59, 6), image::Rgb([0, 0, 0]));
+		assert!(count(&centered) == count(&plain));
+	}
+
+	#[test]
+	fn multi_line_text_paints_every_line() {
+		let mut d = Design::new(200, 80, Srgb::WHITE);
+		d.shapes.push(Shape::text("A\nB", "Arial", 14, 2, 2, 100, 60, Srgb::BLACK));
+		let img = d.render();
+		// Line one at the top; line two a glyph height plus gap
+		// lower (step 18 at scale 2), its own pixels present.
+		assert_eq!(*img.get_pixel(2, 2), image::Rgb([255, 255, 255])); // 'A' top row is 01110: first cell clear
+		assert!(img.pixels().filter(|p| **p == image::Rgb([0, 0, 0])).count() > 20);
+		let second_line_ink = (0..40).any(|x| *img.get_pixel(x, 2 + 18) == image::Rgb([0, 0, 0]));
+		assert!(second_line_ink, "second line painted nothing");
 	}
 
 	#[test]

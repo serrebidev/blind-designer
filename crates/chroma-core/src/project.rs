@@ -19,7 +19,10 @@
 //! always written) with r<percent> — a design with neither keeps
 //! its old file shape byte for byte. A locked shape ends its line
 //! with the word "locked", after the corner when it has one; an
-//! unlocked shape writes nothing, for the same reason.
+//! unlocked shape writes nothing, for the same reason. One more
+//! trailing field: a styled text shape ends its line (after the
+//! lock word) with its style token, style:<flags>-<heading>-
+//! <align>; unstyled text writes nothing.
 //!
 //! Two project-level sections follow the same rule — present
 //! only when they carry something: the sliders section gains a
@@ -39,7 +42,7 @@
 //! if designs ever need to be read by other tools.
 
 use crate::animation::Frame;
-use crate::design::{Shape, ShapeKind};
+use crate::design::{Shape, ShapeKind, TextStyle};
 use crate::drawing::{DepthRole, Drawing, Event, Layer};
 use crate::goals::{GoalKind, ProjectGoal};
 use crate::palette::{PaletteColor, Provenance};
@@ -332,10 +335,11 @@ fn shape_fields(s: &Shape) -> String {
 	}
 	// The trailing fields, in write order: the opacity percent,
 	// then a rounded rectangle's corner as r<percent>, then a
-	// locked shape's word "locked". Opacity is written when it
-	// is below full OR a corner follows (the corner takes the
-	// place after it). A shape with none of them writes nothing
-	// extra, so older files and plain designs stay byte-identical.
+	// locked shape's word "locked", then a styled text shape's
+	// style token. Opacity is written when it is below full OR
+	// a corner follows (the corner takes the place after it).
+	// A shape with none of them writes nothing extra, so older
+	// files and plain designs stay byte-identical.
 	let rounded = s.kind == ShapeKind::Rectangle && s.corner > 0;
 	if s.opacity < 100 || rounded {
 		out.push_str(&format!(" {}", s.opacity));
@@ -345,6 +349,9 @@ fn shape_fields(s: &Shape) -> String {
 	}
 	if s.locked {
 		out.push_str(" locked");
+	}
+	if s.kind == ShapeKind::Text && !s.style.is_default() {
+		out.push_str(&format!(" {}", s.style.file_token()));
 	}
 	out
 }
@@ -390,6 +397,7 @@ fn parse_shape(toks: &[String]) -> Result<Shape, String> {
 		text: String::new(),
 		font: String::new(),
 		font_size: 0,
+		style: TextStyle::default(),
 		image_path: String::new(),
 		opacity: 100,
 		corner: 0,
@@ -399,9 +407,9 @@ fn parse_shape(toks: &[String]) -> Result<Shape, String> {
 	// known count of its own (a text's phrase, font and size; an
 	// image's path); what follows them is the trailing run, in
 	// write order: a stroke's pattern word, the opacity percent,
-	// a rounded rectangle's corner as r<percent>, and a locked
-	// shape's word "locked" — each present only when the shape
-	// carries it.
+	// a rounded rectangle's corner as r<percent>, a locked
+	// shape's word "locked", and a styled text shape's style
+	// token — each present only when the shape carries it.
 	let extra: &[String] = &toks[10..];
 	let expected = match kind {
 		ShapeKind::Text => 3,
@@ -440,13 +448,13 @@ fn parse_shape(toks: &[String]) -> Result<Shape, String> {
 		}
 	}
 	if let Some(first) = tail.first() {
-		if !first.starts_with('r') && first != "locked" {
+		if !first.starts_with('r') && first != "locked" && !first.starts_with("style:") {
 			shape.opacity = num(tail, 0, "shape opacity")?;
 			tail = &tail[1..];
 		}
 	}
 	if let Some(first) = tail.first() {
-		if first != "locked" {
+		if first != "locked" && !first.starts_with("style:") {
 			match first.strip_prefix('r') {
 				Some(rest) => {
 					shape.corner = rest
@@ -462,6 +470,16 @@ fn parse_shape(toks: &[String]) -> Result<Shape, String> {
 	if tail.first().map(String::as_str) == Some("locked") {
 		shape.locked = true;
 		tail = &tail[1..];
+	}
+	if let Some(first) = tail.first() {
+		if first.starts_with("style:") {
+			if kind != ShapeKind::Text {
+				return Err(format!("a style field on a {} shape", toks[0]));
+			}
+			shape.style = TextStyle::from_file_token(first)
+				.ok_or_else(|| format!("bad text style: {first}"))?;
+			tail = &tail[1..];
+		}
 	}
 	if !tail.is_empty() {
 		return Err(format!("a shape has too many fields: {}", toks.len()));
@@ -613,6 +631,22 @@ fn event_line(e: &Event) -> String {
 		}
 		Event::VariablesSubstituted { count } => {
 			format!("event variables-substituted {count}")
+		}
+		Event::TextEdited { layer, index } => {
+			format!("event text-edited {} {index}", quote(layer))
+		}
+		Event::TextLinesSorted { layer, index, ascending } => {
+			format!(
+				"event text-sorted {} {index} {}",
+				quote(layer),
+				if *ascending { "az" } else { "za" }
+			)
+		}
+		Event::TextsDistributed { count, columns } => {
+			format!("event texts-distributed {count} {columns}")
+		}
+		Event::TextGridAdded { count, rows, cols } => {
+			format!("event text-grid {count} {rows} {cols}")
 		}
 		Event::FrameAdded { index, duration_ms } => {
 			format!("event frame-added {index} {duration_ms}")
@@ -771,6 +805,28 @@ fn parse_event(toks: &[String]) -> Result<Event, String> {
 		}),
 		Some("variables-substituted") => Ok(Event::VariablesSubstituted {
 			count: num(toks, 2, "substitution count")?,
+		}),
+		Some("text-edited") => Ok(Event::TextEdited {
+			layer: name(2)?,
+			index: num(toks, 3, "shape index")?,
+		}),
+		Some("text-sorted") => Ok(Event::TextLinesSorted {
+			layer: name(2)?,
+			index: num(toks, 3, "shape index")?,
+			ascending: match toks.get(4).map(String::as_str) {
+				Some("az") => true,
+				Some("za") => false,
+				_ => return Err("bad sort direction".to_string()),
+			},
+		}),
+		Some("texts-distributed") => Ok(Event::TextsDistributed {
+			count: num(toks, 2, "text count")?,
+			columns: num(toks, 3, "column count")?,
+		}),
+		Some("text-grid") => Ok(Event::TextGridAdded {
+			count: num(toks, 2, "text count")?,
+			rows: num(toks, 3, "row count")?,
+			cols: num(toks, 4, "column count")?,
 		}),
 		Some("frame-added") => Ok(Event::FrameAdded {
 			index: num(toks, 2, "frame index")?,
@@ -1707,6 +1763,45 @@ end
 		let back = Project::from_text(&text).expect("slider events read back");
 		assert_eq!(back.to_text(), text);
 		assert_eq!(back.drawing.log.len(), project.drawing.log.len());
+	}
+
+	#[test]
+	fn styled_text_round_trips_and_unstyled_text_writes_nothing() {
+		use crate::design::{Heading, TextAlign, TextStyle};
+		let mut d = Drawing::new(200, 100, Srgb::WHITE);
+		let mut styled = Shape::text("Title", "Arial", 24, 0, 0, 100, 30, Srgb::BLACK);
+		styled.style = TextStyle {
+			bold: true,
+			italic: true,
+			heading: Heading::H1,
+			align: TextAlign::Center,
+			..Default::default()
+		};
+		d.add_shape(0, styled);
+		d.add_shape(0, Shape::text("Plain", "Arial", 12, 0, 40, 100, 20, Srgb::BLACK));
+		assert!(d.edit_text(0, 0, "Title", d.layers[0].shapes[0].style));
+		let project = Project {
+			drawing: d,
+			palette: Vec::new(),
+			pinned_sliders: Vec::new(),
+			slider_target: AdjustTarget::BaseColor,
+			page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT,
+			goal: None,
+			grayscale_start: false,
+		};
+		let text = project.to_text();
+		// The styled shape's line ends with its style token;
+		// the plain one's line carries no style field at all.
+		assert!(text.contains("style:bi-h1-center"), "{text}");
+		let plain_line = text.lines().find(|l| l.contains("\"Plain\"")).unwrap();
+		assert!(!plain_line.contains("style:"), "{plain_line}");
+		assert!(text.contains("event text-edited"), "{text}");
+		let back = Project::from_text(&text).expect("styled text reads back");
+		assert_eq!(back.drawing.layers[0].shapes[0].style, project.drawing.layers[0].shapes[0].style);
+		assert_eq!(back.to_text(), text, "the file is stable under a round trip");
+		// A malformed style token is an error, not a silent drop.
+		let broken = text.replacen("style:bi-h1-center", "style:bx-h1-center", 1);
+		assert!(Project::from_text(&broken).is_err());
 	}
 
 	#[test]

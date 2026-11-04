@@ -17,7 +17,7 @@
 //! ponytail: minimal parsers by design — upgrade path is a real CSS/HTML
 //! parser crate if imports ever need cascade, classes or relative units.
 
-use crate::design::{Design, Shape, ShapeKind};
+use crate::design::{Design, Heading, Shape, ShapeKind, TextAlign, TextStyle};
 use crate::drawing::Drawing;
 use crate::{describe, Srgb};
 
@@ -112,16 +112,40 @@ impl Design {
 				ShapeKind::Text => {
 					// The phrase is the element's content, so a screen
 					// reader reads the text itself; the font name and
-					// size become real CSS.
+					// size become real CSS, and the style becomes
+					// real markup: a heading level is a heading
+					// element, bold is <strong>, italic <em>,
+					// underline <u>, alignment a text-align. Line
+					// breaks in the phrase become <br>.
+					let tag = match shape.style.heading {
+						Heading::Body => "div",
+						Heading::H1 => "h1",
+						Heading::H2 => "h2",
+						Heading::H3 => "h3",
+					};
+					let align = match shape.style.align {
+						TextAlign::Left => String::new(),
+						TextAlign::Center => " text-align: center;".to_string(),
+						TextAlign::Right => " text-align: right;".to_string(),
+					};
+					let mut content = escape_html(&shape.text).replace('\n', "<br>");
+					if shape.style.underline {
+						content = format!("<u>{content}</u>");
+					}
+					if shape.style.italic {
+						content = format!("<em>{content}</em>");
+					}
+					if shape.style.bold {
+						content = format!("<strong>{content}</strong>");
+					}
 					out.push_str(&format!(
-						"<div class=\"shape\" style=\"left: {}px; top: {}px; width: {}px; height: {}px; color: {hex}; font-family: {}; font-size: {}px;{rotate}\">{}</div>\n",
+						"<{tag} class=\"shape\" style=\"left: {}px; top: {}px; width: {}px; height: {}px; color: {hex}; font-family: {}; font-size: {}px;{align}{rotate}\">{content}</{tag}>\n",
 						shape.x,
 						shape.y,
 						shape.w,
 						shape.h,
 						escape_html(&shape.font),
-						shape.font_size,
-						escape_html(&shape.text)
+						shape.font_size
 					));
 				}
 				ShapeKind::Image => {
@@ -242,6 +266,117 @@ impl Drawing {
 		}
 		out.push_str("</ol>\n</section>\n</main>\n</body>\n</html>\n");
 		out
+	}
+
+	/// The design as a presentation: one slide per animation
+	/// frame (a static design presents as one slide), each slide
+	/// laying the picture and its words side by side — the shapes
+	/// rendered as the same accessible elements the page export
+	/// writes, next to a list of their captions. Slide titles
+	/// come from the frame's first text element when it has one.
+	pub fn to_presentation_html(&self, title: &str) -> String {
+		let designs = self.frame_designs();
+		let mut out = String::new();
+		out.push_str("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n");
+		out.push_str(&format!("<title>{}</title>\n<style>\n", escape_html(title)));
+		out.push_str(&self.flatten().to_css("design"));
+		out.push_str(".slide { margin-bottom: 3em; }\n.row { display: flex; gap: 2em; align-items: flex-start; }\n.stage { position: relative; flex: none; }\n.shape { position: absolute; }\n.words { max-width: 34em; }\n</style>\n</head>\n<body>\n<main>\n");
+		out.push_str(&format!("<h1>{}</h1>\n", escape_html(title)));
+		for (i, design) in designs.iter().enumerate() {
+			let first_text = design
+				.shapes
+				.iter()
+				.find(|s| s.kind == ShapeKind::Text)
+				.map(|s| s.text.lines().next().unwrap_or("").to_string());
+			let heading = match (&first_text, designs.len()) {
+				(Some(t), _) if !t.is_empty() => {
+					format!("Slide {}: {}", i + 1, escape_html(t))
+				}
+				(_, 1) => "The design".to_string(),
+				_ => format!("Slide {}", i + 1),
+			};
+			out.push_str("<section class=\"slide\">\n");
+			out.push_str(&format!("<h2>{heading}</h2>\n<div class=\"row\">\n"));
+			out.push_str(&format!(
+				"<div class=\"stage\" role=\"img\" aria-label=\"{}\" style=\"width: {}px; height: {}px; background: {};\">\n",
+				escape_html(&format!(
+					"Design {} by {} pixels, background {}",
+					design.width,
+					design.height,
+					describe(design.background)
+				)),
+				design.width,
+				design.height,
+				design.background.to_hex()
+			));
+			out.push_str(&design.shapes_markup());
+			out.push_str("</div>\n<div class=\"words\">\n<h3>What is in this slide</h3>\n<ul>\n");
+			for shape in &design.shapes {
+				out.push_str(&format!("<li>{}</li>\n", escape_html(&design.caption_for(shape))));
+			}
+			out.push_str("</ul>\n</div>\n</div>\n</section>\n");
+		}
+		out.push_str("</main>\n</body>\n</html>\n");
+		out
+	}
+
+	/// The design as a Markdown document: the exported PNG
+	/// referenced by name (the app writes it beside the
+	/// document), then the design's words — every text element
+	/// in reading order, its style carried into Markdown
+	/// (heading levels as headings, bold and italic as their
+	/// marks, underline as an inline <u>) — and a closing list
+	/// of every element's caption, so the document describes
+	/// the whole picture to a reader who cannot see it.
+	pub fn to_document_markdown(&self, title: &str, png_name: &str) -> String {
+		let design = self.flatten();
+		let mut out = String::new();
+		out.push_str(&format!("# {}\n\n", title));
+		out.push_str(&format!("![The design as a picture]({png_name})\n\n"));
+		out.push_str("## Words in the design\n\n");
+		let mut texts: Vec<&Shape> = design
+			.shapes
+			.iter()
+			.filter(|s| s.kind == ShapeKind::Text)
+			.collect();
+		texts.sort_by_key(|s| (s.y, s.x));
+		if texts.is_empty() {
+			out.push_str("This design has no text elements.\n\n");
+		}
+		for shape in texts {
+			out.push_str(&markdown_text(shape));
+			out.push_str("\n\n");
+		}
+		out.push_str("## Everything in the design\n\n");
+		out.push_str(&design.caption_sheet());
+		out
+	}
+}
+
+/// One text element as Markdown: its heading level as a
+/// Markdown heading (under the document's own title, so the
+/// levels shift one down), its phrase with bold, italic and
+/// underline marks applied.
+fn markdown_text(shape: &Shape) -> String {
+	fn styled(text: &str, style: &TextStyle) -> String {
+		let mut body = text.to_string();
+		if style.underline {
+			body = format!("<u>{body}</u>");
+		}
+		if style.italic {
+			body = format!("*{body}*");
+		}
+		if style.bold {
+			body = format!("**{body}**");
+		}
+		body
+	}
+	let body = styled(&shape.text.replace('\n', "  \n"), &shape.style);
+	match shape.style.heading {
+		Heading::Body => body,
+		Heading::H1 => format!("## {body}"),
+		Heading::H2 => format!("### {body}"),
+		Heading::H3 => format!("#### {body}"),
 	}
 }
 
@@ -742,6 +877,75 @@ mod tests {
 		// The image references its file, captioned by its alt text.
 		assert!(html.contains("<img class=\"shape\" src=\"photos/team day.png\""), "{html}");
 		assert!(html.contains("alt=\"image from file team day.png"), "{html}");
+	}
+
+	#[test]
+	fn styled_text_exports_as_real_markup() {
+		use crate::design::{Heading, TextAlign, TextStyle};
+		let mut d = Design::new(300, 200, Srgb::WHITE);
+		let mut t = Shape::text("Big\nNews", "Verdana", 32, 10, 10, 200, 60, Srgb::BLACK);
+		t.style = TextStyle {
+			bold: true,
+			italic: true,
+			underline: true,
+			heading: Heading::H2,
+			align: TextAlign::Center,
+		};
+		d.shapes.push(t);
+		d.shapes.push(Shape::text("plain", "Verdana", 12, 10, 100, 100, 20, Srgb::BLACK));
+		let html = d.to_html("page");
+		// Heading element, emphasis elements nested, centered,
+		// the line break a <br>.
+		assert!(html.contains("<h2 class=\"shape\""), "{html}");
+		assert!(html.contains("text-align: center;"), "{html}");
+		assert!(html.contains("<strong><em><u>Big<br>News</u></em></strong>"), "{html}");
+		assert!(html.contains("</h2>"), "{html}");
+		// The unstyled element stays a plain div with no marks.
+		assert!(html.contains("<div class=\"shape\""), "{html}");
+		assert_eq!(html.matches("<strong>").count(), 1, "{html}");
+	}
+
+	#[test]
+	fn presentation_lays_picture_and_words_side_by_side() {
+		let mut d = Drawing::new(200, 100, Srgb::WHITE);
+		d.add_shape(0, Shape::text("Quarterly Results", "Arial", 24, 5, 5, 150, 30, Srgb::BLACK));
+		d.add_shape(0, Shape::new(ShapeKind::Rectangle, 5, 45, 50, 40, Srgb::new(200, 0, 0)));
+		let html = d.to_presentation_html("Deck");
+		assert!(html.contains("<h1>Deck</h1>"), "{html}");
+		assert!(html.contains("display: flex"), "{html}");
+		// The slide takes its title from the first text element.
+		assert!(html.contains("<h2>Slide 1: Quarterly Results</h2>"), "{html}");
+		// Both columns exist: the rendered stage and the words.
+		assert!(html.contains("class=\"stage\""), "{html}");
+		assert!(html.contains("What is in this slide"), "{html}");
+		assert!(html.contains("<li>Quarterly Results</li>"), "{html}");
+		// An animation presents one slide per frame.
+		d.add_frame();
+		d.shift_shape(0, 1, 30, 0);
+		d.add_frame();
+		let html = d.to_presentation_html("Deck");
+		assert_eq!(html.matches("<section class=\"slide\">").count(), 2, "{html}");
+	}
+
+	#[test]
+	fn document_markdown_references_the_png_and_styles_the_words() {
+		use crate::design::{Heading, TextStyle};
+		let mut d = Drawing::new(200, 100, Srgb::WHITE);
+		let mut title = Shape::text("Report", "Arial", 24, 5, 5, 150, 30, Srgb::BLACK);
+		title.style = TextStyle { bold: true, heading: Heading::H1, ..Default::default() };
+		d.add_shape(0, title);
+		d.add_shape(0, Shape::text("body words", "Arial", 12, 5, 45, 150, 20, Srgb::BLACK));
+		let md = d.to_document_markdown("My Document", "my-document.png");
+		assert!(md.starts_with("# My Document\n"), "{md}");
+		assert!(md.contains("![The design as a picture](my-document.png)"), "{md}");
+		// The H1 text becomes a level-2 Markdown heading (the
+		// document title holds level 1), bold kept.
+		assert!(md.contains("## **Report**"), "{md}");
+		assert!(md.contains("\nbody words\n"), "{md}");
+		assert!(md.contains("## Everything in the design"), "{md}");
+		// A textless design says so instead of printing nothing.
+		let bare = Drawing::new(10, 10, Srgb::WHITE).to_document_markdown("Empty", "e.png");
+		assert!(bare.contains("no text elements"), "{bare}");
 	}
 
 	#[test]

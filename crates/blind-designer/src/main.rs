@@ -16,7 +16,7 @@ use std::path::Path;
 use std::rc::Rc;
 
 use chroma_core::brushes::{Brush, BrushLibrary, PATTERNS};
-use chroma_core::design::{css_for_colors, Shape, ShapeKind};
+use chroma_core::design::{css_for_colors, Heading, Shape, ShapeKind, TextAlign, TextStyle};
 use chroma_core::dictionary;
 use chroma_core::drawing::{DepthRole, Drawing, Event, TreatmentScope};
 use chroma_core::goals::{
@@ -42,6 +42,7 @@ use chroma_core::sound::{cue_at, cue_for_shape, tone_wav_at, Cue};
 use chroma_core::symbols;
 use chroma_core::tactile::{compare_images, tactile_grid};
 use chroma_core::templates;
+use chroma_core::textstudio::parse_feed_titles;
 use chroma_core::web::{import_html, parse_css_colors};
 use chroma_core::{describe_in, extract_palette, ColorFormat, Oklch, Srgb};
 use quiet_list::{QuietList, Select};
@@ -116,6 +117,14 @@ const ID_RECOGNIZABILITY: Id = 330;
 const ID_COLOR_TREATMENT: Id = 331;
 const ID_REPLACEMENT_VARIABLES: Id = 332;
 const ID_DRAW_POINTER: Id = 333;
+const ID_EXPORT_PRACTICE: Id = 127;
+const ID_EXPORT_PDF: Id = 128;
+const ID_EXPORT_PRESENTATION: Id = 129;
+const ID_EXPORT_DOCUMENT: Id = 130;
+const ID_PRINT_PDF: Id = 131;
+const ID_TEXT_STUDIO: Id = 334;
+const ID_EMBED_FEED: Id = 335;
+const ID_EMBED_PASTE: Id = 336;
 const ID_ABOUT: Id = 401;
 const ID_DICTIONARY: Id = 402;
 const ID_HELP_FILE: Id = 403;
@@ -239,6 +248,14 @@ const MENU_IDS: &[Id] = &[
 	ID_COLOR_TREATMENT,
 	ID_REPLACEMENT_VARIABLES,
 	ID_DRAW_POINTER,
+	ID_EXPORT_PRACTICE,
+	ID_EXPORT_PDF,
+	ID_EXPORT_PRESENTATION,
+	ID_EXPORT_DOCUMENT,
+	ID_PRINT_PDF,
+	ID_TEXT_STUDIO,
+	ID_EMBED_FEED,
+	ID_EMBED_PASTE,
 	ID_ANNOUNCE_SLIDERS,
 	ID_LISTS_SIDE_BY_SIDE,
 	ID_FOCUS_MODE,
@@ -5456,6 +5473,402 @@ fn draw_pointer_dialog(win: &Rc<Win>, shared: &Shared) {
 	}
 }
 
+/// Rows for the Text Studio's list: one per text element, in
+/// reading order (the order `Drawing::text_positions` walks),
+/// keyed by that ordinal: the phrase's first line and its style
+/// in words.
+fn text_rows(state: &State) -> Vec<(usize, String)> {
+	state
+		.drawing
+		.text_positions()
+		.iter()
+		.enumerate()
+		.map(|(i, &(li, si))| {
+			let s = &state.drawing.layers[li].shapes[si];
+			let first = s.text.lines().next().unwrap_or("");
+			let more = if s.text.contains('\n') { " …" } else { "" };
+			let words = s.style.words();
+			let style = if words.is_empty() {
+				"plain".to_string()
+			} else {
+				words.join(", ")
+			};
+			(
+				i,
+				format!(
+					"{}: \"{first}\"{more} — {style}",
+					state.drawing.layers[li].name
+				),
+			)
+		})
+		.collect()
+}
+
+/// The Text Studio (Design menu): the project's text elements
+/// as an editor. Select one to load its words and style; Apply
+/// rewrites them as one logged step. The transforms sit below:
+/// sort the selected element's lines, spread every text element
+/// into columns, and build a grid of text elements from a
+/// pasted table (tabs between the columns, as spreadsheets
+/// copy them). Accessibility: every control is labelled in
+/// words before it appears; the list carries the name "Text
+/// elements"; nothing here moves focus on its own.
+fn text_studio_dialog(win: &Rc<Win>, shared: &Shared) {
+	let frame = win.frame;
+	let dialog = Dialog::builder(&frame, "Text Studio").with_size(640, 720).build();
+	let sizer = BoxSizer::builder(Orientation::Vertical).build();
+	let list_label = StaticText::builder(&dialog).with_label("Text elements").build();
+	sizer.add(&list_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	let list = QuietList::new(&dialog, "Text elements");
+	sizer.add(&list, 1, SizerFlag::Expand | SizerFlag::All, 5);
+	let phrase_label = StaticText::builder(&dialog)
+		.with_label("Words of the selected element (one line per row)")
+		.build();
+	sizer.add(&phrase_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	let phrase = TextCtrl::builder(&dialog)
+		.with_style(TextCtrlStyle::MultiLine)
+		.build();
+	sizer.add(&phrase, 1, SizerFlag::Expand | SizerFlag::All, 5);
+	let bold = CheckBox::builder(&dialog).with_label("Bold").build();
+	let italic = CheckBox::builder(&dialog).with_label("Italic (spoken and exported; the picture font has no slanted letters)").build();
+	let underline = CheckBox::builder(&dialog).with_label("Underline").build();
+	for b in [&bold, &italic, &underline] {
+		sizer.add(b, 0, SizerFlag::All, 5);
+	}
+	let heading_label = StaticText::builder(&dialog).with_label("Heading level").build();
+	sizer.add(&heading_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	let heading_choice = Choice::builder(&dialog).build();
+	for h in Heading::ALL {
+		heading_choice.append(h.name());
+	}
+	sizer.add(&heading_choice, 0, SizerFlag::Expand | SizerFlag::All, 5);
+	let align_label = StaticText::builder(&dialog).with_label("Alignment in its box").build();
+	sizer.add(&align_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	let align_choice = Choice::builder(&dialog).build();
+	for a in TextAlign::ALL {
+		align_choice.append(a.label());
+	}
+	sizer.add(&align_choice, 0, SizerFlag::Expand | SizerFlag::All, 5);
+	let apply_btn = Button::builder(&dialog).with_label("Apply Words and Style").build();
+	let sort_az_btn = Button::builder(&dialog).with_label("Sort Lines A to Z").build();
+	let sort_za_btn = Button::builder(&dialog).with_label("Sort Lines Z to A").build();
+	let edit_buttons = BoxSizer::builder(Orientation::Horizontal).build();
+	for b in [&apply_btn, &sort_az_btn, &sort_za_btn] {
+		edit_buttons.add(b, 0, SizerFlag::All, 5);
+	}
+	sizer.add_sizer(&edit_buttons, 0, SizerFlag::All, 5);
+	let columns_label = StaticText::builder(&dialog)
+		.with_label("Spread every text element into this many columns, in reading order")
+		.build();
+	sizer.add(&columns_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	let columns_spin = SpinCtrl::builder(&dialog).with_range(1, 12).build();
+	columns_spin.set_value(2);
+	sizer.add(&columns_spin, 0, SizerFlag::Expand | SizerFlag::All, 5);
+	let spread_btn = Button::builder(&dialog).with_label("Spread into Columns").build();
+	sizer.add(&spread_btn, 0, SizerFlag::All, 5);
+	let grid_label = StaticText::builder(&dialog)
+		.with_label("Build a text grid from a pasted table (tabs between columns)")
+		.build();
+	sizer.add(&grid_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	let grid_data = TextCtrl::builder(&dialog)
+		.with_style(TextCtrlStyle::MultiLine)
+		.build();
+	sizer.add(&grid_data, 1, SizerFlag::Expand | SizerFlag::All, 5);
+	let grid_size_label = StaticText::builder(&dialog)
+		.with_label("Grid font size in points")
+		.build();
+	sizer.add(&grid_size_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	let grid_size_spin = SpinCtrl::builder(&dialog).with_range(6, 72).build();
+	grid_size_spin.set_value(14);
+	sizer.add(&grid_size_spin, 0, SizerFlag::Expand | SizerFlag::All, 5);
+	let grid_btn = Button::builder(&dialog).with_label("Build Text Grid").build();
+	sizer.add(&grid_btn, 0, SizerFlag::All, 5);
+	let close = Button::builder(&dialog).with_label("Close").build();
+	sizer.add(&close, 0, SizerFlag::All, 5);
+	dialog.set_sizer(sizer, true);
+	let list = Rc::new(list);
+	{
+		let state = shared.borrow();
+		list.update_labelled(text_rows(&state), Select::Start);
+	}
+	let grey = grey_with_selection(&list, &[apply_btn, sort_az_btn, sort_za_btn]);
+	// The selected element as (layer, shape), if any.
+	let picked = {
+		let (list, shared) = (list.clone(), shared.clone());
+		move || -> Option<(usize, usize)> {
+			let ordinal = list.selected()?;
+			shared.borrow().drawing.text_positions().get(ordinal).copied()
+		}
+	};
+	let picked = Rc::new(picked);
+	// Load the selected element's words and style into the editor.
+	let load = {
+		let (list, shared) = (list.clone(), shared.clone());
+		let (phrase, bold, italic, underline) =
+			(phrase.clone(), bold.clone(), italic.clone(), underline.clone());
+		let (heading_choice, align_choice) = (heading_choice.clone(), align_choice.clone());
+		move || {
+			let Some(ordinal) = list.selected() else { return };
+			let state = shared.borrow();
+			let Some(&(li, si)) = state.drawing.text_positions().get(ordinal) else {
+				return;
+			};
+			let s = &state.drawing.layers[li].shapes[si];
+			phrase.set_value(&s.text);
+			bold.set_value(s.style.bold);
+			italic.set_value(s.style.italic);
+			underline.set_value(s.style.underline);
+			let h = Heading::ALL.iter().position(|x| *x == s.style.heading).unwrap_or(0);
+			heading_choice.set_selection(h as u32);
+			let a = TextAlign::ALL.iter().position(|x| *x == s.style.align).unwrap_or(0);
+			align_choice.set_selection(a as u32);
+		}
+	};
+	let load = Rc::new(load);
+	// Refresh the rows and the main window, speak the newest
+	// log entry, and reload the editor from the selection.
+	let sync = {
+		let (win, list, shared, grey, load) =
+			(win.clone(), list.clone(), shared.clone(), grey.clone(), load.clone());
+		move || {
+			{
+				let state = shared.borrow();
+				list.update_labelled(text_rows(&state), Select::Keep);
+				refresh_lists(&win, &state);
+				if let Some(last) = state.drawing.log.last() {
+					frame.set_status_text(&last.describe(&state.drawing), 0);
+				}
+			}
+			grey();
+			load();
+		}
+	};
+	let sync = Rc::new(sync);
+	{
+		let load = load.clone();
+		list.on_selection_changed(move || load());
+	}
+	{
+		let (shared, sync, picked) = (shared.clone(), sync.clone(), picked.clone());
+		let (phrase, bold, italic, underline) =
+			(phrase.clone(), bold.clone(), italic.clone(), underline.clone());
+		let (heading_choice, align_choice) = (heading_choice.clone(), align_choice.clone());
+		apply_btn.on_click(move |_| {
+			let Some((li, si)) = picked() else { return };
+			let style = TextStyle {
+				bold: bold.is_checked(),
+				italic: italic.is_checked(),
+				underline: underline.is_checked(),
+				heading: heading_choice
+					.get_selection()
+					.and_then(|i| Heading::ALL.get(i as usize).copied())
+					.unwrap_or_default(),
+				align: align_choice
+					.get_selection()
+					.and_then(|i| TextAlign::ALL.get(i as usize).copied())
+					.unwrap_or_default(),
+			};
+			let words = phrase.get_value();
+			shared.borrow_mut().drawing.edit_text(li, si, &words, style);
+			sync();
+		});
+	}
+	for (btn, ascending) in [(&sort_az_btn, true), (&sort_za_btn, false)] {
+		let (shared, sync, picked) = (shared.clone(), sync.clone(), picked.clone());
+		btn.on_click(move |_| {
+			let Some((li, si)) = picked() else { return };
+			if shared.borrow_mut().drawing.sort_text_lines(li, si, ascending) {
+				sync();
+			} else {
+				frame.set_status_text(
+					"That element has fewer than two lines; there is nothing to sort.",
+					0,
+				);
+			}
+		});
+	}
+	{
+		let (shared, sync) = (shared.clone(), sync.clone());
+		spread_btn.on_click(move |_| {
+			let columns = columns_spin.value().max(1) as usize;
+			let placed = shared.borrow_mut().drawing.distribute_texts(columns);
+			if placed == 0 {
+				frame.set_status_text("This design has no text elements to spread.", 0);
+			} else {
+				sync();
+			}
+		});
+	}
+	{
+		let (win, shared, sync) = (win.clone(), shared.clone(), sync.clone());
+		grid_btn.on_click(move |_| {
+			let data = grid_data.get_value();
+			let mut state = shared.borrow_mut();
+			let layer = state.layer;
+			let fill = selected_color(&win, &state).unwrap_or(Srgb::BLACK);
+			let size = grid_size_spin.value().max(6) as u32;
+			let added = state.drawing.add_text_grid(layer, &data, fill, size);
+			drop(state);
+			if added == 0 {
+				frame.set_status_text(
+					"No words in that table; nothing was built. Paste rows with tabs between the columns.",
+					0,
+				);
+			} else {
+				sync();
+			}
+		});
+	}
+	{
+		let dialog = dialog.clone();
+		close.on_click(move |_| dialog.end_modal(ID_CANCEL));
+	}
+	load();
+	grey();
+	dialog.show_modal();
+}
+
+/// Embed a feed snapshot (Design menu): ask for the feed's
+/// address and a count, fetch it, and place the items' titles
+/// as one text element — a snapshot, refreshed only by
+/// embedding again. The fetch is blocking with a 20-second
+/// budget; failures are reported in plain words and never
+/// panic. Accessibility: two labelled fields, like the other
+/// dialogs; the result is announced by `speak_added`.
+fn embed_feed_dialog(win: &Rc<Win>, shared: &Shared) {
+	let frame = win.frame;
+	let Some(v) = fields_dialog(
+		&frame,
+		"Embed feed snapshot",
+		&[
+			("Feed address (an RSS or Atom URL)", "https://"),
+			("How many of the latest items (1 to 50)", "5"),
+		],
+	) else {
+		return;
+	};
+	let url = v[0].trim().to_string();
+	if url.is_empty() {
+		frame.set_status_text("No feed address given; nothing was embedded.", 0);
+		return;
+	}
+	let count: usize = v[1]
+		.trim()
+		.parse()
+		.ok()
+		.filter(|n| (1..=50).contains(n))
+		.unwrap_or(5);
+	let fetched = (|| -> Result<String, String> {
+		let config = ureq::Agent::config_builder()
+			.timeout_global(Some(std::time::Duration::from_secs(20)))
+			.build();
+		let agent = ureq::Agent::new_with_config(config);
+		let mut response = agent.get(&url).call().map_err(|e| e.to_string())?;
+		response.body_mut().read_to_string().map_err(|e| e.to_string())
+	})();
+	let xml = match fetched {
+		Ok(xml) => xml,
+		Err(e) => {
+			frame.set_status_text(
+				&format!(
+					"That feed could not be fetched: {e}. Check the address and your connection, then try again."
+				),
+				0,
+			);
+			return;
+		}
+	};
+	let titles = parse_feed_titles(&xml, count);
+	if titles.is_empty() {
+		frame.set_status_text(
+			"No items were found at that address. It may not be a feed, or the feed may be empty.",
+			0,
+		);
+		return;
+	}
+	let host = url
+		.split("://")
+		.nth(1)
+		.unwrap_or(&url)
+		.split('/')
+		.next()
+		.unwrap_or("")
+		.to_string();
+	let lines = titles.len();
+	let phrase = titles.join("\n");
+	let mut state = shared.borrow_mut();
+	let layer = state.layer;
+	let fill = selected_color(win, &state).unwrap_or(Srgb::BLACK);
+	let width = state.drawing.width.saturating_sub(20).max(60);
+	let height = ((lines as u32 * 29 + 8).max(29)).min(state.drawing.height.max(29));
+	let mut shape = Shape::text(&phrase, "", 16, 10, 10, width, height, fill);
+	shape.opacity = state.current_opacity;
+	shape.caption = Some(format!("Feed snapshot: {lines} items from {host}"));
+	let index = state.drawing.add_shape(layer, shape);
+	refresh_lists(win, &state);
+	if let Some(index) = index {
+		speak_added(win, &state, layer, index);
+	}
+}
+
+/// Embed a pasted post (Design menu): whatever text the user
+/// pastes — a Facebook post, words from another Serrebi tool —
+/// lands as one text element, captioned as pasted so its
+/// origin is never a mystery later.
+fn embed_paste_dialog(win: &Rc<Win>, shared: &Shared) {
+	let frame = win.frame;
+	let dialog = Dialog::builder(&frame, "Embed Pasted Post").with_size(560, 420).build();
+	let sizer = BoxSizer::builder(Orientation::Vertical).build();
+	let label = StaticText::builder(&dialog)
+		.with_label("Paste the post or text here")
+		.build();
+	sizer.add(&label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	let field = TextCtrl::builder(&dialog)
+		.with_style(TextCtrlStyle::MultiLine)
+		.build();
+	sizer.add(&field, 1, SizerFlag::Expand | SizerFlag::All, 5);
+	let ok = Button::builder(&dialog).with_label("Embed").build();
+	let cancel = Button::builder(&dialog).with_label("Cancel").build();
+	let buttons = BoxSizer::builder(Orientation::Horizontal).build();
+	buttons.add(&ok, 0, SizerFlag::All, 5);
+	buttons.add(&cancel, 0, SizerFlag::All, 5);
+	sizer.add_sizer(&buttons, 0, SizerFlag::All, 5);
+	dialog.set_sizer(sizer, true);
+	{
+		let d = dialog.clone();
+		ok.on_click(move |_| d.end_modal(ID_OK));
+	}
+	{
+		let d = dialog.clone();
+		cancel.on_click(move |_| d.end_modal(ID_CANCEL));
+	}
+	if dialog.show_modal() != ID_OK {
+		return;
+	}
+	let pasted = field.get_value();
+	let text = pasted.trim();
+	if text.is_empty() {
+		frame.set_status_text("Nothing was pasted; nothing was embedded.", 0);
+		return;
+	}
+	let first_line = text.lines().next().unwrap_or("");
+	let short: String = first_line.chars().take(50).collect();
+	let lines = text.lines().count() as u32;
+	let mut state = shared.borrow_mut();
+	let layer = state.layer;
+	let fill = selected_color(win, &state).unwrap_or(Srgb::BLACK);
+	let width = state.drawing.width.saturating_sub(20).max(60);
+	let height = ((lines * 29 + 8).max(29)).min(state.drawing.height.max(29));
+	let mut shape = Shape::text(text, "", 16, 10, 10, width, height, fill);
+	shape.opacity = state.current_opacity;
+	shape.caption = Some(format!("pasted post: {short}"));
+	let index = state.drawing.add_shape(layer, shape);
+	refresh_lists(win, &state);
+	if let Some(index) = index {
+		speak_added(win, &state, layer, index);
+	}
+}
+
 fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 	let frame = win.frame;
 	match id {
@@ -6301,6 +6714,24 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 			let state = shared.borrow();
 			refresh_lists(win, &state);
 		}
+		ID_TEXT_STUDIO => {
+			text_studio_dialog(win, shared);
+			// Text edits can recolor nothing, but they move and
+			// rewrite shapes; refresh like the Elements dialog.
+			reset_adjustment(&mut shared.borrow_mut());
+			let state = shared.borrow();
+			refresh_lists(win, &state);
+		}
+		ID_EMBED_FEED => {
+			embed_feed_dialog(win, shared);
+			let state = shared.borrow();
+			refresh_lists(win, &state);
+		}
+		ID_EMBED_PASTE => {
+			embed_paste_dialog(win, shared);
+			let state = shared.borrow();
+			refresh_lists(win, &state);
+		}
 		ID_TEMPLATES => {
 			templates_dialog(win, shared);
 			// A template is a new project: its slider settings were
@@ -6532,6 +6963,130 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 				}
 			}
 		}
+		ID_EXPORT_PRACTICE => {
+			if let Some(path) = file_dialog(
+				&frame,
+				"Save practice sheet",
+				"Text files (*.txt)|*.txt",
+				true,
+			) {
+				let state = shared.borrow();
+				match std::fs::write(&path, state.drawing.practice_sheet()) {
+					Ok(()) => {
+						frame.set_status_text(&format!("Saved the practice sheet to {path}"), 0)
+					}
+					Err(e) => {
+						frame.set_status_text(&format!("Could not save the practice sheet: {e}"), 0)
+					}
+				}
+			}
+		}
+		ID_EXPORT_PDF => {
+			if let Some(path) = file_dialog(
+				&frame,
+				"Save PDF",
+				"PDF documents (*.pdf)|*.pdf",
+				true,
+			) {
+				let state = shared.borrow();
+				let pdf = state.drawing.to_pdf();
+				match std::fs::write(&path, &pdf) {
+					Ok(()) => frame.set_status_text(
+						&format!("Saved the PDF to {path}: page 1 is the picture, page 2 is the design's words as text."),
+						0,
+					),
+					Err(e) => {
+						frame.set_status_text(&format!("Could not save the PDF: {e}"), 0)
+					}
+				}
+			}
+		}
+		ID_EXPORT_PRESENTATION => {
+			if let Some(path) = file_dialog(
+				&frame,
+				"Save presentation",
+				"Web pages (*.html)|*.html",
+				true,
+			) {
+				let state = shared.borrow();
+				let html = state.drawing.to_presentation_html("Blind Designer presentation");
+				match std::fs::write(&path, html) {
+					Ok(()) => {
+						frame.set_status_text(&format!("Saved the presentation to {path}"), 0)
+					}
+					Err(e) => {
+						frame.set_status_text(&format!("Could not save the presentation: {e}"), 0)
+					}
+				}
+			}
+		}
+		ID_EXPORT_DOCUMENT => {
+			if let Some(path) = file_dialog(
+				&frame,
+				"Save document",
+				"Markdown documents (*.md)|*.md",
+				true,
+			) {
+				let state = shared.borrow();
+				// The document references a PNG beside it under
+				// the same name; write both, and say both.
+				let png_path = Path::new(&path).with_extension("png");
+				let png_name = png_path
+					.file_name()
+					.map(|f| f.to_string_lossy().into_owned())
+					.unwrap_or_else(|| "design.png".to_string());
+				let md = state
+					.drawing
+					.to_document_markdown("Blind Designer document", &png_name);
+				let md_result = std::fs::write(&path, md);
+				let png_result = state.drawing.flatten().render().save(&png_path);
+				match (md_result, png_result) {
+					(Ok(()), Ok(())) => frame.set_status_text(
+						&format!(
+							"Saved the document to {path} and its picture to {}. Keep the two together.",
+							png_path.display()
+						),
+						0,
+					),
+					(Err(e), _) => {
+						frame.set_status_text(&format!("Could not save the document: {e}"), 0)
+					}
+					(_, Err(e)) => {
+						frame.set_status_text(&format!("Could not save the document's picture: {e}"), 0)
+					}
+				}
+			}
+		}
+		ID_PRINT_PDF => {
+			let state = shared.borrow();
+			let pdf = state.drawing.to_pdf();
+			drop(state);
+			let path = std::env::temp_dir().join("blind-designer-print.pdf");
+			match std::fs::write(&path, &pdf) {
+				Ok(()) => {
+					let shown = path.display().to_string();
+					#[cfg(target_os = "windows")]
+					let opened = std::process::Command::new("cmd")
+						.args(["/C", "start", "", &shown])
+						.spawn();
+					#[cfg(target_os = "macos")]
+					let opened = std::process::Command::new("open").arg(&shown).spawn();
+					#[cfg(all(unix, not(target_os = "macos")))]
+					let opened = std::process::Command::new("xdg-open").arg(&shown).spawn();
+					match opened {
+						Ok(_) => frame.set_status_text(
+							&format!("Opened {shown} in your PDF viewer. Print from the viewer — Blind Designer does not drive the printer itself."),
+							0,
+						),
+						Err(e) => frame.set_status_text(
+							&format!("The PDF is saved at {shown}, but the viewer could not be opened: {e}. Open the file and print from there."),
+							0,
+						),
+					}
+				}
+				Err(e) => frame.set_status_text(&format!("Could not write the print PDF: {e}"), 0),
+			}
+		}
 		ID_COMPARE_IMAGES => {
 			let images = "Image files (*.png;*.jpg;*.jpeg;*.webp)|*.png;*.jpg;*.jpeg;*.webp";
 			if let Some(first_path) = file_dialog(&frame, "Choose the first image", images, false) {
@@ -6687,6 +7242,10 @@ fn build_menus(frame: &Frame) {
 	export.append(ID_EXPORT_TACTILE_SVG, "&Raised-Line SVG…", "Save the design as outlines for swell paper or an embosser, one line style per layer.", ItemKind::Normal);
 	export.append(ID_EXPORT_TACTILE_SHEET, "Tactile &Sheet…", "Save the design as a text walk, element by element in reading order, with braille labels.", ItemKind::Normal);
 	export.append(ID_EXPORT_BRAILLE, "&Braille Labels…", "Save the elements' captions as Grade 1 braille labels.", ItemKind::Normal);
+	export.append(ID_EXPORT_PRACTICE, "Print-Writing &Practice Sheet…", "Save a practice sheet: every text element printed large as block letters to trace or copy, with a legibility line for each.", ItemKind::Normal);
+	export.append(ID_EXPORT_PDF, "P&DF…", "Save a two-page PDF: the design as a picture, then its text elements as real, readable text.", ItemKind::Normal);
+	export.append(ID_EXPORT_PRESENTATION, "Presen&tation HTML…", "Save the design as presentation slides — one per animation frame — each laying the picture and its words side by side.", ItemKind::Normal);
+	export.append(ID_EXPORT_DOCUMENT, "&Document (Markdown)…", "Save a Markdown document: the design's PNG written beside it and referenced, then the design's words with their styles, then every element's caption.", ItemKind::Normal);
 
 	let file = Menu::builder().build();
 	file.append(ID_OPEN_DESIGN, "Open &Design…", "Open a saved design file, replacing the current design.", ItemKind::Normal);
@@ -6699,6 +7258,7 @@ fn build_menus(frame: &Frame) {
 	file.append_separator();
 	file.append_submenu(import, "&Import", "Bring images, colors and designs in.");
 	file.append_submenu(export, "&Export", "Write the design out: pictures, pages, text and touch.");
+	file.append(ID_PRINT_PDF, "&Print via PDF…", "Write the design's PDF to a temporary file and open it in your PDF viewer; print from the viewer. (Blind Designer does not drive the printer itself.)", ItemKind::Normal);
 	file.append_separator();
 	file.append(ID_EXIT, "E&xit", "Close Blind Designer.", ItemKind::Normal);
 
@@ -6750,6 +7310,9 @@ fn build_menus(frame: &Frame) {
 	design.append_submenu(arrange, "A&rrange Selected Shape", "Move, turn, resize, recolor or remove the selected element.");
 	design.append_separator();
 	design.append(ID_ELEMENTS, "E&lements…", "Every element in plain language, with rename, describe, move, resize, recolor and delete.", ItemKind::Normal);
+	design.append(ID_TEXT_STUDIO, "Text &Studio…", "The project's text elements as an editor: rewrite their words, set bold, italic, underline, heading level and alignment, sort their lines, spread them into columns, and build text grids from pasted tables.", ItemKind::Normal);
+	design.append(ID_EMBED_FEED, "Embed Feed &Snapshot…", "Fetch a feed (RSS or Atom) and place its latest item titles in the design as one text element — a snapshot: it changes only when you embed again.", ItemKind::Normal);
+	design.append(ID_EMBED_PASTE, "Embed &Pasted Post…", "Paste text copied from anywhere — a Facebook post, another Serrebi tool — and place it in the design as a text element captioned as pasted.", ItemKind::Normal);
 	design.append(ID_INSPECT, "In&spect Selected…", "The inspector: what the selected element is, where it is used, what can change it and what happens if it is left alone. Enter on the Elements list does the same.", ItemKind::Normal);
 	design.append(ID_ELEMENT_WIZARD, "Element &Wizard…", "The wizard scoped to the selected element: its stack (what sits on it, what it sits on), slider edits, and the inspector's review.", ItemKind::Normal);
 	design.append(ID_LOCK_TOGGLE, "&Lock/Unlock Selected", "Lock the selected element so bulk changes skip it, or unlock it so they reach it again. Direct edits work either way.", ItemKind::Normal);

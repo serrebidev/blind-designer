@@ -671,6 +671,24 @@ impl Drawing {
 		true
 	}
 
+	/// Set one shape's color outright, to an absolute value (the
+	/// channel sliders' direct set). Logged as a recolor through
+	/// `log_slider_event`, so a drag through fifty values is one
+	/// step in the log, like the other slider edits.
+	pub fn set_shape_color_slider(&mut self, layer: usize, index: usize, color: Srgb) -> bool {
+		let name = {
+			let Some(l) = self.layers.get_mut(layer) else { return false };
+			let Some(s) = l.shapes.get_mut(index) else { return false };
+			s.fill = color;
+			l.name.clone()
+		};
+		self.log_slider_event(
+			Event::ShapeRecolored { layer: name.clone(), index, color },
+			|e| matches!(e, Event::ShapeRecolored { layer: l, index: i, .. } if *l == name && *i == index),
+		);
+		true
+	}
+
 	/// Adjust every shape's color on a layer at once: each shape's
 	/// new color is the adjustment applied to its entry in `bases`
 	/// (the layer's colors when the adjustment began, in shape
@@ -894,6 +912,24 @@ mod tests {
 		let shape = &d.layers[top].shapes[0];
 		assert_eq!((shape.x, shape.y), (15, 8));
 		assert_eq!(shape.angle, 45.0);
+	}
+
+	#[test]
+	fn channel_slider_recolors_coalesce_in_the_log() {
+		let mut d = Drawing::new(10, 10, Srgb::WHITE);
+		d.add_shape(0, Shape::new(ShapeKind::Rectangle, 0, 0, 5, 5, red()));
+		let before = d.log.len();
+		// A drag through three values is one log step, told with
+		// its final value — the slider-edit rule.
+		assert!(d.set_shape_color_slider(0, 0, Srgb::new(1, 2, 3)));
+		assert!(d.set_shape_color_slider(0, 0, Srgb::new(4, 5, 6)));
+		assert!(d.set_shape_color_slider(0, 0, Srgb::new(7, 8, 9)));
+		assert_eq!(d.layers[0].shapes[0].fill, Srgb::new(7, 8, 9));
+		assert_eq!(d.log.len(), before + 1);
+		let step = d.log.last().unwrap().describe(&d);
+		assert!(step.contains("recolor shape 1"), "{step}");
+		assert!(!d.set_shape_color_slider(9, 0, Srgb::BLACK), "no such layer");
+		assert!(!d.set_shape_color_slider(0, 9, Srgb::BLACK), "no such shape");
 	}
 
 	#[test]

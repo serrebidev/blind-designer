@@ -28,8 +28,9 @@ use chroma_core::sliders::{
 	SliderTarget, SLIDERS,
 };
 use chroma_core::formats::{
-	blend, contrast_verdict, frequency_to_color, gradient, random_color, rotate_hue_ryb,
-	subtract, text_readability,
+	blend, channel_values, channels as format_channels, color_from_channels,
+	contrast_verdict, frequency_to_color, gradient, random_color, rotate_hue_ryb, subtract,
+	text_readability, ChannelSet,
 };
 use chroma_core::sound::{cue_at, cue_for_shape, tone_wav_at, Cue};
 use chroma_core::symbols;
@@ -297,6 +298,31 @@ struct State {
 	/// The selected element's size when the scale slider's current
 	/// run began: (layer, shape, width, height).
 	scale_base: Option<(usize, usize, u32, u32)>,
+	/// The channel sliders' current run: while a run lasts its
+	/// channel values are the truth (each move rebuilds the color
+	/// from the whole vector, so two channels moved in turn
+	/// compose, and nothing compounds through conversions). A
+	/// different target, element or format starts a fresh run
+	/// from the color's own values.
+	channel_run: Option<ChannelRun>,
+}
+
+/// The color-channel sliders' run state: the format the values
+/// are in, the one color they edit, and the values themselves,
+/// in slider units, one per channel of the format.
+struct ChannelRun {
+	format: ColorFormat,
+	target: ChannelTarget,
+	values: Vec<i32>,
+}
+
+/// The one color the channel sliders edit: the brush color, or
+/// one element's fill. (The layer and depth adjustment targets
+/// name many colors at once; channels edit one color at a time.)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ChannelTarget {
+	Brush,
+	Element(usize, usize),
 }
 
 /// What the color-adjustment sliders are acting on, captured when
@@ -316,6 +342,15 @@ enum AdjustBase {
 /// native slider control, and the value readout after it.
 struct SliderRow {
 	id: &'static str,
+	slider: Slider,
+	readout: StaticText,
+}
+
+/// One row of the color-channels group on the Sliders tab: which
+/// channel of the current color format it drives, the native
+/// slider control, and the value readout after it.
+struct ChannelRow {
+	index: usize,
 	slider: Slider,
 	readout: StaticText,
 }
@@ -341,6 +376,13 @@ struct Win {
 	slider_page: RefCell<Option<Panel>>,
 	slider_rows: RefCell<Vec<SliderRow>>,
 	slider_target_choice: RefCell<Option<Choice>>,
+	/// The color-channels group's rows on the Sliders page (empty
+	/// unless the group is pinned) and the note under it, which
+	/// says why the channels cannot be edited when they cannot
+	/// (a multi-color target, no element selected) — or, for the
+	/// binary format, why there are no channel sliders at all.
+	channel_rows: RefCell<Vec<ChannelRow>>,
+	channel_note: RefCell<Option<StaticText>>,
 	/// True while code (not the user) is setting slider values, so
 	/// the change handler stays out of refreshes.
 	slider_refreshing: std::cell::Cell<bool>,
@@ -516,6 +558,7 @@ fn reset_adjustment(state: &mut State) {
 	state.adjust = ColorAdjust::default();
 	state.adjust_base = None;
 	state.scale_base = None;
+	state.channel_run = None;
 }
 
 /// Add the starter colors to the palette (the ones not already
@@ -589,6 +632,80 @@ fn slider_placeholder(def: &SliderDef) -> &'static str {
 	}
 }
 
+/// The one color the channel sliders edit right now, and its
+/// identity: the brush color for the Current color target, the
+/// selected element's fill for the Selected element target.
+/// Layer and depth targets name many colors at once and have no
+/// single channel color — the group disables itself for them.
+fn channel_target(state: &State, win: &Win) -> Option<(ChannelTarget, Srgb)> {
+	match state.slider_target {
+		AdjustTarget::BaseColor => Some((ChannelTarget::Brush, state.brush.color)),
+		AdjustTarget::Element => selected_shape(state, win)
+			.map(|(li, si, s)| (ChannelTarget::Element(li, si), s.fill)),
+		_ => None,
+	}
+}
+
+/// Why the channel sliders cannot be edited right now, in words
+/// for the note under the group (and the status line, if a stray
+/// event reaches a disabled slider). Empty when they can.
+fn channel_note_text(state: &State, win: &Win) -> &'static str {
+	match state.slider_target {
+		AdjustTarget::BaseColor => "",
+		AdjustTarget::Element => {
+			if selected_shape(state, win).is_some() {
+				""
+			} else {
+				"Select an element to edit its color channels."
+			}
+		}
+		_ => "Channel sliders edit one color at a time: set the color adjustments target \
+			to Current color or Selected element to use them.",
+	}
+}
+
+/// The values the channel sliders should show: an active run on
+/// this target in this format shows its own values (they are the
+/// truth while it lasts); anything else shows the target color's
+/// own values in the current format.
+fn channel_display_values(win: &Win, state: &State) -> Option<Vec<i32>> {
+	let (id, color) = channel_target(state, win)?;
+	if let Some(run) = &state.channel_run {
+		if run.format == state.color_format && run.target == id {
+			return Some(run.values.clone());
+		}
+	}
+	Some(channel_values(state.color_format, color))
+}
+
+/// Push the current values into the channel group's controls,
+/// readouts, greying and note. Runs inside every slider refresh,
+/// so the group always agrees with the project.
+fn refresh_channel_values(win: &Win, state: &State) {
+	if win.channel_rows.borrow().is_empty() {
+		return;
+	}
+	let ChannelSet::Sliders(defs) = format_channels(state.color_format) else { return };
+	let editable = channel_target(state, win).is_some();
+	let values = channel_display_values(win, state);
+	win.slider_refreshing.set(true);
+	for row in win.channel_rows.borrow().iter() {
+		let Some(def) = defs.get(row.index) else { continue };
+		row.slider.enable(editable);
+		match values.as_ref().and_then(|v| v.get(row.index)) {
+			Some(v) => {
+				row.slider.set_value(*v);
+				row.readout.set_label(&def.format_value(*v));
+			}
+			None => row.readout.set_label("no color to edit"),
+		}
+	}
+	win.slider_refreshing.set(false);
+	if let Some(note) = win.channel_note.borrow().as_ref() {
+		note.set_label(channel_note_text(state, win));
+	}
+}
+
 /// The element the main window has selected, as (layer, shape,
 /// shape) — the target of the element sliders.
 fn selected_shape<'a>(state: &'a State, win: &Win) -> Option<(usize, usize, &'a Shape)> {
@@ -602,7 +719,7 @@ fn selected_shape<'a>(state: &'a State, win: &Win) -> Option<(usize, usize, &'a 
 /// with the project; guarded so programmatic sets never re-enter
 /// the change handler.
 fn refresh_slider_values(win: &Win, state: &State) {
-	if win.slider_rows.borrow().is_empty() {
+	if win.slider_rows.borrow().is_empty() && win.channel_rows.borrow().is_empty() {
 		return;
 	}
 	win.slider_refreshing.set(true);
@@ -617,6 +734,88 @@ fn refresh_slider_values(win: &Win, state: &State) {
 		}
 	}
 	win.slider_refreshing.set(false);
+	refresh_channel_values(win, state);
+}
+
+/// Build the color-channels group into the Sliders page: a
+/// header, then one row per channel of the CURRENT color format
+/// — a label, a NATIVE slider carrying the channel's spoken name
+/// ("LCH hue"), and a value readout — editing the one color the
+/// adjustments target picker names. Accessibility follows the
+/// slider rows: real accessible names, no programmatic focus
+/// moves (Ctrl+arrow hops are the user's own keys, as on the
+/// Sliders tab). For the binary format there are no sliders:
+/// the group is the core's own sentence about why — binary is a
+/// readout, not an editing system. When the target names many
+/// colors (a layer, a depth) or no element is selected, the
+/// sliders grey out and the note under the group says why.
+fn build_channel_group(
+	win: &Rc<Win>,
+	shared: &Shared,
+	page: &Panel,
+	sizer: &BoxSizer,
+	rows: &mut Vec<ChannelRow>,
+	note_out: &mut Option<StaticText>,
+) {
+	let (format, values) = {
+		let state = shared.borrow();
+		let values =
+			channel_target(&state, win).map(|(_, color)| channel_values(state.color_format, color));
+		(state.color_format, values)
+	};
+	let header = StaticText::builder(page).with_label("Color channels").build();
+	sizer.add(&header, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	match format_channels(format) {
+		ChannelSet::ReadoutOnly(reason) => {
+			let note = StaticText::builder(page).with_label(reason).build();
+			sizer.add(&note, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Bottom, 5);
+			*note_out = Some(note);
+		}
+		ChannelSet::Sliders(defs) => {
+			for (index, def) in defs.iter().enumerate() {
+				let label_text = def.label();
+				let (value, text) = match values.as_ref().and_then(|v| v.get(index)) {
+					Some(v) => (*v, def.format_value(*v)),
+					None => (def.min, "no color to edit".to_string()),
+				};
+				let label = StaticText::builder(page).with_label(&label_text).build();
+				let slider = Slider::builder(page)
+					.with_min_value(def.min)
+					.with_max_value(def.max)
+					.with_value(value)
+					.build();
+				slider.set_name(&label_text);
+				slider.enable(values.is_some());
+				let readout = StaticText::builder(page).with_label(&text).build();
+				let row_sizer = BoxSizer::builder(Orientation::Horizontal).build();
+				row_sizer.add(&label, 0, SizerFlag::All, 5);
+				row_sizer.add(&slider, 1, SizerFlag::Expand | SizerFlag::All, 5);
+				row_sizer.add(&readout, 0, SizerFlag::All, 5);
+				sizer.add_sizer(&row_sizer, 0, SizerFlag::Expand, 0);
+				{
+					let (w, s) = (win.clone(), shared.clone());
+					slider.on_slider(move |e| {
+						if w.slider_refreshing.get() {
+							return;
+						}
+						apply_channel(&w, &s, index, e.get_value());
+					});
+				}
+				{
+					let (w, s) = (win.clone(), shared.clone());
+					slider.on_key_down(move |data| {
+						channel_key(&w, &s, index, &data);
+					});
+				}
+				rows.push(ChannelRow { index, slider, readout });
+			}
+			let note = StaticText::builder(page)
+				.with_label(channel_note_text(&shared.borrow(), win))
+				.build();
+			sizer.add(&note, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Bottom, 5);
+			*note_out = Some(note);
+		}
+	}
 }
 
 /// (Re)build the Sliders notebook page from the project's pinned
@@ -634,18 +833,30 @@ fn build_sliders_tab(win: &Rc<Win>, shared: &Shared) {
 	if win.slider_page.borrow().is_some() {
 		win.notebook.remove_page(PAGE_INDEX);
 	}
-	let (pins, target, any_adjust) = {
+	let (pins, target, any_adjust, channels_pinned) = {
 		let state = shared.borrow();
 		let any_adjust = state
 			.pinned_sliders
 			.iter()
 			.filter_map(|id| slider_by_id(id))
 			.any(|d| d.is_adjustment());
-		(state.pinned_sliders.clone(), state.slider_target, any_adjust)
+		let channels_pinned = state
+			.pinned_sliders
+			.iter()
+			.filter_map(|id| slider_by_id(id))
+			.any(|d| d.target == SliderTarget::ColorChannels);
+		(
+			state.pinned_sliders.clone(),
+			state.slider_target,
+			any_adjust,
+			channels_pinned,
+		)
 	};
 	let page = Panel::builder(&win.notebook).build();
 	let sizer = BoxSizer::builder(Orientation::Vertical).build();
 	let mut rows: Vec<SliderRow> = Vec::new();
+	let mut channel_rows: Vec<ChannelRow> = Vec::new();
+	let mut channel_note: Option<StaticText> = None;
 	let mut target_choice: Option<Choice> = None;
 	if pins.is_empty() {
 		let note = StaticText::builder(&page)
@@ -655,7 +866,7 @@ fn build_sliders_tab(win: &Rc<Win>, shared: &Shared) {
 			.build();
 		sizer.add(&note, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
 	} else {
-		if any_adjust {
+		if any_adjust || channels_pinned {
 			let label =
 				StaticText::builder(&page).with_label("Color adjustments act on").build();
 			let choice = Choice::builder(&page).build();
@@ -689,6 +900,17 @@ fn build_sliders_tab(win: &Rc<Win>, shared: &Shared) {
 		let state = shared.borrow();
 		for id in &pins {
 			let Some(def) = slider_by_id(id) else { continue };
+			if def.target == SliderTarget::ColorChannels {
+				build_channel_group(
+					win,
+					shared,
+					&page,
+					&sizer,
+					&mut channel_rows,
+					&mut channel_note,
+				);
+				continue;
+			}
 			let (value, text) = match read_slider_value(win, &state, def) {
 				Some(v) => (v, def.format(v)),
 				None => (def.min, slider_placeholder(def).to_string()),
@@ -734,6 +956,8 @@ fn build_sliders_tab(win: &Rc<Win>, shared: &Shared) {
 	}
 	*win.slider_page.borrow_mut() = Some(page);
 	*win.slider_rows.borrow_mut() = rows;
+	*win.channel_rows.borrow_mut() = channel_rows;
+	*win.channel_note.borrow_mut() = channel_note;
 	*win.slider_target_choice.borrow_mut() = target_choice;
 }
 
@@ -906,6 +1130,161 @@ fn apply_slider(win: &Win, shared: &Shared, id: &'static str, value: i32) {
 			} else {
 				win.frame
 					.set_status_text(&format!("{} {}.", def.name, def.format(value)), 0);
+			}
+		}
+	}
+}
+
+/// The channel sliders' custom keys, the Sliders tab's own: Ctrl
+/// plus an arrow hops focus from channel to channel; Page Up and
+/// Page Down jump by the project's page-jump percent of the
+/// channel's range. Plain arrows, Home and End are the native
+/// slider's own behavior, skipped onward untouched.
+fn channel_key(win: &Rc<Win>, shared: &Shared, index: usize, data: &WindowEventData) {
+	let WindowEventData::Keyboard(kb) = data else {
+		data.skip(true);
+		return;
+	};
+	let Some(code) = kb.get_key_code() else {
+		data.skip(true);
+		return;
+	};
+	let rows = win.channel_rows.borrow();
+	let Some(pos) = rows.iter().position(|r| r.index == index) else {
+		data.skip(true);
+		return;
+	};
+	if kb.control_down() && matches!(code, WXK_LEFT | WXK_UP | WXK_RIGHT | WXK_DOWN) {
+		let back = matches!(code, WXK_LEFT | WXK_UP);
+		let next = if back {
+			pos.saturating_sub(1)
+		} else {
+			(pos + 1).min(rows.len() - 1)
+		};
+		if let Some(dest) = rows.get(next) {
+			dest.slider.set_focus();
+		}
+		return;
+	}
+	if matches!(code, WXK_PAGEUP | WXK_PAGEDOWN) {
+		let (format, percent) = {
+			let state = shared.borrow();
+			(state.color_format, state.page_jump_percent)
+		};
+		let ChannelSet::Sliders(defs) = format_channels(format) else {
+			data.skip(true);
+			return;
+		};
+		let Some(def) = defs.get(index) else {
+			data.skip(true);
+			return;
+		};
+		let span = (def.max - def.min).max(0);
+		let jump = ((span * percent.min(100) as i32) / 100).max(def.step);
+		let delta = if code == WXK_PAGEUP { jump } else { -jump };
+		let Some(row) = rows.get(pos) else {
+			data.skip(true);
+			return;
+		};
+		let value = def.clamp(row.slider.get_value() + delta);
+		row.slider.set_value(value);
+		drop(rows);
+		apply_channel(win, shared, index, value);
+		return;
+	}
+	data.skip(true);
+}
+
+/// Apply one channel slider's new value, live: the channel is
+/// set absolutely on the run's value vector and the color is
+/// rebuilt from the whole vector, so channels compose and
+/// nothing compounds through conversions. The edit lands like
+/// the other slider edits — the brush color is replaced (the
+/// red/green/blue sliders' rule, which also ends any adjustment
+/// run), an element's fill goes through the drawing and its log.
+/// The announcement names the channel and its new value, and
+/// that everything else stayed the same.
+fn apply_channel(win: &Win, shared: &Shared, index: usize, value: i32) {
+	let mut note: Option<String> = None;
+	let announcement: Option<String> = {
+		let mut state = shared.borrow_mut();
+		let format = state.color_format;
+		let ChannelSet::Sliders(defs) = format_channels(format) else { return };
+		let Some(def) = defs.get(index).copied() else { return };
+		let value = def.clamp(value);
+		let Some((target_id, base_color)) = channel_target(&state, win) else {
+			// The sliders sit greyed out in this state; a stray
+			// event still gets the straight answer.
+			win.frame.set_status_text(channel_note_text(&state, win), 0);
+			return;
+		};
+		let continuing = state
+			.channel_run
+			.as_ref()
+			.is_some_and(|run| run.format == format && run.target == target_id);
+		if !continuing {
+			state.channel_run = Some(ChannelRun {
+				format,
+				target: target_id,
+				values: channel_values(format, base_color),
+			});
+		}
+		let values = {
+			let run = state.channel_run.as_mut().expect("the run was just set");
+			if let Some(slot) = run.values.get_mut(index) {
+				*slot = value;
+			}
+			run.values.clone()
+		};
+		let mut color = color_from_channels(format, &values);
+		let applied = if format == ColorFormat::WebSafe {
+			// The color snapped to the web-safe grid; the run's
+			// values follow it, so the sliders show the color
+			// that actually landed, not the one asked for.
+			let snapped = channel_values(format, color);
+			let landed = snapped.get(index).copied().unwrap_or(value);
+			color = color_from_channels(format, &snapped);
+			if let Some(run) = state.channel_run.as_mut() {
+				run.values = snapped;
+			}
+			landed
+		} else {
+			value
+		};
+		match target_id {
+			ChannelTarget::Brush => {
+				state.brush.color = color;
+				state.adjust = ColorAdjust::default();
+				state.adjust_base = None;
+			}
+			ChannelTarget::Element(li, si) => {
+				if state.drawing.set_shape_color_slider(li, si, color) {
+					state.adjust = ColorAdjust::default();
+					state.adjust_base = None;
+					refresh_lists(win, &state);
+				} else {
+					note = Some("That element is gone.".to_string());
+				}
+			}
+		}
+		if let Some(row) = win.channel_rows.borrow().iter().find(|r| r.index == index) {
+			row.readout.set_label(&def.format_value(applied));
+			if applied != value {
+				row.slider.set_value(applied);
+			}
+		}
+		let words = format!("{} {}", def.label(), def.format_value(applied));
+		Some(if state.announce_sliders {
+			format!("{words}. Everything else unchanged.")
+		} else {
+			format!("{words}.")
+		})
+	};
+	match note {
+		Some(text) => win.frame.set_status_text(&text, 0),
+		None => {
+			if let Some(text) = announcement {
+				win.frame.set_status_text(&text, 0);
 			}
 		}
 	}
@@ -2999,6 +3378,9 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 				refresh_lists(win, &state);
 				current = selected_color(win, &state);
 			}
+			// The channel group's sliders are the new format's
+			// channels: rebuild the Sliders tab to match.
+			build_sliders_tab(win, shared);
 			match current {
 				Some(c) => {
 					let state = shared.borrow();
@@ -4227,6 +4609,7 @@ fn main() {
 			adjust: ColorAdjust::default(),
 			adjust_base: None,
 			scale_base: None,
+			channel_run: None,
 		}));
 		let win = Rc::new(Win {
 			frame,
@@ -4242,6 +4625,8 @@ fn main() {
 			h_spin,
 			slider_page: RefCell::new(None),
 			slider_rows: RefCell::new(Vec::new()),
+			channel_rows: RefCell::new(Vec::new()),
+			channel_note: RefCell::new(None),
 			slider_target_choice: RefCell::new(None),
 			slider_refreshing: std::cell::Cell::new(false),
 		});

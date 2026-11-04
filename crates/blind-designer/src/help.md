@@ -85,8 +85,8 @@ and element scale (the Elements-tab selection: scale grows or
 shrinks it from the size it had when you started); stroke width
 (a selected stroke); frame duration (the whole film at one pace —
 every frame set at once); the extract-colors count; the tactile
-grid's columns and rows; the sound cue volume; and the color
-adjustments.
+grid's columns and rows; the sound cue volume; the color
+channels (next section); and the color adjustments.
 
 The color adjustments — shade, tint, tone, chroma, undertone, and
 the descriptive ones: temperature (warm or cool), vibrancy
@@ -100,6 +100,50 @@ from the color the target had when you started moving its
 sliders, never piled on top of the last move, so sliding back to
 zero restores the original color exactly. A layer adjustment is
 one step in the log for the whole layer, spoken in words.
+
+COLOR CHANNEL SLIDERS
+
+Pin "Color channels (in current format)" in Project Options and
+the Sliders tab grows a group under a "Color channels" heading:
+one slider for every channel of the color format you picked in
+the View menu — hex's red, green and blue; LCH's lightness,
+chroma and hue; CMYK's four inks; and so on for every system.
+Each slider carries its spoken name ("LCH hue") and a readout of
+its value, and moving one says what changed and that everything
+else stayed the same: "LCH lightness 62.0. Everything else
+unchanged." You hear what you are changing while you change it,
+instead of typing a number and finding out after.
+
+The channels act on the same target as the color adjustments —
+the picker at the top of the tab: the current color, or the
+selected element. (A layer or a depth is many colors at once,
+and channels edit one color at a time, so for those targets the
+channel sliders grey out and a note under the group says so.)
+Changing the View menu's format rebuilds the group as the new
+format's channels. The keys are the tab's own: arrows move by
+the channel's smallest step, Page Up and Page Down jump by your
+page-jump percent, Home and End go to the ends, Ctrl plus an
+arrow hops from channel to channel.
+
+The ranges are each system's full range, and the fine-grained
+systems move finer than their readouts print: XYZ channels run
+0 to 110 in hundredths (the scale is relative to the D65 white
+point, not a percent — white's own Z is 108.88, so the range
+passes 100), xyY chromaticity moves in ten-thousandths, and the
+Lab family's values move in tenths. Three honest exceptions:
+
+- Decimal is one packed number, 0 to 16777215. A single slider
+  over sixteen million steps cannot be stepped through, so its
+  channels are its three bytes — the red, green and blue bytes
+  the number is made of. Slide a byte and you are editing the
+  decimal number, one base-256 digit at a time.
+- Web safe sliders step by 51: the web-safe grid has only six
+  stops per channel (0, 51, 102, 153, 204, 255), and the color
+  snaps to the grid — the sliders show the color that landed.
+- Binary has no channel sliders at all. Binary is a readout,
+  not an editing system: it writes the color out as bits, and
+  bits are not values you can slide. The group shows that
+  sentence instead; pick any other format to edit channels.
 
 THE MENUS
 

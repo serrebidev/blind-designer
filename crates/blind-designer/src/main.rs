@@ -12,7 +12,7 @@
 //! captions generated only where a shape has none of its own.
 
 use std::cell::RefCell;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use chroma_core::brushes::{Brush, BrushLibrary, PATTERNS};
@@ -20,7 +20,8 @@ use chroma_core::design::{css_for_colors, Heading, Shape, ShapeKind, TextAlign, 
 use chroma_core::dictionary;
 use chroma_core::drawing::{DepthRole, Drawing, Event, TreatmentScope};
 use chroma_core::goals::{
-	goal_report, recognizability_report, seed_drawing, GoalKind, ProjectGoal,
+	default_slider_ids, goal_report, recognizability_report, seed_drawing, GoalKind,
+	ProjectGoal,
 };
 use chroma_core::viewability::DepthBand;
 use chroma_core::palette::{gray_ramp, starter_palette, PaletteColor, Provenance};
@@ -122,6 +123,7 @@ const ID_EXPORT_PDF: Id = 128;
 const ID_EXPORT_PRESENTATION: Id = 129;
 const ID_EXPORT_DOCUMENT: Id = 130;
 const ID_PRINT_PDF: Id = 131;
+const ID_NEW_WINDOW: Id = 132;
 const ID_TEXT_STUDIO: Id = 334;
 const ID_EMBED_FEED: Id = 335;
 const ID_EMBED_PASTE: Id = 336;
@@ -253,6 +255,7 @@ const MENU_IDS: &[Id] = &[
 	ID_EXPORT_PRESENTATION,
 	ID_EXPORT_DOCUMENT,
 	ID_PRINT_PDF,
+	ID_NEW_WINDOW,
 	ID_TEXT_STUDIO,
 	ID_EMBED_FEED,
 	ID_EMBED_PASTE,
@@ -378,6 +381,14 @@ struct State {
 	/// A new project starts this way; a loaded project carries
 	/// whatever its file says. Saved in the design file.
 	grayscale_start: bool,
+	/// The file this project was last saved to or opened from,
+	/// when there is one: the unsaved-changes guard saves back
+	/// to it without asking for a name again. Session-only.
+	design_path: Option<PathBuf>,
+	/// The project's fingerprint as it stood when it was last
+	/// saved, opened, or started fresh — the guard's baseline.
+	/// Session-only; see `project_fingerprint`.
+	saved_fingerprint: (usize, usize, usize, bool, usize),
 }
 
 /// The color-channel sliders' run state: the format the values
@@ -588,6 +599,105 @@ fn current_project(state: &State) -> Project {
 		page_jump_percent: state.page_jump_percent,
 		goal: state.goal.clone(),
 		grayscale_start: state.grayscale_start,
+	}
+}
+
+/// A cheap fingerprint of the project's content, for the
+/// unsaved-changes guard: the drawing's event-log length (every
+/// logged edit grows it), the palette's size, the total element
+/// count, whether a goal is stated, and how many sliders are
+/// pinned. It can miss an edit that changes none of these, and
+/// can stir on a change that is later undone step for step —
+/// cheap and conservative is the point: the guard asks, it
+/// never silently blocks.
+fn project_fingerprint(state: &State) -> (usize, usize, usize, bool, usize) {
+	(
+		state.drawing.log.len(),
+		state.palette.len(),
+		state.drawing.layers.iter().map(|l| l.shapes.len()).sum(),
+		state.goal.is_some(),
+		state.pinned_sliders.len(),
+	)
+}
+
+/// Save the design: to `path` when one is given (the file the
+/// project already lives in), else by asking for a name with
+/// the Save Design dialog. On success the path is remembered
+/// and the saved fingerprint refreshed, the status line says
+/// where it went, and the result is true. A cancelled dialog
+/// or a failed write says so and returns false.
+fn save_design(win: &Win, shared: &Shared, path: Option<String>) -> bool {
+	let frame = win.frame;
+	let path = match path {
+		Some(p) => Some(p),
+		None => file_dialog(
+			&frame,
+			"Save design",
+			"Blind Designer design (*.bdd)|*.bdd",
+			true,
+		),
+	};
+	let Some(path) = path else { return false };
+	let mut state = shared.borrow_mut();
+	let project = current_project(&state);
+	match std::fs::write(&path, project.to_text()) {
+		Ok(()) => {
+			state.design_path = Some(PathBuf::from(&path));
+			let fp = project_fingerprint(&state);
+			state.saved_fingerprint = fp;
+			drop(state);
+			frame.set_status_text(&format!("Saved design to {path}"), 0);
+			true
+		}
+		Err(e) => {
+			frame.set_status_text(&format!("Save failed: {e}"), 0);
+			false
+		}
+	}
+}
+
+/// The unsaved-changes guard, asked before anything that would
+/// replace or abandon the current project (opening a design,
+/// starting from a template, a pattern or the wizard, exiting):
+/// a project whose fingerprint still matches its saved
+/// baseline passes silently. Otherwise a dialog asks in plain
+/// words — Save (to the project's file, or a name it asks for
+/// first), Don't Save, or Cancel — and only Save's success or
+/// Don't Save lets the action proceed.
+fn confirm_discard(win: &Rc<Win>, shared: &Shared, action: &str) -> bool {
+	{
+		let state = shared.borrow();
+		if project_fingerprint(&state) == state.saved_fingerprint {
+			return true;
+		}
+	}
+	let dialog = MessageDialog::builder(
+		&win.frame,
+		&format!(
+			"This project has unsaved changes. Save it before you {action}? \
+			 Choose Save to save it first, Don't Save to {action} and lose \
+			 the changes, or Cancel to stay with this project."
+		),
+		"Unsaved changes",
+	)
+	.with_style(
+		MessageDialogStyle::YesNo
+			| MessageDialogStyle::Cancel
+			| MessageDialogStyle::IconQuestion,
+	)
+	.build();
+	dialog.set_yes_no_labels("Save", "Don't Save");
+	match dialog.show_modal() {
+		ID_YES => {
+			let path = shared
+				.borrow()
+				.design_path
+				.as_ref()
+				.map(|p| p.to_string_lossy().into_owned());
+			save_design(win, shared, path)
+		}
+		ID_NO => true,
+		_ => false,
 	}
 }
 
@@ -954,7 +1064,8 @@ fn build_channel_group(
 /// Ctrl+arrow moves focus from slider to slider, the semi-
 /// invisible interface Elshara asked for. Focus is never moved
 /// except by those Ctrl+arrow keys the user presses. A project
-/// with no pins gets a page that says so and where to pin some.
+/// with no pins gets EVERY slider — pinning trims the tab, it
+/// never gates it — under a note saying so.
 /// The notebook index of the Sliders page, found by its text:
 /// the page count before it changes with the Lists Side by
 /// Side layout, so a fixed index would remove the wrong page.
@@ -969,23 +1080,33 @@ fn build_sliders_tab(win: &Rc<Win>, shared: &Shared) {
 			win.notebook.remove_page(i);
 		}
 	}
-	let (pins, target, any_adjust, channels_pinned) = {
+	let (pins, target, any_adjust, channels_pinned, showing_all) = {
 		let state = shared.borrow();
-		let any_adjust = state
-			.pinned_sliders
+		// No pins means EVERY slider, in registry order: the
+		// tab must never be a dead end of static text with
+		// nothing a keyboard can land on (Elshara's hands-on
+		// report). Pinning is how a project trims the tab to
+		// its own set — empty pins, the whole registry.
+		let showing_all = state.pinned_sliders.is_empty();
+		let effective: Vec<String> = if showing_all {
+			SLIDERS.iter().map(|d| d.id.to_string()).collect()
+		} else {
+			state.pinned_sliders.clone()
+		};
+		let any_adjust = effective
 			.iter()
 			.filter_map(|id| slider_by_id(id))
 			.any(|d| d.is_adjustment());
-		let channels_pinned = state
-			.pinned_sliders
+		let channels_pinned = effective
 			.iter()
 			.filter_map(|id| slider_by_id(id))
 			.any(|d| d.target == SliderTarget::ColorChannels);
 		(
-			state.pinned_sliders.clone(),
+			effective,
 			state.slider_target,
 			any_adjust,
 			channels_pinned,
+			showing_all,
 		)
 	};
 	let page = Panel::builder(&win.notebook).build();
@@ -994,14 +1115,15 @@ fn build_sliders_tab(win: &Rc<Win>, shared: &Shared) {
 	let mut channel_rows: Vec<ChannelRow> = Vec::new();
 	let mut channel_note: Option<StaticText> = None;
 	let mut target_choice: Option<Choice> = None;
-	if pins.is_empty() {
+	if showing_all {
 		let note = StaticText::builder(&page)
 			.with_label(
-				"No sliders are pinned in this project yet. Pin the ones you want to keep in Design, Project Options.",
+				"Showing every slider: this project pins none of its own. Pin a set in Design, Project Options and only those stay; clear the pins and every slider shows again.",
 			)
 			.build();
 		sizer.add(&note, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
-	} else {
+	}
+	{
 		if any_adjust || channels_pinned {
 			let label =
 				StaticText::builder(&page).with_label("Color adjustments act on").build();
@@ -1238,6 +1360,12 @@ fn rebuild_list_pages(win: &Rc<Win>, shared: &Shared) {
 	win.elements_list.borrow().select(elements_key.as_ref());
 	let state = shared.borrow();
 	refresh_menu_states(win, &state);
+	drop(state);
+	// Land on the palette list (Elshara's report: after the
+	// rebuild the keyboard was nowhere a screen reader could
+	// use). This runs only on the user's own toggle, and the
+	// palette list exists in both layouts.
+	win.palette_list.borrow().set_focus();
 }
 
 /// The Sliders tab's custom keys (Elshara's semi-invisible
@@ -1741,7 +1869,8 @@ fn locked_suffix(locked: usize) -> String {
 
 /// The Project Options dialog (Design menu): this project's home
 /// for what used to be scattered — the pinned-slider checklist
-/// (check = the slider lives on the Sliders tab), what the color
+/// (checked sliders, and only they, live on the Sliders tab;
+/// check none and the tab shows every slider), what the color
 /// adjustments act on, the Page Up/Down jump, and the starter
 /// colors. OK applies the pins, target and jump at once; the
 /// dialog is modal and closing it returns to the main window.
@@ -1750,7 +1879,7 @@ fn project_options_dialog(win: &Rc<Win>, shared: &Shared) {
 	let dialog = Dialog::builder(&frame, "Project Options").with_size(560, 640).build();
 	let sizer = BoxSizer::builder(Orientation::Vertical).build();
 	let pins_label = StaticText::builder(&dialog)
-		.with_label("Sliders pinned to this project's Sliders tab")
+		.with_label("Sliders pinned to this project's Sliders tab (check the ones to keep; with none checked, the tab shows every slider)")
 		.build();
 	sizer.add(&pins_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
 	let checks = CheckListBox::builder(&dialog).build();
@@ -1870,8 +1999,13 @@ fn project_options_dialog(win: &Rc<Win>, shared: &Shared) {
 		build_sliders_tab(win, shared);
 		frame.set_status_text(
 			&format!(
-				"Project options saved: {count} slider{} pinned to the Sliders tab.{}",
+				"Project options saved: {count} slider{} pinned to the Sliders tab.{}{}",
 				if count == 1 { "" } else { "s" },
+				if count == 0 {
+					" With none pinned, the tab shows every slider."
+				} else {
+					""
+				},
 				if grayscale {
 					" Grayscale start is on: colors come later, per part, layer, or depth."
 				} else {
@@ -3399,7 +3533,11 @@ fn pattern_dialog(win: &Rc<Win>, shared: &Shared, preselect: Option<&str>) {
 			state.page_jump_percent = DEFAULT_PAGE_JUMP_PERCENT;
 			state.goal = None;
 			state.grayscale_start = true;
+			state.design_path = None;
 			reset_adjustment(&mut state);
+			// The fresh pattern design is the saved baseline.
+			let fp = project_fingerprint(&state);
+			state.saved_fingerprint = fp;
 			drop(state);
 			frame.set_status_text(
 				&format!("Started a new {kind} design from the two colors. It is a normal design now: edit it, then Save Design to keep it."),
@@ -3634,8 +3772,12 @@ fn step_sizer(panel: &Panel) -> BoxSizer {
 /// create or build? — and the kind chosen decides which focus
 /// questions step 2 asks; the tools that matter follow the
 /// focus, and the answers ARE the goal, confirmed on the last
-/// step with the goal report's preview. Finishing a new project
-/// seeds its canvas per the kind (see `seed_drawing`): writing
+/// step with the goal report's preview. Finishing also pins
+/// the kind's default sliders (see `default_slider_ids`) — a
+/// new project's set outright, a restated goal's as a top-up —
+/// and the status line names what the wizard did. Finishing a
+/// new project seeds its canvas per the kind (see
+/// `seed_drawing`): writing
 /// starts with words to replace, image creation with a tagged
 /// background layer and a grey ground, cosmetic work with the
 /// gray ramp in the palette (its work starts from a picture
@@ -3875,28 +4017,48 @@ fn setup_wizard(win: &Rc<Win>, shared: &Shared, new_project: bool) {
 			Vec::new()
 		};
 		state.layer = 0;
-		// A new project starts from scratch, like a template:
-		// no pins, default target and jump, grayscale start on.
-		state.pinned_sliders = Vec::new();
+		// The wizard stocks the Sliders tab for the kind: a
+		// new project starts with the sliders its kind of work
+		// reaches for first (see `default_slider_ids`), default
+		// target and jump, grayscale start on.
+		state.pinned_sliders =
+			default_slider_ids(goal.kind).iter().map(|s| s.to_string()).collect();
 		state.slider_target = AdjustTarget::BaseColor;
 		state.page_jump_percent = DEFAULT_PAGE_JUMP_PERCENT;
 		state.grayscale_start = true;
+		state.design_path = None;
 		reset_adjustment(&mut state);
+	} else {
+		// Restating a goal tops the pins up with the kind's
+		// defaults, keeping every slider already chosen.
+		for id in default_slider_ids(goal.kind) {
+			if !state.pinned_sliders.iter().any(|p| p == id) {
+				state.pinned_sliders.push(id.to_string());
+			}
+		}
 	}
 	state.goal = Some(goal.clone());
+	let pinned_count = state.pinned_sliders.len();
 	let report = goal_report(&current_project(&state));
-	drop(state);
 	if new_project {
-		build_sliders_tab(win, shared);
+		// The wizard's fresh project is the saved baseline:
+		// nothing to lose until the designer changes it.
+		let fp = project_fingerprint(&state);
+		state.saved_fingerprint = fp;
 	}
+	drop(state);
+	// The pins may have changed either way: rebuild the tab.
+	build_sliders_tab(win, shared);
 	let state = shared.borrow();
 	refresh_lists(win, &state);
 	frame.set_status_text(
 		&format!(
-			"{}: goal set — {}.{}{}",
+			"{}: goal set — {}.{} {pinned_count} slider{} pinned for this kind of project.{}{}",
 			if new_project { "New project" } else { "Setup wizard" },
 			goal.kind.name(),
 			report.map(|r| format!(" {}", r.one_line())).unwrap_or_default(),
+			if pinned_count == 1 { "" } else { "s" },
+			if new_project { " Canvas seeded for the kind." } else { "" },
 			if new_project && goal.kind == GoalKind::ImageCosmetic {
 				" Cosmetic work starts from a picture: File, Import, Open Image — the gray ramp is in the palette for the shading work."
 			} else if new_project {
@@ -4057,6 +4219,18 @@ fn element_wizard(win: &Rc<Win>, shared: &Shared) {
 	}
 	if wiz.run() {
 		apply_edits();
+		frame.set_status_text(
+			&format!(
+				"Element wizard finished: the element's opacity is now {} percent opaque{}.",
+				pending_opacity.get(),
+				if kind == ShapeKind::Rectangle {
+					format!(", its roundedness {} percent", pending_corner.get())
+				} else {
+					String::new()
+				},
+			),
+			0,
+		);
 	}
 }
 
@@ -4796,7 +4970,11 @@ fn templates_dialog(win: &Win, shared: &Shared) {
 				state.page_jump_percent = DEFAULT_PAGE_JUMP_PERCENT;
 				state.goal = None;
 				state.grayscale_start = true;
+				state.design_path = None;
 				reset_adjustment(&mut state);
+				// The fresh template design is the saved baseline.
+				let fp = project_fingerprint(&state);
+				state.saved_fingerprint = fp;
 				drop(state);
 				frame.set_status_text(
 					&format!("Started a new design from the {name} template. It is a normal design now: edit it, then Save Design to keep it."),
@@ -5244,8 +5422,17 @@ fn set_focus_mode(win: &Rc<Win>, shared: &Shared, on: bool) {
 	}
 	let state = shared.borrow();
 	refresh_focus_window(win, &state);
+	drop(state);
 	if let Some(frame) = win.focus_frame.borrow().as_ref() {
 		frame.show(true);
+		// Land in the window (Elshara's report: it opened, but
+		// NVDA never arrived there): raise it, then put the
+		// keyboard in the body text, so what the screen reader
+		// meets is the built / not-yet lines themselves.
+		frame.raise();
+	}
+	if let Some(body) = win.focus_body.borrow().as_ref() {
+		body.set_focus();
 	}
 }
 
@@ -5872,7 +6059,25 @@ fn embed_paste_dialog(win: &Rc<Win>, shared: &Shared) {
 fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 	let frame = win.frame;
 	match id {
-		ID_EXIT => frame.close(true),
+		ID_EXIT => {
+			if confirm_discard(win, shared, "close Blind Designer") {
+				frame.close(true);
+			}
+		}
+		ID_NEW_WINDOW => {
+			match std::env::current_exe()
+				.and_then(|exe| std::process::Command::new(exe).spawn())
+			{
+				Ok(_) => frame.set_status_text(
+					"A second Blind Designer window opened: it starts its own project, and each window saves its own design.",
+					0,
+				),
+				Err(e) => frame.set_status_text(
+					&format!("A second window could not be opened: {e}"),
+					0,
+				),
+			}
+		}
 		ID_DICTIONARY => dictionary_dialog(win),
 		ID_HELP_FILE => help_dialog(win),
 		ID_SOUND_CUES => {
@@ -5904,7 +6109,11 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 		ID_OPEN_IMAGE => extract_image_dialog(win, shared, true),
 		ID_EXTRACT_IMAGE => extract_image_dialog(win, shared, false),
 		ID_PROJECT_OPTIONS => project_options_dialog(win, shared),
-		ID_NEW_WIZARD => setup_wizard(win, shared, true),
+		ID_NEW_WIZARD => {
+			if confirm_discard(win, shared, "start a new project") {
+				setup_wizard(win, shared, true);
+			}
+		}
 		ID_SETUP_WIZARD => setup_wizard(win, shared, false),
 		ID_ELEMENT_WIZARD => element_wizard(win, shared),
 		ID_EXPORT_WIZARD => export_wizard(win, shared),
@@ -5940,19 +6149,7 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 			);
 		}
 		ID_SAVE_DESIGN => {
-			if let Some(path) = file_dialog(
-				&frame,
-				"Save design",
-				"Blind Designer design (*.bdd)|*.bdd",
-				true,
-			) {
-				let state = shared.borrow();
-				let project = current_project(&state);
-				match std::fs::write(&path, project.to_text()) {
-					Ok(()) => frame.set_status_text(&format!("Saved design to {path}"), 0),
-					Err(e) => frame.set_status_text(&format!("Save failed: {e}"), 0),
-				}
-			}
+			save_design(win, shared, None);
 		}
 		ID_OPEN_DESIGN => {
 			if let Some(path) = file_dialog(
@@ -5961,6 +6158,15 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 				"Blind Designer design (*.bdd)|*.bdd",
 				false,
 			) {
+				// Opening replaces the current design: unsaved
+				// work gets its say first.
+				if !confirm_discard(win, shared, "open a different design") {
+					frame.set_status_text(
+						"Open cancelled: the current project is unchanged.",
+						0,
+					);
+					return;
+				}
 				match std::fs::read_to_string(&path) {
 					Ok(text) => match Project::from_text(&text) {
 						Ok(project) => {
@@ -5972,8 +6178,12 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 							state.page_jump_percent = project.page_jump_percent;
 							state.goal = project.goal;
 							state.grayscale_start = project.grayscale_start;
+							state.design_path = Some(PathBuf::from(&path));
 							reset_adjustment(&mut state);
 							state.layer = 0;
+							// The opened design is the saved baseline.
+							let fp = project_fingerprint(&state);
+							state.saved_fingerprint = fp;
 							let layers = state.drawing.layers.len();
 							let shapes: usize =
 								state.drawing.layers.iter().map(|l| l.shapes.len()).sum();
@@ -6733,6 +6943,9 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 			refresh_lists(win, &state);
 		}
 		ID_TEMPLATES => {
+			if !confirm_discard(win, shared, "start a new design from a template") {
+				return;
+			}
 			templates_dialog(win, shared);
 			// A template is a new project: its slider settings were
 			// reset as it loaded, so the tab rebuilds to match.
@@ -6746,6 +6959,9 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 			refresh_lists(win, &state);
 		}
 		ID_PATTERN_TEMPLATES => {
+			if !confirm_discard(win, shared, "start a new design from a pattern") {
+				return;
+			}
 			pattern_dialog(win, shared, None);
 			// A pattern is a new project too: rebuild the tab the
 			// way a template load does.
@@ -7217,10 +7433,13 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 fn build_menus(frame: &Frame) {
 	// Menus are grouped by the job being done (Elshara's feedback):
 	// File carries Import and Export submenus instead of two dozen
-	// flat items; the old Palette menu is now Color, with Schemes
-	// and Variations submenus; Design groups its Add and Arrange
-	// commands. Every item's help string says in plain language what
-	// it does — the status line shows it while the item is rested on.
+	// flat items (the feed and pasted-post embeds are imports, and
+	// live there); the old Palette menu is now Color, with Schemes
+	// and Variations submenus; Design groups its Add, Arrange, Text
+	// and Review commands; View's fourteen formats sit in one Color
+	// Format submenu. Every item's help string says in plain
+	// language what it does — the status line shows it while the
+	// item is rested on.
 	let import = Menu::builder().build();
 	import.append(ID_OPEN_IMAGE, "&Open Image…\tCtrl+O", "Open an image: its colors replace the palette and its largest color becomes the background.", ItemKind::Normal);
 	import.append(ID_EXTRACT_IMAGE, "&Extract Colors from Image…", "Add an image's colors to the palette, leaving the design untouched.", ItemKind::Normal);
@@ -7228,6 +7447,8 @@ fn build_menus(frame: &Frame) {
 	import.append(ID_IMPORT_HTML, "&HTML Design…", "Turn a simple HTML page (inline styles) into a design.", ItemKind::Normal);
 	import.append(ID_COMPARE_IMAGES, "Compare I&mages…", "Compare two images: their sizes, shared colors, which is brighter, which is blurrier.", ItemKind::Normal);
 	import.append(ID_TACTILE_GRID, "Describe Image as &Tactile Grid…", "Describe any image as a grid of shades, in braille patterns and in words.", ItemKind::Normal);
+	import.append(ID_EMBED_FEED, "Embed Feed &Snapshot…", "Fetch a feed (RSS or Atom) and place its latest item titles in the design as one text element — a snapshot: it changes only when you embed again.", ItemKind::Normal);
+	import.append(ID_EMBED_PASTE, "Embed &Pasted Post…", "Paste text copied from anywhere — a Facebook post, another Serrebi tool — and place it in the design as a text element captioned as pasted.", ItemKind::Normal);
 
 	let export = Menu::builder().build();
 	export.append(ID_EXPORT_WIZARD, "Export &Wizard…", "Step through the export: choose the format, how it will be embedded or accompanied, and confirm what will be written before anything is.", ItemKind::Normal);
@@ -7255,6 +7476,7 @@ fn build_menus(frame: &Frame) {
 	file.append(ID_TEMPLATES, "New from &Template…", "Start a new design from a built-in layout: birthday card, house, face, chart, portrait or landscape.", ItemKind::Normal);
 	file.append(ID_NEW_WIZARD, "New with &Wizard…", "Start a new project through the setup wizard: say what you want to create or build, answer its focus questions (any may be left with no fixed answer), and the goal is set and the canvas seeded for that kind.", ItemKind::Normal);
 	file.append(ID_PATTERN_TEMPLATES, "New from &Pattern…", "Start a new design as a two-color pattern — checkerboard, stripes or dots — woven from two palette colors you pick.", ItemKind::Normal);
+	file.append(ID_NEW_WINDOW, "New &Window", "Open a second Blind Designer window — a separate copy of the app — so two projects can be open at once; each window keeps and saves its own design.", ItemKind::Normal);
 	file.append_separator();
 	file.append_submenu(import, "&Import", "Bring images, colors and designs in.");
 	file.append_submenu(export, "&Export", "Write the design out: pictures, pages, text and touch.");
@@ -7303,6 +7525,16 @@ fn build_menus(frame: &Frame) {
 	arrange.append(ID_RECOLOR_SHAPE, "Set to Palette &Color", "Give the selected element the selected palette color.", ItemKind::Normal);
 	arrange.append(ID_REMOVE_SHAPE, "Remove Sha&pe", "Delete the selected element from the design.", ItemKind::Normal);
 
+	let text = Menu::builder().build();
+	text.append(ID_TEXT_STUDIO, "Text &Studio…", "The project's text elements as an editor: rewrite their words, set bold, italic, underline, heading level and alignment, sort their lines, spread them into columns, and build text grids from pasted tables.", ItemKind::Normal);
+	text.append(ID_REPLACEMENT_VARIABLES, "Replacement &Variables…", "Fill in the {name} tokens written in text elements and captions: give each a value, then substitute in this project or in a saved copy.", ItemKind::Normal);
+
+	let review = Menu::builder().build();
+	review.append(ID_INSPECT, "In&spect Selected…", "The inspector: what the selected element is, where it is used, what can change it and what happens if it is left alone. Enter on the Elements list does the same.", ItemKind::Normal);
+	review.append(ID_VIEWABILITY, "&Viewability…", "Report how the design reads from a viewing angle: what is viewable, what is hidden behind something else, what is turned away, per depth.", ItemKind::Normal);
+	review.append(ID_RECOGNIZABILITY, "&Recognizability…", "How clearly someone else would recognize what you are creating, judged for this project's type: a rough guide from element counts, contrast and depth layering, not a measurement.", ItemKind::Normal);
+	review.append(ID_STATS, "&Project Statistics…", "How many layers, elements, palette colors and animation frames this project has.", ItemKind::Normal);
+
 	let design = Menu::builder().build();
 	design.append(ID_CANVAS_SIZE, "Canvas &Size…", "Change the canvas width and height in pixels.", ItemKind::Normal);
 	design.append_separator();
@@ -7310,43 +7542,40 @@ fn build_menus(frame: &Frame) {
 	design.append_submenu(arrange, "A&rrange Selected Shape", "Move, turn, resize, recolor or remove the selected element.");
 	design.append_separator();
 	design.append(ID_ELEMENTS, "E&lements…", "Every element in plain language, with rename, describe, move, resize, recolor and delete.", ItemKind::Normal);
-	design.append(ID_TEXT_STUDIO, "Text &Studio…", "The project's text elements as an editor: rewrite their words, set bold, italic, underline, heading level and alignment, sort their lines, spread them into columns, and build text grids from pasted tables.", ItemKind::Normal);
-	design.append(ID_EMBED_FEED, "Embed Feed &Snapshot…", "Fetch a feed (RSS or Atom) and place its latest item titles in the design as one text element — a snapshot: it changes only when you embed again.", ItemKind::Normal);
-	design.append(ID_EMBED_PASTE, "Embed &Pasted Post…", "Paste text copied from anywhere — a Facebook post, another Serrebi tool — and place it in the design as a text element captioned as pasted.", ItemKind::Normal);
-	design.append(ID_INSPECT, "In&spect Selected…", "The inspector: what the selected element is, where it is used, what can change it and what happens if it is left alone. Enter on the Elements list does the same.", ItemKind::Normal);
+	design.append_submenu(text, "&Text", "The project's words: the text editor, and the replacement variables that fill its tokens.");
+	design.append_submenu(review, "&Review", "Look at the design: inspect the selection, judge its viewability and recognizability, and read its statistics.");
 	design.append(ID_ELEMENT_WIZARD, "Element &Wizard…", "The wizard scoped to the selected element: its stack (what sits on it, what it sits on), slider edits, and the inspector's review.", ItemKind::Normal);
 	design.append(ID_LOCK_TOGGLE, "&Lock/Unlock Selected", "Lock the selected element so bulk changes skip it, or unlock it so they reach it again. Direct edits work either way.", ItemKind::Normal);
 	design.append(ID_SEARCH_INSERT, "&Search and Insert…\tCtrl+F", "Search palette colors, starter colors, elements, symbols and templates by name, and insert what you find at the cursor.", ItemKind::Normal);
 	design.append(ID_LAYERS, "&Layers…", "Add, rename, reorder, show or hide layers, and choose where new shapes land.", ItemKind::Normal);
 	design.append(ID_ANIMATION, "Anim&ation…", "Build a film from frames of the canvas, each with its own duration.", ItemKind::Normal);
 	design.append(ID_DESCRIBE_AREA, "&Describe Area…", "Hear only the elements inside one part of the canvas.", ItemKind::Normal);
-	design.append(ID_VIEWABILITY, "&Viewability…", "Report how the design reads from a viewing angle: what is viewable, what is hidden behind something else, what is turned away, per depth.", ItemKind::Normal);
-	design.append(ID_RECOGNIZABILITY, "&Recognizability…", "How clearly someone else would recognize what you are creating, judged for this project's type: a rough guide from element counts, contrast and depth layering, not a measurement.", ItemKind::Normal);
-	design.append(ID_STATS, "&Project Statistics…", "How many layers, elements, palette colors and animation frames this project has.", ItemKind::Normal);
 	design.append(ID_PROJECT_OPTIONS, "Project &Options…", "Choose which sliders this project pins to its Sliders tab, what the color adjustments act on, how far Page Up and Page Down jump, grayscale start, and load the starter colors or the gray ramp.", ItemKind::Normal);
 	design.append(ID_SETUP_WIZARD, "Setup &Wizard…", "State (or restate) this project's goal through the wizard: what you want to create or build, and its focus questions — any answer may be left with no fixed answer.", ItemKind::Normal);
 	design.append(ID_COLOR_TREATMENT, "Apply Colour &Treatment…", "Grayscale start's second half: give the grayscale shapes of one layer, or of a whole depth, the palette colours in paint order. Locked shapes stay grayscale.", ItemKind::Normal);
-	design.append(ID_REPLACEMENT_VARIABLES, "Replacement &Variables…", "Fill in the {name} tokens written in text elements and captions: give each a value, then substitute in this project or in a saved copy.", ItemKind::Normal);
 	design.append(ID_DRAW_POINTER, "Draw with &Pointer…", "Draw one stroke with the mouse or touch: press and drag on the surface, release, Finish. Keys 1 to 9 set the brush width while you draw; C cycles the brush colour.", ItemKind::Normal);
 	design.append_separator();
 	design.append(ID_SAVE_BRUSH, "Save Current Br&ush…", "Keep the current brush — width, color, pattern — in the brush library under a name.", ItemKind::Normal);
 	design.append(ID_BRUSHES, "Brush Li&brary…", "The saved brushes; apply one to make it current for new strokes.", ItemKind::Normal);
 
+	let formats = Menu::builder().build();
+	formats.append(ID_FORMAT_HEX, "Color Values as &Hex", "Show and speak color values as hex codes, like #3A7CA5.", ItemKind::Check);
+	formats.append(ID_FORMAT_RGB, "Color Values as &RGB", "Show and speak color values as red, green and blue numbers, 0 to 255.", ItemKind::Check);
+	formats.append(ID_FORMAT_HSL, "Color Values as HS&L", "Show and speak color values as hue, saturation and lightness.", ItemKind::Check);
+	formats.append(ID_FORMAT_HSV, "Color Values as HS&V", "Show and speak color values as hue, saturation and value.", ItemKind::Check);
+	formats.append(ID_FORMAT_CMYK, "Color Values as CM&YK", "Show and speak color values as cyan, magenta, yellow and black ink percents.", ItemKind::Check);
+	formats.append(ID_FORMAT_XYZ, "Color Values as CIE &XYZ", "Show and speak color values as CIE XYZ tristimulus numbers.", ItemKind::Check);
+	formats.append(ID_FORMAT_XYY, "Color Values as x&yY", "Show and speak color values as chromaticity x and y plus luminance Y.", ItemKind::Check);
+	formats.append(ID_FORMAT_LAB, "Color Values as CIE L&ab", "Show and speak color values as CIE lightness and the a and b opponent axes.", ItemKind::Check);
+	formats.append(ID_FORMAT_LCH, "Color Values as CIE LC&H", "Show and speak color values as CIE lightness, chroma and hue.", ItemKind::Check);
+	formats.append(ID_FORMAT_LUV, "Color Values as CIE LU&V", "Show and speak color values as CIE lightness and the u and v axes.", ItemKind::Check);
+	formats.append(ID_FORMAT_HUNTER, "Color Values as &Hunter Lab", "Show and speak color values in the 1948 Hunter Lab system (different numbers from CIE Lab).", ItemKind::Check);
+	formats.append(ID_FORMAT_DECIMAL, "Color Values as &Decimal", "Show and speak color values as one decimal number, 0 to 16777215.", ItemKind::Check);
+	formats.append(ID_FORMAT_WEBSAFE, "Color Values as &Web Safe", "Show and speak each color snapped to the nearest web-safe color.", ItemKind::Check);
+	formats.append(ID_FORMAT_BINARY, "Color Values as &Binary", "Show and speak color values as a 24-bit binary string.", ItemKind::Check);
+
 	let view = Menu::builder().build();
-	view.append(ID_FORMAT_HEX, "Color Values as &Hex", "Show and speak color values as hex codes, like #3A7CA5.", ItemKind::Check);
-	view.append(ID_FORMAT_RGB, "Color Values as &RGB", "Show and speak color values as red, green and blue numbers, 0 to 255.", ItemKind::Check);
-	view.append(ID_FORMAT_HSL, "Color Values as HS&L", "Show and speak color values as hue, saturation and lightness.", ItemKind::Check);
-	view.append(ID_FORMAT_HSV, "Color Values as HS&V", "Show and speak color values as hue, saturation and value.", ItemKind::Check);
-	view.append(ID_FORMAT_CMYK, "Color Values as CM&YK", "Show and speak color values as cyan, magenta, yellow and black ink percents.", ItemKind::Check);
-	view.append(ID_FORMAT_XYZ, "Color Values as CIE &XYZ", "Show and speak color values as CIE XYZ tristimulus numbers.", ItemKind::Check);
-	view.append(ID_FORMAT_XYY, "Color Values as x&yY", "Show and speak color values as chromaticity x and y plus luminance Y.", ItemKind::Check);
-	view.append(ID_FORMAT_LAB, "Color Values as CIE L&ab", "Show and speak color values as CIE lightness and the a and b opponent axes.", ItemKind::Check);
-	view.append(ID_FORMAT_LCH, "Color Values as CIE LC&H", "Show and speak color values as CIE lightness, chroma and hue.", ItemKind::Check);
-	view.append(ID_FORMAT_LUV, "Color Values as CIE LU&V", "Show and speak color values as CIE lightness and the u and v axes.", ItemKind::Check);
-	view.append(ID_FORMAT_HUNTER, "Color Values as &Hunter Lab", "Show and speak color values in the 1948 Hunter Lab system (different numbers from CIE Lab).", ItemKind::Check);
-	view.append(ID_FORMAT_DECIMAL, "Color Values as &Decimal", "Show and speak color values as one decimal number, 0 to 16777215.", ItemKind::Check);
-	view.append(ID_FORMAT_WEBSAFE, "Color Values as &Web Safe", "Show and speak each color snapped to the nearest web-safe color.", ItemKind::Check);
-	view.append(ID_FORMAT_BINARY, "Color Values as &Binary", "Show and speak color values as a 24-bit binary string.", ItemKind::Check);
+	view.append_submenu(formats, "Color &Format", "How color values are shown and spoken across the app; exactly one format is ticked at a time.");
 	view.append_separator();
 	view.append(ID_ANNOUNCE_SLIDERS, "&Announce Slider Changes", "Moving a slider says what changed and that everything else stayed the same. Off: only the slider's name and new value are said.", ItemKind::Check);
 	view.append(ID_LISTS_SIDE_BY_SIDE, "Lists &Side by Side", "Show the Palette and Elements lists side by side on one Lists page instead of on separate tabs. This session only.", ItemKind::Check);
@@ -7492,7 +7721,17 @@ fn main() {
 			// colour treatment later.
 			goal: None,
 			grayscale_start: true,
+			// No file yet, and the fresh project is its own
+			// baseline (set for real just below, once the
+			// fingerprint helper can see the whole state).
+			design_path: None,
+			saved_fingerprint: (0, 0, 0, false, 0),
 		}));
+		{
+			let mut state = shared.borrow_mut();
+			let fp = project_fingerprint(&state);
+			state.saved_fingerprint = fp;
+		}
 		let win = Rc::new(Win {
 			frame,
 			notebook,
@@ -7523,7 +7762,7 @@ fn main() {
 			refresh_lists(&win, &state);
 		}
 		frame.set_status_text(
-			"A new project: grayscale start is on — colors come later, per part, layer, or depth. File, New with Wizard states a goal and seeds the canvas.",
+			"A new project: the setup wizard opens with the app — it states the goal, seeds the canvas, and pins the sliders for the kind you choose. Grayscale start is on: colors come later, per part, layer, or depth.",
 			0,
 		);
 
@@ -7632,6 +7871,13 @@ fn main() {
 
 		frame.show(true);
 		frame.centre();
+		// First launch meets the wizard (Elshara's report: it
+		// never appeared at all): a fresh start opens the New
+		// Project Wizard on the blank project, so the goal, the
+		// seeded canvas and the kind's sliders are chosen up
+		// front. Cancelling leaves the blank project exactly as
+		// it is.
+		setup_wizard(&win, &shared, true);
 	});
 }
 

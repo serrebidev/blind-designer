@@ -40,15 +40,17 @@ is listed before it exists.
   hue 0 to 360 degrees.
 - Project statistics line: kept current under the color fields —
   how many layers, elements, palette colors and animation frames
-  the project has, and the canvas size. Design, Project Statistics
-  gives the full count, element kind by element kind.
-- Sliders tab: the sliders this project has pinned — see THE
-  SLIDERS TAB below. A new project pins none.
+  the project has, and the canvas size. Design, Review, Project
+  Statistics gives the full count, element kind by element kind.
+- Sliders tab: the sliders this project works with — see THE
+  SLIDERS TAB below. A project with no sliders pinned shows
+  every slider there is.
 - Lists side by side: View, Lists Side by Side replaces the
   Palette and Elements tabs with one Lists tab holding the two
   lists side by side, so both are on screen (and in tab order)
-  at once. Turn it off and the tabs come back. It lasts for
-  this session, like the other View choices.
+  at once. Turn it off and the tabs come back. Either way, the
+  switch lands your keyboard on the Palette list. It lasts
+  for this session, like the other View choices.
 
 THE INSPECTOR
 
@@ -71,8 +73,8 @@ cursor, in a report you can read and review:
   ELEMENTS). And left alone, everything stays exactly as it is:
   nothing in Blind Designer changes a design by itself.
 
-Design, Inspect Selected does the same for the selected element
-without leaving the keyboard.
+Design, Review, Inspect Selected does the same for the selected
+element without leaving the keyboard.
 
 LOCKING ELEMENTS
 
@@ -143,11 +145,19 @@ around whatever is in focus.
 
 - The setup wizard (File, New with Wizard, for a new project;
   Design, Setup Wizard, to restate a project's goal) opens
-  with one question: what do you want to create or build? The
-  kind you choose decides which focus questions follow, and
-  the answers become the project's goal (see GOALS below).
-  On a new project, finishing also seeds the canvas for the
-  kind: writing starts with a text element to replace; image
+  with one question: what do you want to create or build? It
+  also opens by itself when the app starts, on the blank
+  project — cancel it and the blank project is yours as it
+  was. The kind you choose decides which focus questions
+  follow, and the answers become the project's goal (see
+  GOALS below). Finishing also pins the sliders that kind of
+  work reaches for first — a writing project gets the channel
+  and readability sliders, cosmetic work the adjustment
+  family, and so on; restating a goal tops the pins up with
+  any of the kind's defaults the project lacks, and keeps the
+  ones already chosen. The status line says how many were
+  pinned. On a new project, finishing also seeds the canvas
+  for the kind: writing starts with a text element to replace; image
   creation with a background layer carrying the background
   depth role and a light grey ground; a mixed project with
   the tagged background layer alone; cosmetic work and
@@ -205,11 +215,11 @@ image wants a shape and a background; cosmetic work wants a
 picture or at least two palette colors; a mixed project wants
 its presentation said and a first element; and so on. The
 statistics line in the main window carries both percentages
-when a goal exists, and Design, Project Statistics gives the
-full report: every criterion, met, not yet, or open, with a
-suggested improvement for each unmet one.
+when a goal exists, and Design, Review, Project Statistics
+gives the full report: every criterion, met, not yet, or open,
+with a suggested improvement for each unmet one.
 
-Design, Recognizability gives the companion judgment, per
+Design, Review, Recognizability gives the companion judgment, per
 project type: how clearly someone else would recognize what
 you are creating — for words, their contrast; for pictures,
 element counts, how many elements stand out from the
@@ -253,8 +263,8 @@ REPLACEMENT VARIABLES
 A design can be a template. Write a token — {name}, {date},
 {occasion} — in a text element, or in any element's caption,
 and design around it. When the words are needed for real,
-Design, Replacement Variables offers one field per token the
-design uses, and fills them in.
+Design, Text, Replacement Variables offers one field per token
+the design uses, and fills them in.
 
 A token is a name in braces: lowercase letters, digits and
 hyphens only. {Name} with a capital is ordinary text, not a
@@ -295,7 +305,9 @@ button all do the same thing. If the project has no goal,
 the window says so and shows the statistics alone — there
 is nothing to measure against until the setup wizard states
 one. Focus Mode is a view, so it is this session only, like
-the other View toggles.
+the other View toggles. Opening it brings the window to the
+front and puts your keyboard in its text, so your screen
+reader meets the built and not-yet lines at once.
 
 DRAWING WITH THE POINTER
 
@@ -356,8 +368,12 @@ on the status line. View, Announce Slider Changes turns the
 
 Which sliders are pinned is the project's own choice, made in
 Design, Project Options (below): check the ones you want to keep,
-and they are saved in the design file with the project. A new
-project starts from scratch — no sliders pinned at all. Project
+and they are saved in the design file with the project. Pinning
+trims the tab to your set — with none pinned at all, the tab
+shows every slider there is, under a note saying so, so it is
+never an empty page. A project made by the setup wizard starts
+with its kind's sliders already pinned (see WIZARDS above); a
+plain new project pins none, and so shows them all. Project
 Options is also where adding and removing lives now: the starter
 colors load there too, alongside Color, Load Starter Colors.
 
@@ -629,6 +645,17 @@ SAVING AND OPENING DESIGNS
 - File, Open Design reads one back. The opened design replaces the
   current one, history included — export a summary afterwards and
   the steps are the same steps you saved.
+- Unsaved changes are never lost silently. Anything that would
+  replace or abandon the current project — Open Design, New from
+  Template, New from Pattern, New with Wizard, and Exit — first
+  asks, when the project has changed since it was last saved or
+  opened: Save (to the file it came from, or a name you choose),
+  Don't Save, or Cancel and stay. A project you have not touched
+  never prompts.
+- File, New Window opens a second Blind Designer window — a
+  separate copy of the app — so two projects can be open at
+  once. Each window keeps its own design and saves it under
+  its own name.
 
 WHERE EACH COLOR CAME FROM
 
@@ -744,7 +771,8 @@ file's name.
 
 TEXT STUDIO
 
-Design, Text Studio is the project's words, gathered in one editor.
+Design, Text, Text Studio is the project's words, gathered in one
+editor.
 The list holds every text element in reading order; selecting one
 loads its words and its style into the controls below. Change the
 words, tick Bold, Italic or Underline, pick a heading level (body
@@ -773,16 +801,17 @@ pasted table — rows on separate lines, columns separated by tabs,
 exactly as a spreadsheet copies them — into a grid of text
 elements, one per cell, placed evenly on the current layer.
 
-Design, Embed Feed Snapshot places the latest items of a feed (RSS
-or Atom) in the design as one text element, one title per line,
-captioned with how many items came from where. It is a snapshot:
-the words are frozen at the moment you embed, and change only when
-you embed the feed again. The app pauses while it fetches — give it
-a moment — and if the fetch fails, the status line says so in plain
-words and nothing is added. Design, Embed Pasted Post does the same
-for words you paste yourself — a Facebook post, text copied from any
-other tool — and captions the element as a pasted post, so its
-origin is never a mystery later.
+File, Import, Embed Feed Snapshot places the latest items of a
+feed (RSS or Atom) in the design as one text element, one title
+per line, captioned with how many items came from where. It is a
+snapshot: the words are frozen at the moment you embed, and
+change only when you embed the feed again. The app pauses while
+it fetches — give it a moment — and if the fetch fails, the
+status line says so in plain words and nothing is added. File,
+Import, Embed Pasted Post does the same for words you paste
+yourself — a Facebook post, text copied from any other tool —
+and captions the element as a pasted post, so its origin is
+never a mystery later.
 
 File, Export, Print-Writing Practice Sheet writes a text sheet for
 handwriting practice: every text element printed large, letter by
@@ -932,7 +961,7 @@ how anything paints. It changes what the depth tools say and do:
   fog the background, sharpen the foreground, and everything
   else stays put. One change to a whole depth is one step in
   the log.
-- Design, Viewability reports how the design reads from where
+- Design, Review, Viewability reports how the design reads from where
   a viewer stands. Give a viewing angle in degrees — 0 is
   straight on from the front, and an element rotated more than
   90 degrees away from your angle shows its back — and a depth

@@ -606,6 +606,78 @@ pub fn seed_drawing(kind: GoalKind) -> Drawing {
 	d
 }
 
+/// The sliders the setup wizard pins for a project of this
+/// kind: the ones that kind of work reaches for first. Chosen
+/// per kind from the slider registry — words lean on the
+/// channel and readability adjustments, picture-making on the
+/// brush, element and colour tools, cosmetic work on the
+/// adjustment family, a review on the tactile grid and the
+/// legibility adjustments. Finishing the wizard applies this
+/// set (a restated goal tops the project's pins up with any of
+/// these it lacks), so the Sliders tab is working from the
+/// first minute instead of waiting to be stocked by hand.
+pub fn default_slider_ids(kind: GoalKind) -> Vec<&'static str> {
+	match kind {
+		GoalKind::Writing => vec![
+			"color-channels",
+			"element-opacity",
+			"transparency",
+			"adjust-brightness",
+			"adjust-clarity",
+			"adjust-tone",
+			"sound-volume",
+		],
+		GoalKind::ImageCreation => vec![
+			"brush-width",
+			"stroke-width",
+			"color-channels",
+			"transparency",
+			"element-opacity",
+			"element-scale",
+			"element-roundedness",
+			"sound-volume",
+		],
+		GoalKind::ImageCosmetic => vec![
+			"extract-count",
+			"color-channels",
+			"adjust-shade",
+			"adjust-tint",
+			"adjust-tone",
+			"adjust-chroma",
+			"adjust-brightness",
+			"adjust-warmth",
+		],
+		GoalKind::Mixed => vec![
+			"brush-width",
+			"color-channels",
+			"transparency",
+			"element-opacity",
+			"element-scale",
+			"frame-duration",
+			"sound-volume",
+		],
+		GoalKind::AccessibilityReview => vec![
+			"color-channels",
+			"tactile-columns",
+			"tactile-rows",
+			"adjust-brightness",
+			"adjust-clarity",
+			"adjust-fog",
+			"element-opacity",
+			"sound-volume",
+		],
+		GoalKind::Conversion => vec![
+			"extract-count",
+			"color-channels",
+			"tactile-columns",
+			"tactile-rows",
+			"adjust-tone",
+			"adjust-brightness",
+			"sound-volume",
+		],
+	}
+}
+
 #[cfg(test)]
 mod tests {
 	use super::*;
@@ -770,6 +842,27 @@ mod tests {
 		let d = seed_drawing(GoalKind::Conversion);
 		assert!(d.layers[0].shapes.is_empty());
 		assert_eq!(d.layers[0].depth, DepthRole::Unassigned);
+	}
+
+	#[test]
+	fn default_sliders_resolve_and_cover_every_kind() {
+		for kind in GoalKind::ALL {
+			let ids = default_slider_ids(kind);
+			assert!(
+				(6..=10).contains(&ids.len()),
+				"{} gets {} default sliders",
+				kind.id(),
+				ids.len()
+			);
+			for (i, id) in ids.iter().enumerate() {
+				assert!(
+					crate::sliders::slider_by_id(id).is_some(),
+					"{} default {id} is not in the slider registry",
+					kind.id()
+				);
+				assert!(!ids[i + 1..].contains(id), "duplicate default {id}");
+			}
+		}
 	}
 
 	#[test]

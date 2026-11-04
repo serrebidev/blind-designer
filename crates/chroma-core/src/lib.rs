@@ -25,6 +25,7 @@ pub mod sound;
 pub mod symbols;
 pub mod tactile;
 pub mod templates;
+pub mod viewability;
 pub mod web;
 
 /// How a color value is written when it is spoken or displayed: the

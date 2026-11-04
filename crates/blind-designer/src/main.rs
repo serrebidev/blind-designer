@@ -18,7 +18,8 @@ use std::rc::Rc;
 use chroma_core::brushes::{Brush, BrushLibrary, PATTERNS};
 use chroma_core::design::{css_for_colors, Shape, ShapeKind};
 use chroma_core::dictionary;
-use chroma_core::drawing::{Drawing, Event};
+use chroma_core::drawing::{DepthRole, Drawing, Event};
+use chroma_core::viewability::DepthBand;
 use chroma_core::palette::{starter_palette, PaletteColor, Provenance};
 use chroma_core::plain::{parse_color, parse_position, parse_size};
 use chroma_core::project::{Project, ProjectStats, DEFAULT_PAGE_JUMP_PERCENT};
@@ -87,10 +88,13 @@ const ID_EXPORT_TACTILE_SHEET: Id = 118;
 const ID_EXPORT_BRAILLE: Id = 119;
 const ID_COMPARE_IMAGES: Id = 120;
 const ID_TACTILE_GRID: Id = 121;
+const ID_SAVE_SCENE: Id = 122;
+const ID_INSERT_SCENE: Id = 123;
 const ID_DESCRIBE_AREA: Id = 318;
 const ID_ADD_SYMBOL: Id = 319;
 const ID_STATS: Id = 320;
 const ID_PROJECT_OPTIONS: Id = 321;
+const ID_VIEWABILITY: Id = 322;
 const ID_ABOUT: Id = 401;
 const ID_DICTIONARY: Id = 402;
 const ID_HELP_FILE: Id = 403;
@@ -162,6 +166,8 @@ const MENU_IDS: &[Id] = &[
 	ID_EXPORT_BRAILLE,
 	ID_COMPARE_IMAGES,
 	ID_TACTILE_GRID,
+	ID_SAVE_SCENE,
+	ID_INSERT_SCENE,
 	ID_EXIT,
 	ID_COMPLEMENTARY,
 	ID_SPLIT,
@@ -194,6 +200,7 @@ const MENU_IDS: &[Id] = &[
 	ID_ADD_SYMBOL,
 	ID_STATS,
 	ID_PROJECT_OPTIONS,
+	ID_VIEWABILITY,
 	ID_ANNOUNCE_SLIDERS,
 	ID_ABOUT,
 	ID_DICTIONARY,
@@ -295,11 +302,14 @@ struct State {
 /// What the color-adjustment sliders are acting on, captured when
 /// an adjustment run begins: the current color is the brush color
 /// (what new strokes paint with); an element contributes its fill;
-/// a layer contributes every element's fill, in order.
+/// a layer contributes every element's fill, in order; a depth
+/// contributes every element on every layer with that role, each
+/// named by (layer, shape).
 enum AdjustBase {
 	Brush(Srgb),
 	Element(usize, usize, Srgb),
 	Layer(usize, Vec<Srgb>),
+	Depth(DepthRole, Vec<(usize, usize, Srgb)>),
 }
 
 /// One row of the Sliders tab: the registry id it drives, the
@@ -552,6 +562,10 @@ fn read_slider_value(win: &Win, state: &State, def: &SliderDef) -> Option<i32> {
 			Some((_, _, s)) if s.kind == ShapeKind::Stroke => Some(s.brush as i32),
 			_ => None,
 		},
+		SliderTarget::ElementRoundedness => match selected_shape(state, win) {
+			Some((_, _, s)) if s.kind == ShapeKind::Rectangle => Some(s.corner as i32),
+			_ => None,
+		},
 		SliderTarget::FrameDuration => {
 			state.drawing.frames.first().map(|f| f.duration_ms as i32)
 		}
@@ -569,6 +583,7 @@ fn slider_placeholder(def: &SliderDef) -> &'static str {
 	match def.target {
 		SliderTarget::ElementOpacity | SliderTarget::ElementScale => "no element selected",
 		SliderTarget::StrokeWidth => "no stroke selected",
+		SliderTarget::ElementRoundedness => "no rectangle selected",
 		SliderTarget::FrameDuration => "no frames yet",
 		_ => "not available",
 	}
@@ -843,6 +858,21 @@ fn apply_slider(win: &Win, shared: &Shared, id: &'static str, value: i32) {
 				}
 				None => note = Some("Select a stroke first.".to_string()),
 			},
+			SliderTarget::ElementRoundedness => match selected_shape(&state, win) {
+				Some((li, si, s)) => {
+					if s.kind == ShapeKind::Rectangle {
+						if state.drawing.set_shape_corner(li, si, value as u8) {
+							refresh_lists(win, &state);
+						}
+					} else {
+						note = Some(
+							"Roundedness acts on a selected rectangle; ellipses are already round and strokes have no corners."
+								.to_string(),
+						);
+					}
+				}
+				None => note = Some("Select a rectangle first.".to_string()),
+			},
 			SliderTarget::FrameDuration => {
 				if state.drawing.frames.is_empty() {
 					note = Some(
@@ -905,6 +935,29 @@ fn apply_adjustment(
 					.map(|l| l.shapes.len() == bases.len())
 					.unwrap_or(false)
 		}
+		(Some(AdjustBase::Depth(role, bases)), target) => {
+			// The run continues while it still names exactly the
+			// role's current shapes (the core re-validates this
+			// before painting; here it only decides whether the
+			// captured bases are still the run's bases).
+			target.depth_role() == Some(*role)
+				&& bases.len()
+					== state
+						.drawing
+						.layers
+						.iter()
+						.filter(|l| l.depth == *role)
+						.map(|l| l.shapes.len())
+						.sum::<usize>()
+				&& bases.iter().all(|(li, si, _)| {
+					state
+						.drawing
+						.layers
+						.get(*li)
+						.map(|l| l.depth == *role && *si < l.shapes.len())
+						.unwrap_or(false)
+				})
+		}
 		_ => false,
 	};
 	if !matches_base {
@@ -917,6 +970,19 @@ fn apply_adjustment(
 			AdjustTarget::Layer => state.drawing.layers.get(state.layer).map(|l| {
 				AdjustBase::Layer(state.layer, l.shapes.iter().map(|s| s.fill).collect())
 			}),
+			target => target.depth_role().map(|role| {
+				let bases: Vec<(usize, usize, Srgb)> = state
+					.drawing
+					.layers
+					.iter()
+					.enumerate()
+					.filter(|(_, l)| l.depth == role)
+					.flat_map(|(li, l)| {
+						l.shapes.iter().enumerate().map(move |(si, s)| (li, si, s.fill))
+					})
+					.collect();
+				AdjustBase::Depth(role, bases)
+			}),
 		};
 	}
 	if state.adjust_base.is_none() {
@@ -924,6 +990,7 @@ fn apply_adjustment(
 			AdjustTarget::Element => "Select an element to adjust first.".to_string(),
 			AdjustTarget::Layer => "This project has no current layer.".to_string(),
 			AdjustTarget::BaseColor => "Nothing to adjust.".to_string(),
+			_ => "Nothing to adjust.".to_string(),
 		});
 	}
 	state.adjust.set(def.target, value);
@@ -954,6 +1021,21 @@ fn apply_adjustment(
 				None
 			} else {
 				Some("That layer changed under the adjustment; move the slider to start again.".to_string())
+			}
+		}
+		Some(AdjustBase::Depth(role, bases)) => {
+			let (role, bases) = (*role, bases.clone());
+			let adjust = state.adjust;
+			if bases.is_empty() {
+				Some(format!(
+					"No layer is tagged {} yet: tag one in Design, Layers.",
+					role.name()
+				))
+			} else if state.drawing.adjust_depth_colors(role, &bases, adjust) > 0 {
+				refresh_lists(win, state);
+				None
+			} else {
+				Some("Those layers changed under the adjustment; move the slider to start again.".to_string())
 			}
 		}
 		None => Some("Nothing to adjust.".to_string()),
@@ -1340,7 +1422,11 @@ fn layer_rows(state: &State) -> Vec<(usize, String)> {
 		.iter()
 		.enumerate()
 		.map(|(i, l)| {
-			let mut label = format!("{} ({} shapes)", l.name, l.shapes.len());
+			let mut label = format!("Layer {}", i + 1);
+			if l.depth != DepthRole::Unassigned {
+				label.push_str(&format!(", {}", l.depth.name()));
+			}
+			label.push_str(&format!(": {} ({} shapes)", l.name, l.shapes.len()));
 			if i == state.layer {
 				label.push_str(" — current");
 			}
@@ -1362,6 +1448,20 @@ fn layers_dialog(win: &Win, shared: &Shared) {
 	let sizer = BoxSizer::builder(Orientation::Vertical).build();
 	let list = QuietList::new(&dialog, "Layers");
 	sizer.add(&list, 1, SizerFlag::Expand | SizerFlag::All, 5);
+	// The selected layer's depth role: the choice follows the
+	// list selection, and choosing a role sets it at once (the
+	// change lands in the log like every other layer edit).
+	let depth_label =
+		StaticText::builder(&dialog).with_label("Depth role of the selected layer").build();
+	let depth_choice = Choice::builder(&dialog).build();
+	for label in ["No depth role", "Background", "Midground", "Foreground", "Sideground"] {
+		depth_choice.append(label);
+	}
+	depth_choice.set_name("Depth role of the selected layer");
+	let depth_row = BoxSizer::builder(Orientation::Horizontal).build();
+	depth_row.add(&depth_label, 0, SizerFlag::All, 5);
+	depth_row.add(&depth_choice, 0, SizerFlag::All, 5);
+	sizer.add_sizer(&depth_row, 0, SizerFlag::All, 5);
 	let add = Button::builder(&dialog).with_label("Add Layer\u{2026}").build();
 	let rename = Button::builder(&dialog).with_label("Rename\u{2026}").build();
 	let remove = Button::builder(&dialog).with_label("Remove").build();
@@ -1375,14 +1475,37 @@ fn layers_dialog(win: &Win, shared: &Shared) {
 	sizer.add_sizer(&buttons, 0, SizerFlag::All, 5);
 	dialog.set_sizer(sizer, true);
 	let list = Rc::new(list);
+	let depth_choice = Rc::new(depth_choice);
 	{
 		let state = shared.borrow();
 		list.update_labelled(layer_rows(&state), Select::Start);
 	}
+	// Point the depth choice at the selected layer's role.
+	let sync_depth = {
+		let (list, shared, depth_choice) =
+			(list.clone(), shared.clone(), depth_choice.clone());
+		move || {
+			let state = shared.borrow();
+			if let Some(i) = list.selected() {
+				if let Some(layer) = state.drawing.layers.get(i) {
+					let at =
+						DepthRole::ALL.iter().position(|r| *r == layer.depth).unwrap_or(0);
+					depth_choice.set_selection(at as u32);
+				}
+			}
+		}
+	};
+	let sync_depth = Rc::new(sync_depth);
+	sync_depth();
+	{
+		let sync_depth = sync_depth.clone();
+		list.on_selection_changed(move || sync_depth());
+	}
 	let grey = grey_with_selection(&list, &[rename, remove, toggle, current]);
 	// Refresh the dialog list and speak the newest log entry.
 	let sync = {
-		let (list, shared, grey) = (list.clone(), shared.clone(), grey.clone());
+		let (list, shared, grey, sync_depth) =
+			(list.clone(), shared.clone(), grey.clone(), sync_depth.clone());
 		move || {
 			let state = shared.borrow();
 			list.update_labelled(layer_rows(&state), Select::Keep);
@@ -1390,10 +1513,26 @@ fn layers_dialog(win: &Win, shared: &Shared) {
 				frame.set_status_text(&last.describe(&state.drawing), 0);
 			}
 			drop(state);
+			sync_depth();
 			grey();
 		}
 	};
 	let sync = Rc::new(sync);
+	{
+		let (list, shared, sync, depth_choice) =
+			(list.clone(), shared.clone(), sync.clone(), depth_choice.clone());
+		(*depth_choice).clone().on_selection_changed(move |_| {
+			let Some(i) = list.selected() else { return };
+			let Some(sel) = depth_choice.get_selection() else { return };
+			let Some(role) = DepthRole::ALL.get(sel as usize) else { return };
+			let mut state = shared.borrow_mut();
+			if state.drawing.layers.get(i).map(|l| l.depth) != Some(*role) {
+				state.drawing.set_layer_depth(i, *role);
+				drop(state);
+				sync();
+			}
+		});
+	}
 	{
 		let (shared, sync) = (shared.clone(), sync.clone());
 		add.on_click(move |_| {
@@ -1800,7 +1939,7 @@ fn elements_dialog(win: &Win, shared: &Shared) {
 		let (shared, sync, picked) = (shared.clone(), sync.clone(), picked.clone());
 		resize_btn.on_click(move |_| {
 			let Some((li, si)) = picked() else { return };
-			let cur = {
+			let (cur, corner) = {
 				let state = shared.borrow();
 				let s = &state.drawing.layers[li].shapes[si];
 				if s.kind == ShapeKind::Stroke {
@@ -1810,28 +1949,54 @@ fn elements_dialog(win: &Win, shared: &Shared) {
 					);
 					return;
 				}
-				(s.w, s.h)
+				// Rectangles also carry their corner roundedness
+				// here; other kinds show the size field alone.
+				let corner = if s.kind == ShapeKind::Rectangle { Some(s.corner) } else { None };
+				((s.w, s.h), corner)
 			};
-			let Some(v) = fields_dialog(
-				&frame,
-				"Resize element",
-				&[(
-					"New size: numbers like 200 by 100, or words like a bit wider, a bit taller",
-					&format!("{} by {}", cur.0, cur.1),
-				)],
-			) else {
+			let size_field = (
+				"New size: numbers like 200 by 100, or words like a bit wider, a bit taller",
+				format!("{} by {}", cur.0, cur.1),
+			);
+			let corner_field = (
+				"Corners: 0 is sharp, 50 is fully rounded",
+				corner.map(|c| c.to_string()).unwrap_or_default(),
+			);
+			let mut fields: Vec<(&str, &str)> = vec![(size_field.0, &size_field.1)];
+			if corner.is_some() {
+				fields.push((corner_field.0, &corner_field.1));
+			}
+			let Some(v) = fields_dialog(&frame, "Resize element", &fields) else {
 				return;
 			};
-			match parse_size(&v[0], Some(cur)) {
-				Some((w, h)) => {
-					shared.borrow_mut().drawing.resize_shape(li, si, w, h);
-					sync();
-				}
-				None => frame.set_status_text(
+			let Some((w, h)) = parse_size(&v[0], Some(cur)) else {
+				frame.set_status_text(
 					"I could not understand that size. Use numbers like 200 by 100, or words like a bit wider.",
 					0,
-				),
+				);
+				return;
+			};
+			let new_corner = if corner.is_some() {
+				match v[1].trim().parse::<u8>() {
+					Ok(c) => Some(c.min(50)),
+					Err(_) => {
+						frame.set_status_text(
+							"Corners take a number from 0 (sharp) to 50 (fully rounded); nothing was changed.",
+							0,
+						);
+						return;
+					}
+				}
+			} else {
+				None
+			};
+			let mut state = shared.borrow_mut();
+			state.drawing.resize_shape(li, si, w, h);
+			if let Some(c) = new_corner {
+				state.drawing.set_shape_corner(li, si, c);
 			}
+			drop(state);
+			sync();
 		});
 	}
 	{
@@ -2080,6 +2245,63 @@ fn report_dialog(win: &Win, title: &str, label: &str, text: &str) {
 		close.on_click(move |_| dialog.end_modal(ID_CANCEL));
 	}
 	dialog.show_modal();
+}
+
+/// The Viewability dialog (Design menu): ask where the viewer
+/// stands (an angle in degrees — 0 is straight on from the
+/// front, and an element turned more than 90 degrees away from
+/// it shows its back) and which depth to judge, then show core's
+/// report in the standard report dialog. Both controls carry
+/// word labels, like every dialog in the app.
+fn viewability_dialog(win: &Win, shared: &Shared) {
+	let frame = win.frame;
+	let dialog = Dialog::builder(&frame, "Viewability").build();
+	let sizer = BoxSizer::builder(Orientation::Vertical).build();
+	let angle_label = StaticText::builder(&dialog)
+		.with_label("Viewing angle in degrees (0 is straight on from the front)")
+		.build();
+	let angle_spin = SpinCtrl::builder(&dialog).with_range(0, 359).build();
+	angle_spin.set_value(0);
+	sizer.add(&angle_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	sizer.add(&angle_spin, 0, SizerFlag::Expand | SizerFlag::All, 5);
+	let band_label = StaticText::builder(&dialog).with_label("Depth to judge").build();
+	let band_choice = Choice::builder(&dialog).build();
+	for band in DepthBand::ALL {
+		band_choice.append(band.name());
+	}
+	band_choice.set_selection(0);
+	band_choice.set_name("Depth to judge");
+	sizer.add(&band_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	sizer.add(&band_choice, 0, SizerFlag::Expand | SizerFlag::All, 5);
+	let ok = Button::builder(&dialog).with_label("OK").build();
+	let cancel = Button::builder(&dialog).with_label("Cancel").build();
+	let buttons = BoxSizer::builder(Orientation::Horizontal).build();
+	buttons.add(&ok, 0, SizerFlag::All, 5);
+	buttons.add(&cancel, 0, SizerFlag::All, 5);
+	sizer.add_sizer(&buttons, 0, SizerFlag::All, 5);
+	dialog.set_sizer(sizer, true);
+	{
+		let d = dialog.clone();
+		ok.on_click(move |_| d.end_modal(ID_OK));
+	}
+	{
+		let d = dialog.clone();
+		cancel.on_click(move |_| d.end_modal(ID_CANCEL));
+	}
+	if dialog.show_modal() == ID_OK {
+		let band = band_choice
+			.get_selection()
+			.and_then(|sel| DepthBand::ALL.get(sel as usize).copied())
+			.unwrap_or(DepthBand::All);
+		let angle = angle_spin.value().rem_euclid(360);
+		let state = shared.borrow();
+		report_dialog(
+			win,
+			"Viewability",
+			&format!("How the design reads from {angle} degrees"),
+			&state.drawing.viewability_report(angle as f64, band),
+		);
+	}
 }
 
 /// The Scheme Settings dialog (Color, Schemes, Scheme Settings):
@@ -3460,6 +3682,88 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 			let state = shared.borrow();
 			refresh_lists(win, &state);
 		}
+		ID_VIEWABILITY => viewability_dialog(win, shared),
+		ID_SAVE_SCENE => {
+			if let Some(path) = file_dialog(
+				&frame,
+				"Save scene (a design file other designs can insert)",
+				"Blind Designer scene (*.bdd)|*.bdd",
+				true,
+			) {
+				let state = shared.borrow();
+				// A scene file is a design file: the drawing on
+				// its own, with an empty palette — what Insert
+				// Scene reads back.
+				let scene = Project {
+					drawing: state.drawing.clone(),
+					palette: Vec::new(),
+					pinned_sliders: Vec::new(),
+					slider_target: AdjustTarget::BaseColor,
+					page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT,
+				};
+				match std::fs::write(&path, scene.to_text()) {
+					Ok(()) => frame.set_status_text(&format!("Saved scene to {path}"), 0),
+					Err(e) => frame.set_status_text(&format!("Save failed: {e}"), 0),
+				}
+			}
+		}
+		ID_INSERT_SCENE => {
+			if let Some(path) = file_dialog(
+				&frame,
+				"Insert a scene file",
+				"Blind Designer scene (*.bdd)|*.bdd",
+				false,
+			) {
+				match std::fs::read_to_string(&path) {
+					Ok(text) => match Project::from_text(&text) {
+						Ok(scene) => {
+							let name = Path::new(&path)
+								.file_stem()
+								.map(|n| n.to_string_lossy().into_owned())
+								.unwrap_or_else(|| "Scene".to_string());
+							let mut state = shared.borrow_mut();
+							let layer = state.layer;
+							let count =
+								state.drawing.insert_scene(layer, &scene.drawing, &name);
+							let layer_name = state
+								.drawing
+								.layers
+								.get(layer)
+								.map(|l| l.name.clone())
+								.unwrap_or_default();
+							drop(state);
+							if count > 0 {
+								// The inserted elements are new
+								// shapes: an adjustment run's
+								// captured bases no longer match.
+								reset_adjustment(&mut shared.borrow_mut());
+								let state = shared.borrow();
+								refresh_lists(win, &state);
+								announce(win, &state);
+								frame.set_status_text(
+									&format!(
+										"Inserted scene \"{name}\": {count} elements onto layer \"{layer_name}\", captioned as one group."
+									),
+									0,
+								);
+							} else {
+								frame.set_status_text(
+									"That scene has no painted elements to insert.",
+									0,
+								);
+							}
+						}
+						Err(e) => frame.set_status_text(
+							&format!("That file could not be opened as a scene: {e}"),
+							0,
+						),
+					},
+					Err(e) => {
+						frame.set_status_text(&format!("Could not read that file: {e}"), 0)
+					}
+				}
+			}
+		}
 		ID_DESCRIBE_AREA => {
 			if let Some(area) = text_dialog(
 				&frame,
@@ -3685,7 +3989,9 @@ fn build_menus(frame: &Frame) {
 	let file = Menu::builder().build();
 	file.append(ID_OPEN_DESIGN, "Open &Design…", "Open a saved design file, replacing the current design.", ItemKind::Normal);
 	file.append(ID_SAVE_DESIGN, "&Save Design…", "Save the whole design — canvas, layers, palette and log — to a file.", ItemKind::Normal);
-	file.append(ID_TEMPLATES, "New from &Template…", "Start a new design from a built-in layout: birthday card, house, face or chart.", ItemKind::Normal);
+	file.append(ID_SAVE_SCENE, "Save Sc&ene…", "Save the current design as a scene file, ready to insert into other designs as a group.", ItemKind::Normal);
+	file.append(ID_INSERT_SCENE, "Insert &Scene…", "Insert a saved scene's elements onto the current layer, captioned as one group under the scene's name.", ItemKind::Normal);
+	file.append(ID_TEMPLATES, "New from &Template…", "Start a new design from a built-in layout: birthday card, house, face, chart, portrait or landscape.", ItemKind::Normal);
 	file.append_separator();
 	file.append_submenu(import, "&Import", "Bring images, colors and designs in.");
 	file.append_submenu(export, "&Export", "Write the design out: pictures, pages, text and touch.");
@@ -3743,6 +4049,7 @@ fn build_menus(frame: &Frame) {
 	design.append(ID_LAYERS, "&Layers…", "Add, rename, reorder, show or hide layers, and choose where new shapes land.", ItemKind::Normal);
 	design.append(ID_ANIMATION, "Anim&ation…", "Build a film from frames of the canvas, each with its own duration.", ItemKind::Normal);
 	design.append(ID_DESCRIBE_AREA, "&Describe Area…", "Hear only the elements inside one part of the canvas.", ItemKind::Normal);
+	design.append(ID_VIEWABILITY, "&Viewability…", "Report how the design reads from a viewing angle: what is viewable, what is hidden behind something else, what is turned away, per depth.", ItemKind::Normal);
 	design.append(ID_STATS, "&Project Statistics…", "How many layers, elements, palette colors and animation frames this project has.", ItemKind::Normal);
 	design.append(ID_PROJECT_OPTIONS, "Project &Options…", "Choose which sliders this project pins to its Sliders tab, what the color adjustments act on, how far Page Up and Page Down jump, and load the starter colors.", ItemKind::Normal);
 	design.append_separator();

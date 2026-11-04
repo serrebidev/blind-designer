@@ -136,9 +136,11 @@ impl Design {
 				}
 				kind => {
 					let radius = if kind == ShapeKind::Ellipse {
-						" border-radius: 50%;"
+						" border-radius: 50%;".to_string()
+					} else if kind == ShapeKind::Rectangle && shape.corner > 0 {
+						format!(" border-radius: {}%;", shape.corner)
 					} else {
-						""
+						String::new()
 					};
 					out.push_str(&format!(
 						"<div class=\"shape\" role=\"img\" aria-label=\"{caption}\" style=\"left: {}px; top: {}px; width: {}px; height: {}px; background: {hex};{radius}{rotate}\"></div>\n",
@@ -712,6 +714,19 @@ mod tests {
 		assert!(html.contains("border-radius: 50%"), "{html}");
 		assert!(html.contains("<polyline"), "{html}");
 		assert!(html.contains("stroke=\"#FF8000\""), "{html}");
+	}
+
+	#[test]
+	fn html_export_rounds_rectangle_corners_with_border_radius() {
+		let mut d = Design::new(200, 100, Srgb::WHITE);
+		let mut s = Shape::new(ShapeKind::Rectangle, 10, 20, 50, 40, Srgb::BLACK);
+		s.corner = 30;
+		d.shapes.push(s);
+		d.shapes.push(Shape::new(ShapeKind::Rectangle, 100, 20, 50, 40, Srgb::BLACK));
+		let html = d.to_html("page");
+		assert!(html.contains("border-radius: 30%"), "{html}");
+		// The sharp rectangle carries no radius at all.
+		assert_eq!(html.matches("border-radius").count(), 1, "{html}");
 	}
 
 	#[test]

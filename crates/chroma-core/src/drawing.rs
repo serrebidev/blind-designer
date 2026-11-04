@@ -8,7 +8,7 @@
 //! recreates the image exactly, and it is what the summary export writes.
 
 use crate::animation::Frame;
-use crate::design::{Design, Shape, ShapeKind};
+use crate::design::{Design, Shape, ShapeKind, TextStyle};
 use crate::sliders::ColorAdjust;
 use crate::{describe, Srgb};
 
@@ -164,6 +164,10 @@ pub enum Event {
 	},
 	ShapeCornerSet { layer: String, index: usize, corner: u8 },
 	ShapeLocked { layer: String, index: usize, locked: bool },
+	TextEdited { layer: String, index: usize },
+	TextLinesSorted { layer: String, index: usize, ascending: bool },
+	TextsDistributed { count: usize, columns: usize },
+	TextGridAdded { count: usize, rows: usize, cols: usize },
 	SceneInserted { name: String, count: usize },
 	ColorTreated { scope: String, count: usize, locked: usize },
 	VariablesSubstituted { count: usize },
@@ -367,6 +371,22 @@ impl Event {
 				if *locked { "lock" } else { "unlock" },
 				index + 1,
 				if *locked { "now skip" } else { "reach" }
+			),
+			Event::TextEdited { layer, index } => format!(
+				"On layer \"{layer}\", rewrite text shape {} in the Text Studio: its words and its style.",
+				index + 1
+			),
+			Event::TextLinesSorted { layer, index, ascending } => format!(
+				"On layer \"{layer}\", sort the lines of text shape {} {}.",
+				index + 1,
+				if *ascending { "from A to Z" } else { "from Z to A" }
+			),
+			Event::TextsDistributed { count, columns } => format!(
+				"Arrange {count} text elements into {columns} column{} in reading order.",
+				if *columns == 1 { "" } else { "s" }
+			),
+			Event::TextGridAdded { count, rows, cols } => format!(
+				"Build a text grid from pasted data: {count} text elements in {rows} rows and {cols} columns."
 			),
 			Event::SceneInserted { name, count } => format!(
 				"Insert scene \"{name}\": {count} elements, captioned as part of the scene."
@@ -632,6 +652,168 @@ impl Drawing {
 		let name = l.name.clone();
 		self.log.push(Event::ShapeCaptioned { layer: name, index });
 		true
+	}
+
+	/// Rewrite a text element in the Text Studio: its phrase and
+	/// its style land together, as one logged step. Only text
+	/// elements have words or a style to rewrite; anything else
+	/// fails.
+	pub fn edit_text(
+		&mut self,
+		layer: usize,
+		index: usize,
+		phrase: &str,
+		style: TextStyle,
+	) -> bool {
+		let name = {
+			let Some(l) = self.layers.get_mut(layer) else { return false };
+			let Some(s) = l.shapes.get_mut(index) else { return false };
+			if s.kind != ShapeKind::Text {
+				return false;
+			}
+			s.text = phrase.to_string();
+			s.style = style;
+			l.name.clone()
+		};
+		self.log.push(Event::TextEdited { layer: name, index });
+		true
+	}
+
+	/// Sort a text element's lines alphabetically: A to Z, or Z
+	/// to A. The phrase is split on its line breaks and rejoined
+	/// in the new order; blank lines sort first going up, last
+	/// coming down (they are just empty strings to the sort).
+	/// An element with fewer than two lines has nothing to sort
+	/// and fails.
+	pub fn sort_text_lines(&mut self, layer: usize, index: usize, ascending: bool) -> bool {
+		let name = {
+			let Some(l) = self.layers.get_mut(layer) else { return false };
+			let Some(s) = l.shapes.get_mut(index) else { return false };
+			if s.kind != ShapeKind::Text {
+				return false;
+			}
+			let mut lines: Vec<&str> = s.text.split('\n').collect();
+			if lines.len() < 2 {
+				return false;
+			}
+			lines.sort();
+			if !ascending {
+				lines.reverse();
+			}
+			s.text = lines.join("\n");
+			l.name.clone()
+		};
+		self.log.push(Event::TextLinesSorted { layer: name, index, ascending });
+		true
+	}
+
+	/// Every text element in the drawing, as (layer, shape)
+	/// pairs in reading order: top to bottom, then left to
+	/// right — the order the transforms work in.
+	pub fn text_positions(&self) -> Vec<(usize, usize)> {
+		let mut found: Vec<(usize, usize, i32, i32)> = Vec::new();
+		for (li, layer) in self.layers.iter().enumerate() {
+			for (si, shape) in layer.shapes.iter().enumerate() {
+				if shape.kind == ShapeKind::Text {
+					found.push((li, si, shape.y, shape.x));
+				}
+			}
+		}
+		found.sort_by_key(|&(_, _, y, x)| (y, x));
+		found.into_iter().map(|(li, si, _, _)| (li, si)).collect()
+	}
+
+	/// Spread the drawing's text elements into `columns`
+	/// columns, in reading order: the first fills column one
+	/// top to bottom in rows shared with the other columns,
+	/// each row as tall as its tallest element. Positions are
+	/// the only thing that changes — words, styles and layers
+	/// stay put. Logged as one event for the whole spread;
+	/// returns how many elements were placed (zero, with no
+	/// event, when the drawing has no text).
+	pub fn distribute_texts(&mut self, columns: usize) -> usize {
+		let positions = self.text_positions();
+		if positions.is_empty() {
+			return 0;
+		}
+		let columns = columns.max(1).min(positions.len());
+		let col_w = self.width / columns as u32;
+		// Row heights: the tallest element in each row of the
+		// reading-order sequence.
+		let rows = positions.len().div_ceil(columns);
+		let mut row_y: Vec<i32> = Vec::with_capacity(rows);
+		let mut y = 10i32;
+		for r in 0..rows {
+			row_y.push(y);
+			let tallest = positions[r * columns..((r + 1) * columns).min(positions.len())]
+				.iter()
+				.map(|&(li, si)| self.layers[li].shapes[si].h)
+				.max()
+				.unwrap_or(0);
+			y += tallest as i32 + 10;
+		}
+		for (i, &(li, si)) in positions.iter().enumerate() {
+			let shape = &mut self.layers[li].shapes[si];
+			shape.x = 10 + (i % columns) as i32 * col_w as i32;
+			shape.y = row_y[i / columns];
+		}
+		self.log.push(Event::TextsDistributed { count: positions.len(), columns });
+		positions.len()
+	}
+
+	/// Build a grid of text elements from pasted tabular data:
+	/// lines are rows, tabs separate the cells, and every
+	/// non-empty cell becomes one text element on `layer`, laid
+	/// out evenly from the top-left margin. All the elements
+	/// land as one logged step. Returns how many were added —
+	/// zero (and no event) when the layer is missing or the
+	/// data holds no words.
+	pub fn add_text_grid(
+		&mut self,
+		layer: usize,
+		data: &str,
+		fill: Srgb,
+		font_size: u32,
+	) -> usize {
+		if self.layers.get(layer).is_none() {
+			return 0;
+		}
+		let rows: Vec<Vec<&str>> = data
+			.lines()
+			.map(|line| line.split('\t').collect())
+			.collect();
+		let cols = rows.iter().map(|r| r.len()).max().unwrap_or(0);
+		let filled = rows.iter().flat_map(|r| r.iter()).filter(|c| !c.trim().is_empty()).count();
+		if cols == 0 || filled == 0 {
+			return 0;
+		}
+		let cell_w = (self.width.saturating_sub(20) / cols as u32).max(10);
+		let cell_h = (font_size.max(6) * 2).max(16);
+		let mut added = 0;
+		let l = &mut self.layers[layer];
+		for (r, row) in rows.iter().enumerate() {
+			for (c, cell) in row.iter().enumerate() {
+				let cell = cell.trim();
+				if cell.is_empty() {
+					continue;
+				}
+				l.shapes.push(Shape::text(
+					cell,
+					"",
+					font_size,
+					10 + c as i32 * cell_w as i32,
+					10 + r as i32 * cell_h as i32,
+					cell_w - 4,
+					cell_h - 4,
+					fill,
+				));
+				added += 1;
+			}
+		}
+		if added > 0 {
+			self.log.push(Event::TextGridAdded { count: added, rows: rows.len(), cols });
+		}
+		added
 	}
 
 	/// Log an event for a slider-driven change. When the newest
@@ -1472,6 +1654,96 @@ mod tests {
 			BulkOutcome { changed: 0, locked: 1 }
 		);
 		assert_eq!(d.log.len(), logged);
+	}
+
+	#[test]
+	fn text_studio_edits_phrase_and_style_as_one_logged_step() {
+		use crate::design::{Heading, TextStyle};
+		let mut d = Drawing::new(200, 100, Srgb::WHITE);
+		d.add_shape(0, Shape::text("Draft", "Arial", 14, 0, 0, 80, 20, red()));
+		d.add_shape(0, Shape::new(ShapeKind::Rectangle, 0, 30, 10, 10, red()));
+		let logged = d.log.len();
+		let style = TextStyle { bold: true, heading: Heading::H2, ..Default::default() };
+		assert!(d.edit_text(0, 0, "Final words", style));
+		assert_eq!(d.log.len(), logged + 1, "one event for the whole edit");
+		let s = &d.layers[0].shapes[0];
+		assert_eq!(s.text, "Final words");
+		assert_eq!(s.style, style);
+		let step = d.log.last().unwrap().describe(&d);
+		assert!(step.contains("Text Studio"), "{step}");
+		// Rectangles have no words to rewrite.
+		assert!(!d.edit_text(0, 1, "nope", TextStyle::default()));
+		assert!(!d.edit_text(9, 0, "nope", TextStyle::default()));
+	}
+
+	#[test]
+	fn sorting_text_lines_runs_both_ways() {
+		let mut d = Drawing::new(200, 100, Srgb::WHITE);
+		d.add_shape(0, Shape::text("pear\napple\nplum", "Arial", 14, 0, 0, 80, 60, red()));
+		assert!(d.sort_text_lines(0, 0, true));
+		assert_eq!(d.layers[0].shapes[0].text, "apple\npear\nplum");
+		assert!(d.sort_text_lines(0, 0, false));
+		assert_eq!(d.layers[0].shapes[0].text, "plum\npear\napple");
+		let step = d.log.last().unwrap().describe(&d);
+		assert!(step.contains("from Z to A"), "{step}");
+		// A one-line element has nothing to sort.
+		d.add_shape(0, Shape::text("solo", "Arial", 14, 0, 70, 80, 20, red()));
+		assert!(!d.sort_text_lines(0, 1, true));
+	}
+
+	#[test]
+	fn distributing_texts_spreads_reading_order_across_columns() {
+		let mut d = Drawing::new(400, 300, Srgb::WHITE);
+		// Reading order is by position, not insertion order.
+		d.add_shape(0, Shape::text("third", "Arial", 14, 0, 100, 80, 20, red()));
+		d.add_shape(0, Shape::text("first", "Arial", 14, 0, 0, 80, 20, red()));
+		d.add_shape(0, Shape::text("second", "Arial", 14, 0, 50, 80, 20, red()));
+		d.add_shape(0, Shape::new(ShapeKind::Rectangle, 300, 200, 10, 10, red()));
+		let logged = d.log.len();
+		assert_eq!(d.distribute_texts(2), 3);
+		assert_eq!(d.log.len(), logged + 1, "one event for the whole spread");
+		// first -> column 1 row 1; second -> column 2 row 1;
+		// third -> column 1 row 2 (below the 20px row + gap).
+		let at = |phrase: &str| {
+			let s = d.layers[0].shapes.iter().find(|s| s.text == phrase).unwrap();
+			(s.x, s.y)
+		};
+		assert_eq!(at("first"), (10, 10));
+		assert_eq!(at("second"), (210, 10));
+		assert_eq!(at("third"), (10, 40));
+		// Words and the rectangle are untouched in kind; the
+		// rectangle never moved.
+		assert_eq!((d.layers[0].shapes[3].x, d.layers[0].shapes[3].y), (300, 200));
+		let step = d.log.last().unwrap().describe(&d);
+		assert!(step.contains("3 text elements into 2 columns"), "{step}");
+		// No text at all: nothing placed, nothing logged.
+		let mut bare = Drawing::new(100, 100, Srgb::WHITE);
+		let logged = bare.log.len();
+		assert_eq!(bare.distribute_texts(3), 0);
+		assert_eq!(bare.log.len(), logged);
+	}
+
+	#[test]
+	fn a_pasted_grid_becomes_text_elements_in_rows_and_columns() {
+		let mut d = Drawing::new(400, 300, Srgb::WHITE);
+		let logged = d.log.len();
+		let added = d.add_text_grid(0, "Name\tAge\nAda\t36\n\t\nGrace\t85", Srgb::BLACK, 14);
+		assert_eq!(added, 6);
+		assert_eq!(d.log.len(), logged + 1, "one event for the whole grid");
+		let texts: Vec<&Shape> = d.layers[0].shapes.iter().collect();
+		assert_eq!(texts[0].text, "Name");
+		assert_eq!(texts[1].text, "Age");
+		// Column 2 starts one cell (190px) over; row 2 one cell
+		// (28px) down.
+		assert_eq!((texts[1].x, texts[1].y), (200, 10));
+		assert_eq!((texts[2].x, texts[2].y), (10, 38));
+		assert!(texts.iter().all(|s| s.kind == ShapeKind::Text));
+		let step = d.log.last().unwrap().describe(&d);
+		assert!(step.contains("6 text elements in 4 rows and 2 columns"), "{step}");
+		// Empty data and a missing layer add nothing, log nothing.
+		assert_eq!(d.add_text_grid(0, "  \n\t ", Srgb::BLACK, 14), 0);
+		assert_eq!(d.add_text_grid(9, "A\tB", Srgb::BLACK, 14), 0);
+		assert_eq!(d.log.len(), logged + 1);
 	}
 
 	#[test]

@@ -6,3 +6,6 @@ license.workspace = true
 
 [dependencies]
 image = { version = "*", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
+# Already in the lockfile through the png encoder; the PDF export
+# uses it directly to FlateDecode-compress the design's raster.
+flate2 = "1"

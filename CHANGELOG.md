@@ -67,6 +67,23 @@ workflow.
   of a fixed cap; Extract adds to the palette from any image without
   touching the design.
 
+## 0.7.0
+
+- Your lists tell the truth now: a new project starts empty — no
+  colors, no shapes, nothing pretending to be there. Load Starter
+  Colors (Color menu) adds the starter palette only when you ask.
+- The lists live in the main window as tabs: Palette, Elements,
+  Layers, right where you work, with the same actions as the menus.
+- Menus rebuilt: Import and Export are submenus under File, Palette is
+  now the Color menu with its groups tucked into submenus, and Design
+  groups adding and arranging the same way. Shorter paths, spoken
+  cleanly.
+- Project statistics: a one-line summary stays current in the main
+  window, and Design, Project Statistics reads the full counts.
+- Every setting now says what it changes (Help, and the status line as
+  you rest on each menu item); actions that need a selection grey out
+  when there is nothing to act on.
+
 ## 0.6.0
 
 - Feel your designs: File, Export Raised-Line SVG writes the design as

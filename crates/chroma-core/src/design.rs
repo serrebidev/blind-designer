@@ -67,6 +67,14 @@ pub struct Shape {
 	/// fill color exactly, lower values blend with whatever is
 	/// already painted beneath, in paint order.
 	pub opacity: u8,
+	/// Locked in place against the bulk changes: layer-wide and
+	/// depth-wide color adjustments skip a locked shape and say
+	/// so in their counts. Direct edits to the shape itself —
+	/// move, resize, recolor it one by one — still work; the
+	/// lock guards against sweeping changes, not the owner's
+	/// hand. Dynamic (unlocked) is the default and the state
+	/// every shape made before locks existed is in.
+	pub locked: bool,
 	/// Hand-written caption, if any. `None` means "generate one for me".
 	pub caption: Option<String>,
 }
@@ -90,6 +98,7 @@ impl Shape {
 			angle: 0.0,
 			corner: 0,
 			opacity: 100,
+			locked: false,
 			caption: None,
 		}
 	}

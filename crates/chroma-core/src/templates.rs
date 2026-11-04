@@ -11,6 +11,75 @@ use crate::Srgb;
 pub const TEMPLATE_NAMES: &[&str] =
 	&["Birthday card", "Simple house", "Face", "Chart", "Portrait", "Landscape"];
 
+/// The pattern templates on offer, in menu order: two-color
+/// grids and repeats that need the user's two colors before
+/// they can be built (see `pattern_template`).
+pub const PATTERN_NAMES: &[&str] = &["Checkerboard", "Stripes", "Dots"];
+
+/// A two-color pattern design by name, or `None`. Like a
+/// template, it is an ordinary design built through the Drawing
+/// API on the standard 800 by 600 canvas — but where a template
+/// brings its own colors, a pattern is woven from the two the
+/// user picks: the canvas background is the second color, the
+/// marks on it (the light squares, the stripes, the dots) are
+/// the first, all on one layer tagged as the background depth,
+/// named "Pattern". A checkerboard's cells are 100 pixels,
+/// stripes run vertically 100 pixels wide, dots stand on a
+/// 100-pixel grid.
+pub fn pattern_template(kind: &str, first: Srgb, second: Srgb) -> Option<Drawing> {
+	let mut d = Drawing::new(800, 600, second);
+	d.rename_layer(0, "Pattern");
+	d.set_layer_depth(0, DepthRole::Background);
+	match kind {
+		"Checkerboard" => {
+			for row in 0..6 {
+				for col in 0..8 {
+					if (row + col) % 2 == 0 {
+						d.add_shape(
+							0,
+							Shape::new(
+								ShapeKind::Rectangle,
+								col * 100,
+								row * 100,
+								100,
+								100,
+								first,
+							),
+						);
+					}
+				}
+			}
+		}
+		"Stripes" => {
+			for col in (0..8).step_by(2) {
+				d.add_shape(
+					0,
+					Shape::new(ShapeKind::Rectangle, col * 100, 0, 100, 600, first),
+				);
+			}
+		}
+		"Dots" => {
+			for row in 0..6 {
+				for col in 0..8 {
+					d.add_shape(
+						0,
+						Shape::new(
+							ShapeKind::Ellipse,
+							col * 100 + 25,
+							row * 100 + 25,
+							50,
+							50,
+							first,
+						),
+					);
+				}
+			}
+		}
+		_ => return None,
+	}
+	Some(d)
+}
+
 fn shape(kind: ShapeKind, x: i32, y: i32, w: u32, h: u32, color: (u8, u8, u8)) -> Shape {
 	Shape::new(kind, x, y, w, h, Srgb::new(color.0, color.1, color.2))
 }
@@ -159,6 +228,64 @@ mod tests {
 		assert_eq!(landscape.layers[1].depth, DepthRole::Foreground);
 		// The older templates make no depth claim.
 		assert_eq!(template("Face").unwrap().layers[0].depth, DepthRole::Unassigned);
+	}
+
+	#[test]
+	fn every_pattern_builds_from_its_two_colors_and_round_trips() {
+		let (a, b) = (Srgb::new(220, 50, 50), Srgb::new(253, 243, 216));
+		for name in PATTERN_NAMES {
+			let d = pattern_template(name, a, b).unwrap();
+			// The ground is the second color; every mark is the
+			// first; nothing else appears.
+			assert_eq!(d.background, b, "{name}");
+			assert_eq!(d.layers.len(), 1, "{name}");
+			assert_eq!(d.layers[0].name, "Pattern", "{name}");
+			assert_eq!(d.layers[0].depth, DepthRole::Background, "{name}");
+			assert!(!d.layers[0].shapes.is_empty(), "{name} paints nothing");
+			for s in &d.layers[0].shapes {
+				assert_eq!(s.fill, a, "{name} used a third color");
+				assert!(
+					s.x >= 0 && s.y >= 0 && s.x + s.w as i32 <= 800 && s.y + s.h as i32 <= 600,
+					"{name}: a mark escapes the canvas"
+				);
+			}
+			// The render proves the weave: checkerboard and
+			// stripes open with the first color at the top-left;
+			// dots open with ground there and a dot centred at
+			// (50, 50).
+			let img = d.flatten().render();
+			let first_px = if *name == "Dots" { (50, 50) } else { (10, 10) };
+			assert_eq!(
+				img.get_pixel(first_px.0, first_px.1),
+				&image::Rgb([220, 50, 50]),
+				"{name}: first color where the pattern starts"
+			);
+			// An ordinary design: it saves and loads unchanged.
+			let text = Project { drawing: d.clone(), palette: Vec::new(), pinned_sliders: Vec::new(), slider_target: crate::sliders::AdjustTarget::BaseColor, page_jump_percent: crate::project::DEFAULT_PAGE_JUMP_PERCENT }.to_text();
+			let back = Project::from_text(&text).unwrap().drawing;
+			assert_eq!(back.summary(), d.summary(), "{name} changed in the round-trip");
+		}
+		assert!(pattern_template("Zigzag", a, b).is_none());
+	}
+
+	#[test]
+	fn the_checkerboard_alternates_and_the_stripes_run_straight() {
+		let (a, b) = (Srgb::BLACK, Srgb::WHITE);
+		let checks = pattern_template("Checkerboard", a, b).unwrap();
+		assert_eq!(checks.layers[0].shapes.len(), 24, "half of the 8 by 6 cells");
+		let img = checks.flatten().render();
+		assert_eq!(img.get_pixel(150, 10), &image::Rgb([255, 255, 255]), "the next cell is ground");
+		assert_eq!(img.get_pixel(150, 150), &image::Rgb([0, 0, 0]), "diagonal cells match");
+		let stripes = pattern_template("Stripes", a, b).unwrap();
+		assert_eq!(stripes.layers[0].shapes.len(), 4);
+		let img = stripes.flatten().render();
+		assert_eq!(img.get_pixel(50, 590), &image::Rgb([0, 0, 0]), "a stripe runs the full height");
+		assert_eq!(img.get_pixel(150, 300), &image::Rgb([255, 255, 255]), "ground between stripes");
+		let dots = pattern_template("Dots", a, b).unwrap();
+		assert_eq!(dots.layers[0].shapes.len(), 48);
+		let img = dots.flatten().render();
+		assert_eq!(img.get_pixel(50, 50), &image::Rgb([0, 0, 0]), "a dot's centre");
+		assert_eq!(img.get_pixel(10, 10), &image::Rgb([255, 255, 255]), "ground at the grid corner");
 	}
 
 	#[test]

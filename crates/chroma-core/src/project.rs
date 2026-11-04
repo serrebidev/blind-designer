@@ -17,7 +17,9 @@
 //! role ends its layer line with the role's id, and a rounded
 //! rectangle ends its shape line (after the opacity, which is then
 //! always written) with r<percent> — a design with neither keeps
-//! its old file shape byte for byte.
+//! its old file shape byte for byte. A locked shape ends its line
+//! with the word "locked", after the corner when it has one; an
+//! unlocked shape writes nothing, for the same reason.
 //!
 //! The format is hand-rolled line-oriented text in the recreation
 //! file's spirit (serde is not a workspace dependency, and one design
@@ -309,17 +311,20 @@ fn shape_fields(s: &Shape) -> String {
 		_ => {}
 	}
 	// The trailing fields, in write order: the opacity percent,
-	// then a rounded rectangle's corner as r<percent>. Opacity is
-	// written when it is below full OR a corner follows (the
-	// corner takes the place after it). A shape with neither
-	// writes nothing extra, so older files and plain designs stay
-	// byte-identical.
+	// then a rounded rectangle's corner as r<percent>, then a
+	// locked shape's word "locked". Opacity is written when it
+	// is below full OR a corner follows (the corner takes the
+	// place after it). A shape with none of them writes nothing
+	// extra, so older files and plain designs stay byte-identical.
 	let rounded = s.kind == ShapeKind::Rectangle && s.corner > 0;
 	if s.opacity < 100 || rounded {
 		out.push_str(&format!(" {}", s.opacity));
 	}
 	if rounded {
 		out.push_str(&format!(" r{}", s.corner));
+	}
+	if s.locked {
+		out.push_str(" locked");
 	}
 	out
 }
@@ -368,13 +373,15 @@ fn parse_shape(toks: &[String]) -> Result<Shape, String> {
 		image_path: String::new(),
 		opacity: 100,
 		corner: 0,
+		locked: false,
 	};
 	// The appended fields; absent in old files. Each kind has a
 	// known count of its own (a text's phrase, font and size; an
 	// image's path); what follows them is the trailing run, in
 	// write order: a stroke's pattern word, the opacity percent,
-	// and a rounded rectangle's corner as r<percent> — each
-	// present only when the shape carries it.
+	// a rounded rectangle's corner as r<percent>, and a locked
+	// shape's word "locked" — each present only when the shape
+	// carries it.
 	let extra: &[String] = &toks[10..];
 	let expected = match kind {
 		ShapeKind::Text => 3,
@@ -403,31 +410,38 @@ fn parse_shape(toks: &[String]) -> Result<Shape, String> {
 	}
 	if kind == ShapeKind::Stroke {
 		// A stroke's pattern is a word: a first trailing token
-		// that is neither a number nor a corner is the pattern.
+		// that is neither a number, nor a corner, nor the lock
+		// word is the pattern.
 		if let Some(first) = tail.first() {
-			if !first.starts_with('r') && first.parse::<u8>().is_err() {
+			if !first.starts_with('r') && first.parse::<u8>().is_err() && first != "locked" {
 				shape.pattern = first.clone();
 				tail = &tail[1..];
 			}
 		}
 	}
 	if let Some(first) = tail.first() {
-		if !first.starts_with('r') {
+		if !first.starts_with('r') && first != "locked" {
 			shape.opacity = num(tail, 0, "shape opacity")?;
 			tail = &tail[1..];
 		}
 	}
 	if let Some(first) = tail.first() {
-		match first.strip_prefix('r') {
-			Some(rest) => {
-				shape.corner = rest
-					.parse::<u8>()
-					.map_err(|_| format!("bad corner: {first}"))?
-					.min(50);
-				tail = &tail[1..];
+		if first != "locked" {
+			match first.strip_prefix('r') {
+				Some(rest) => {
+					shape.corner = rest
+						.parse::<u8>()
+						.map_err(|_| format!("bad corner: {first}"))?
+						.min(50);
+					tail = &tail[1..];
+				}
+				None => return Err(format!("unexpected shape field: {first}")),
 			}
-			None => return Err(format!("unexpected shape field: {first}")),
 		}
+	}
+	if tail.first().map(String::as_str) == Some("locked") {
+		shape.locked = true;
+		tail = &tail[1..];
 	}
 	if !tail.is_empty() {
 		return Err(format!("a shape has too many fields: {}", toks.len()));
@@ -563,6 +577,13 @@ fn event_line(e: &Event) -> String {
 		),
 		Event::ShapeCornerSet { layer, index, corner } => {
 			format!("event shape-corner {} {index} {corner}", quote(layer))
+		}
+		Event::ShapeLocked { layer, index, locked } => {
+			format!(
+				"event shape-locked {} {index} {}",
+				quote(layer),
+				if *locked { "locked" } else { "unlocked" }
+			)
 		}
 		Event::SceneInserted { name, count } => {
 			format!("event scene-inserted {} {count}", quote(name))
@@ -703,6 +724,15 @@ fn parse_event(toks: &[String]) -> Result<Event, String> {
 			layer: name(2)?,
 			index: num(toks, 3, "shape index")?,
 			corner: num(toks, 4, "corner")?,
+		}),
+		Some("shape-locked") => Ok(Event::ShapeLocked {
+			layer: name(2)?,
+			index: num(toks, 3, "shape index")?,
+			locked: match toks.get(4).map(String::as_str) {
+				Some("locked") => true,
+				Some("unlocked") => false,
+				_ => return Err("bad shape lock state".to_string()),
+			},
 		}),
 		Some("scene-inserted") => Ok(Event::SceneInserted {
 			name: name(2)?,
@@ -1323,6 +1353,50 @@ end
 	}
 
 	#[test]
+	fn shape_lock_round_trips_as_a_trailing_word() {
+		let mut d = Drawing::new(800, 600, Srgb::WHITE);
+		// A plain locked rectangle: the word alone, nothing else.
+		d.add_shape(0, Shape::new(ShapeKind::Rectangle, 10, 10, 50, 50, Srgb::BLACK));
+		d.set_shape_locked(0, 0, true);
+		// A locked rounded translucent rectangle: lock last,
+		// after opacity and corner.
+		let mut round = Shape::new(ShapeKind::Rectangle, 100, 10, 50, 50, Srgb::BLACK);
+		round.opacity = 40;
+		round.corner = 30;
+		d.add_shape(0, round);
+		d.set_shape_locked(0, 1, true);
+		// A locked stroke with a pattern: the pattern is not the
+		// lock word, and the lock word is not the pattern.
+		let mut stroke = Shape::stroke(vec![(1, 1), (90, 90)], 5, Srgb::new(0, 0, 255));
+		stroke.pattern = "dashed".to_string();
+		d.add_shape(0, stroke);
+		d.set_shape_locked(0, 2, true);
+		// An unlocked shape: nothing extra, byte-identical.
+		d.add_shape(0, Shape::new(ShapeKind::Ellipse, 5, 5, 20, 20, Srgb::WHITE));
+		let project = Project { drawing: d, palette: Vec::new(), pinned_sliders: Vec::new(), slider_target: AdjustTarget::BaseColor, page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT };
+		let text = project.to_text();
+		assert!(text.contains("shape rectangle 10 10 50 50 #000000 0.0 3 - - locked\n"), "{text}");
+		assert!(text.contains("shape rectangle 100 10 50 50 #000000 0.0 3 - - 40 r30 locked\n"), "{text}");
+		assert!(text.contains("shape stroke 1 1 89 89 #0000FF 0.0 5 1,1;90,90 - \"dashed\" locked\n"), "{text}");
+		assert!(text.contains("shape ellipse 5 5 20 20 #FFFFFF 0.0 3 - -\n"), "{text}");
+		// The lock steps are events in the log.
+		assert!(text.contains("event shape-locked \"Layer 1\" 0 locked\n"), "{text}");
+		let back = Project::from_text(&text).expect("locked shapes read back");
+		assert_eq!(back.to_text(), text);
+		let shapes = &back.drawing.layers[0].shapes;
+		assert!(shapes[0].locked && shapes[1].locked && shapes[2].locked);
+		assert!(!shapes[3].locked);
+		assert_eq!(shapes[1].corner, 30);
+		assert_eq!(shapes[2].pattern, "dashed");
+		// Unlocking writes the other event word and drops the flag.
+		let mut back = back;
+		back.drawing.set_shape_locked(0, 0, false);
+		let text = back.to_text();
+		assert!(text.contains("event shape-locked \"Layer 1\" 0 unlocked\n"), "{text}");
+		assert!(!text.contains("shape rectangle 10 10 50 50 #000000 0.0 3 - - locked\n"), "{text}");
+	}
+
+	#[test]
 	fn layer_depth_roles_round_trip_as_one_trailing_field() {
 		let mut d = Drawing::new(800, 600, Srgb::WHITE);
 		d.set_layer_depth(0, DepthRole::Background);
@@ -1414,7 +1488,7 @@ end
 				&bases,
 				crate::sliders::ColorAdjust { fog: 25, ..Default::default() },
 			),
-			1
+			crate::drawing::BulkOutcome { changed: 1, locked: 0 }
 		);
 		let project = Project { drawing: d, palette: Vec::new(), pinned_sliders: Vec::new(), slider_target: AdjustTarget::BaseColor, page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT };
 		let text = project.to_text();

@@ -44,6 +44,93 @@ is listed before it exists.
   gives the full count, element kind by element kind.
 - Sliders tab: the sliders this project has pinned — see THE
   SLIDERS TAB below. A new project pins none.
+- Lists side by side: View, Lists Side by Side replaces the
+  Palette and Elements tabs with one Lists tab holding the two
+  lists side by side, so both are on screen (and in tab order)
+  at once. Turn it off and the tabs come back. It lasts for
+  this session, like the other View choices.
+
+THE INSPECTOR
+
+Press Enter on any list — Palette, Elements or Layers — and the
+inspector answers three questions about the thing under the
+cursor, in a report you can read and review:
+
+- What it is. An element: its kind, caption and plain-language
+  description, its size and place, its opacity, roundedness and
+  angle. A layer: its contents by kind, where it paints. A
+  color: its description and where it came from.
+- Where it is used. An element: its layer and that layer's
+  depth role, whether the layer is shown (hidden layers stay
+  out of exports), and in how many animation frames it appears.
+  A color: every element that uses it, and whether it is the
+  background.
+- What can change it — and what happens if nothing does. An
+  unlocked element is reached by the color adjustments aimed at
+  its layer or its depth; a locked one is skipped (see LOCKING
+  ELEMENTS). And left alone, everything stays exactly as it is:
+  nothing in Blind Designer changes a design by itself.
+
+Design, Inspect Selected does the same for the selected element
+without leaving the keyboard.
+
+LOCKING ELEMENTS
+
+An element can be locked in place: Design, Lock/Unlock Selected
+toggles it, and the Elements list says "Locked" on its row.
+A locked element is skipped by the bulk changes — the layer-wide
+and depth-wide color adjustments — and those announcements count
+it honestly: "3 elements changed, 2 locked stayed the same."
+Direct edits to the element alone — move, resize, recolor,
+rename — still work; locking is protection from group changes,
+not from you. Locking is saved in the design file.
+
+CONTEXT MENUS
+
+Every list has a context menu: right-click it, or press the
+Applications key or Shift+F10 while it has focus. The menu is
+the list's own actions — the same commands as the menu bar, not
+copies.
+
+- Palette: with a color selected — inspect it, set it as the
+  background, remove it. With no colors at all, the menu still
+  opens and offers the three ways colors arrive: add one by
+  hex, load the starter colors, extract from an image.
+- Elements: with an element selected — inspect, lock or unlock,
+  move, rotate, resize, recolor, remove. Empty or not, the Add
+  items are always there, so an empty list can start the design
+  from its own menu.
+- Layers: inspect the selected layer, or open the Layers dialog
+  where layers are added. (A design always has at least one
+  layer, so this list is never empty.)
+- Sliders page: Project Options — where the pinned sliders are
+  chosen — one step from the page they appear on.
+
+SEARCH AND INSERT
+
+Design, Search and Insert (Ctrl+F) searches everything the
+design can gain, in one field: palette colors (by their words
+or any part of their hex code), the starter colors, the design's
+own elements (by caption, kind or layer), the symbols, the
+templates and the patterns. Type a word, press Search, and the
+results list everything that matches; an empty search lists the
+whole catalog. Press Enter on a result — or choose it and press
+Insert — and it goes where the cursor is:
+
+- A color becomes the brush color, the color the next thing
+  drawn will use. A starter color joins the palette first if
+  it is not there already.
+- An element is copied: right after the element you have
+  selected, stepped a little so the copy is findable, or at the
+  centre of the canvas when nothing is selected.
+- A symbol is stamped at the centre of the canvas in the brush
+  color.
+- A template starts a new design, as File, New from Template
+  does.
+- A pattern opens the Pattern dialog, because it needs its two
+  colors first.
+
+A report then confirms what was placed, and where.
 
 THE SLIDERS TAB
 
@@ -638,6 +725,13 @@ card, a simple house, a face, a chart, a portrait or a landscape.
 Loading a template replaces the design you have open, and the
 template is a normal design from then on — change anything, then
 Save Design.
+
+File, New from Pattern starts a design as a pattern woven from
+two of your palette colors: a checkerboard, stripes, or dots.
+You pick which color makes the marks and which makes the ground;
+the design's background is the ground color, and the marks sit
+on one layer tagged as the background depth. From there it is a
+normal design — recolor the marks, add elements over the weave.
 
 PICTURES BY TOUCH AND COMPARISON
 

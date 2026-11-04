@@ -32,6 +32,8 @@ use chroma_core::formats::{
 	contrast_verdict, frequency_to_color, gradient, random_color, rotate_hue_ryb, subtract,
 	text_readability, ChannelSet,
 };
+use chroma_core::inspect::{inspect_color, inspect_layer, inspect_shape};
+use chroma_core::search::{search_catalog, CatalogHit};
 use chroma_core::sound::{cue_at, cue_for_shape, tone_wav_at, Cue};
 use chroma_core::symbols;
 use chroma_core::tactile::{compare_images, tactile_grid};
@@ -91,11 +93,17 @@ const ID_COMPARE_IMAGES: Id = 120;
 const ID_TACTILE_GRID: Id = 121;
 const ID_SAVE_SCENE: Id = 122;
 const ID_INSERT_SCENE: Id = 123;
+const ID_PATTERN_TEMPLATES: Id = 124;
 const ID_DESCRIBE_AREA: Id = 318;
 const ID_ADD_SYMBOL: Id = 319;
 const ID_STATS: Id = 320;
 const ID_PROJECT_OPTIONS: Id = 321;
 const ID_VIEWABILITY: Id = 322;
+const ID_INSPECT: Id = 323;
+const ID_LOCK_TOGGLE: Id = 324;
+const ID_SEARCH_INSERT: Id = 325;
+const ID_INSPECT_LAYER: Id = 326;
+const ID_INSPECT_COLOR: Id = 327;
 const ID_ABOUT: Id = 401;
 const ID_DICTIONARY: Id = 402;
 const ID_HELP_FILE: Id = 403;
@@ -105,6 +113,7 @@ const ID_FORMAT_RGB: Id = 502;
 const ID_FORMAT_HSL: Id = 503;
 const ID_FORMAT_HSV: Id = 504;
 const ID_ANNOUNCE_SLIDERS: Id = 505;
+const ID_LISTS_SIDE_BY_SIDE: Id = 516;
 const ID_FORMAT_CMYK: Id = 506;
 const ID_FORMAT_XYZ: Id = 507;
 const ID_FORMAT_XYY: Id = 508;
@@ -115,6 +124,7 @@ const ID_FORMAT_HUNTER: Id = 512;
 const ID_FORMAT_DECIMAL: Id = 513;
 const ID_FORMAT_WEBSAFE: Id = 514;
 const ID_FORMAT_BINARY: Id = 515;
+const ID_ADD_COLOR: Id = 214;
 const ID_COLOR_TOOLS: Id = 211;
 const ID_TEXT_READABILITY: Id = 212;
 const ID_SCHEME_SETTINGS: Id = 213;
@@ -169,6 +179,7 @@ const MENU_IDS: &[Id] = &[
 	ID_TACTILE_GRID,
 	ID_SAVE_SCENE,
 	ID_INSERT_SCENE,
+	ID_PATTERN_TEMPLATES,
 	ID_EXIT,
 	ID_COMPLEMENTARY,
 	ID_SPLIT,
@@ -202,7 +213,13 @@ const MENU_IDS: &[Id] = &[
 	ID_STATS,
 	ID_PROJECT_OPTIONS,
 	ID_VIEWABILITY,
+	ID_INSPECT,
+	ID_LOCK_TOGGLE,
+	ID_SEARCH_INSERT,
+	ID_INSPECT_LAYER,
+	ID_INSPECT_COLOR,
 	ID_ANNOUNCE_SLIDERS,
+	ID_LISTS_SIDE_BY_SIDE,
 	ID_ABOUT,
 	ID_DICTIONARY,
 	ID_HELP_FILE,
@@ -224,6 +241,7 @@ const MENU_IDS: &[Id] = &[
 	ID_COLOR_TOOLS,
 	ID_TEXT_READABILITY,
 	ID_SCHEME_SETTINGS,
+	ID_ADD_COLOR,
 ];
 
 const _: () = {
@@ -305,6 +323,11 @@ struct State {
 	/// different target, element or format starts a fresh run
 	/// from the color's own values.
 	channel_run: Option<ChannelRun>,
+	/// Whether the notebook shows Palette and Elements side by
+	/// side on one "Lists" page (View menu toggle). Session-only,
+	/// like the other View toggles: nothing else in the app
+	/// persists view state either.
+	lists_side_by_side: bool,
 }
 
 /// The color-channel sliders' run state: the format the values
@@ -358,9 +381,18 @@ struct ChannelRow {
 struct Win {
 	frame: Frame,
 	notebook: Notebook,
-	palette_list: QuietList<usize>,
-	elements_list: QuietList<usize>,
+	/// The palette and elements lists live behind RefCells: the
+	/// Lists Side by Side toggle rebuilds their pages (a wx
+	/// widget's parent is fixed at birth), and the new list
+	/// replaces the old in the cell.
+	palette_list: RefCell<QuietList<usize>>,
+	elements_list: RefCell<QuietList<usize>>,
 	layers_list: QuietList<usize>,
+	/// The notebook pages the lists currently live on — one
+	/// combined "Lists" page, or the separate Palette and
+	/// Elements pages. Rebuilt (and the old ones destroyed) when
+	/// the side-by-side toggle flips.
+	list_pages: RefCell<Vec<Panel>>,
 	stats_text: StaticText,
 	readout: StaticText,
 	hex_field: TextCtrl,
@@ -488,8 +520,8 @@ fn readout_text(state: &State, color: Srgb) -> String {
 }
 
 fn refresh_lists(win: &Win, state: &State) {
-	win.palette_list.update_labelled(palette_rows(state), Select::Keep);
-	win.elements_list.update_labelled(element_rows(state), Select::Keep);
+	win.palette_list.borrow().update_labelled(palette_rows(state), Select::Keep);
+	win.elements_list.borrow().update_labelled(element_rows(state), Select::Keep);
 	win.layers_list.update_labelled(layer_rows(state), Select::Keep);
 	win.stats_text
 		.set_label(&ProjectStats::gather(&state.drawing, state.palette.len()).one_line());
@@ -506,8 +538,8 @@ fn refresh_lists(win: &Win, state: &State) {
 /// works on any project, empty or not, and stays enabled.
 fn refresh_menu_states(win: &Win, state: &State) {
 	let Some(bar) = win.frame.get_menu_bar() else { return };
-	let has_color = win.palette_list.selected().is_some();
-	let has_element = win.elements_list.selected().is_some();
+	let has_color = win.palette_list.borrow().selected().is_some();
+	let has_element = win.elements_list.borrow().selected().is_some();
 	for id in [
 		ID_COMPLEMENTARY,
 		ID_SPLIT,
@@ -522,9 +554,18 @@ fn refresh_menu_states(win: &Win, state: &State) {
 	] {
 		bar.enable_item(id, has_color);
 	}
-	for id in [ID_MOVE_SHAPE, ID_ROTATE_SHAPE, ID_RESIZE_SHAPE, ID_REMOVE_SHAPE] {
+	for id in [
+		ID_MOVE_SHAPE,
+		ID_ROTATE_SHAPE,
+		ID_RESIZE_SHAPE,
+		ID_REMOVE_SHAPE,
+		ID_INSPECT,
+		ID_LOCK_TOGGLE,
+	] {
 		bar.enable_item(id, has_element);
 	}
+	bar.enable_item(ID_INSPECT_LAYER, win.layers_list.selected().is_some());
+	bar.enable_item(ID_INSPECT_COLOR, has_color);
 	bar.enable_item(ID_RECOLOR_SHAPE, has_color && has_element);
 	bar.enable_item(ID_EXPORT_ANIM_DESC, !state.drawing.frames.is_empty());
 }
@@ -543,7 +584,7 @@ fn select_color(win: &Win, state: &State, color: Srgb) {
 }
 
 fn selected_color(win: &Win, state: &State) -> Option<Srgb> {
-	win.palette_list
+	win.palette_list.borrow()
 		.selected()
 		.and_then(|i| state.palette.get(i))
 		.map(|pc| pc.color)
@@ -709,7 +750,7 @@ fn refresh_channel_values(win: &Win, state: &State) {
 /// The element the main window has selected, as (layer, shape,
 /// shape) — the target of the element sliders.
 fn selected_shape<'a>(state: &'a State, win: &Win) -> Option<(usize, usize, &'a Shape)> {
-	let flat = win.elements_list.selected()?;
+	let flat = win.elements_list.borrow().selected()?;
 	let (li, si) = locate(state, flat)?;
 	state.drawing.layers.get(li)?.shapes.get(si).map(|s| (li, si, s))
 }
@@ -828,10 +869,19 @@ fn build_channel_group(
 /// invisible interface Elshara asked for. Focus is never moved
 /// except by those Ctrl+arrow keys the user presses. A project
 /// with no pins gets a page that says so and where to pin some.
+/// The notebook index of the Sliders page, found by its text:
+/// the page count before it changes with the Lists Side by
+/// Side layout, so a fixed index would remove the wrong page.
+fn sliders_page_index(win: &Win) -> Option<usize> {
+	(0..win.notebook.get_page_count())
+		.find(|&i| win.notebook.get_page_text(i).as_deref() == Some("Sliders"))
+}
+
 fn build_sliders_tab(win: &Rc<Win>, shared: &Shared) {
-	const PAGE_INDEX: usize = 3;
 	if win.slider_page.borrow().is_some() {
-		win.notebook.remove_page(PAGE_INDEX);
+		if let Some(i) = sliders_page_index(win) {
+			win.notebook.remove_page(i);
+		}
 	}
 	let (pins, target, any_adjust, channels_pinned) = {
 		let state = shared.borrow();
@@ -948,17 +998,160 @@ fn build_sliders_tab(win: &Rc<Win>, shared: &Shared) {
 		}
 	}
 	page.set_sizer(sizer, true);
-	let count = win.notebook.get_page_count();
-	if count > PAGE_INDEX {
-		win.notebook.insert_page(PAGE_INDEX, &page, "Sliders", false, None);
-	} else {
-		win.notebook.add_page(&page, "Sliders", false, None);
+	win.notebook.add_page(&page, "Sliders", false, None);
+	{
+		// The page's context menu (right-click, Applications key):
+		// the pins live in Project Options, one step from here.
+		let w = win.clone();
+		page.on_context_menu(move |_| show_sliders_context(&w));
 	}
 	*win.slider_page.borrow_mut() = Some(page);
 	*win.slider_rows.borrow_mut() = rows;
 	*win.channel_rows.borrow_mut() = channel_rows;
 	*win.channel_note.borrow_mut() = channel_note;
 	*win.slider_target_choice.borrow_mut() = target_choice;
+}
+
+/// One list's home: a panel holding the list's label first —
+/// so screen readers find it — then the list itself, named the
+/// same. Used for the notebook pages and for the two halves of
+/// the side-by-side splitter alike.
+fn list_panel(parent: &dyn WxWidget, name: &str) -> (Panel, QuietList<usize>) {
+	let panel = Panel::builder(parent).build();
+	let label = StaticText::builder(&panel).with_label(name).build();
+	let list = QuietList::new(&panel, name);
+	let sizer = BoxSizer::builder(Orientation::Vertical).build();
+	sizer.add(&label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	sizer.add(&list, 1, SizerFlag::Expand | SizerFlag::All, 5);
+	panel.set_sizer(sizer, true);
+	(panel, list)
+}
+
+/// Everything the Palette list does, registered on the CURRENT
+/// list: the Lists Side by Side toggle rebuilds the list, and
+/// the new one needs the same wiring. Selection speaks the
+/// color; Enter inspects it; the context menu is the palette's
+/// own actions, empty palette included.
+fn wire_palette_list(win: &Rc<Win>, shared: &Shared) {
+	{
+		let (w, s) = (win.clone(), shared.clone());
+		win.palette_list.borrow().on_selection_changed(move || {
+			let state = s.borrow();
+			if let Some(c) = selected_color(&w, &state) {
+				select_color(&w, &state, c);
+			}
+			refresh_menu_states(&w, &state);
+		});
+	}
+	{
+		let (w, s) = (win.clone(), shared.clone());
+		win.palette_list.borrow().on_key_down(move |data| {
+			let WindowEventData::Keyboard(kb) = data else { return false };
+			if kb.get_key_code() != Some(WXK_RETURN) {
+				return false;
+			}
+			if let Some(i) = w.palette_list.borrow().selected() {
+				let state = s.borrow();
+				if let Some(text) = inspect_color(&state.drawing, &state.palette, i) {
+					report_dialog(&w, "Inspector: color", "Color inspector", &text);
+				}
+			}
+			true
+		});
+	}
+	{
+		let w = win.clone();
+		win.palette_list.borrow().on_context_menu(move || show_palette_context(&w));
+	}
+}
+
+/// Everything the Elements list does, registered on the CURRENT
+/// list (see wire_palette_list). Selection resets the slider
+/// runs aimed at the old element; Enter opens the inspector;
+/// the context menu carries the element's actions and the Add
+/// items, so an empty list can start a design from its own menu.
+fn wire_elements_list(win: &Rc<Win>, shared: &Shared) {
+	{
+		let (w, s) = (win.clone(), shared.clone());
+		win.elements_list.borrow().on_selection_changed(move || {
+			// A different element is a different adjustment
+			// and scale target: the next slider move starts
+			// a fresh run from its colors and size.
+			if let Ok(mut state) = s.try_borrow_mut() {
+				reset_adjustment(&mut state);
+			}
+			let state = s.borrow();
+			refresh_menu_states(&w, &state);
+			refresh_slider_values(&w, &state);
+		});
+	}
+	{
+		let (w, s) = (win.clone(), shared.clone());
+		win.elements_list.borrow().on_key_down(move |data| {
+			let WindowEventData::Keyboard(kb) = data else { return false };
+			if kb.get_key_code() != Some(WXK_RETURN) {
+				return false;
+			}
+			inspect_selected(&w, &s);
+			true
+		});
+	}
+	{
+		let w = win.clone();
+		win.elements_list.borrow().on_context_menu(move || show_elements_context(&w));
+	}
+}
+
+/// (Re)build the notebook pages the Palette and Elements lists
+/// live on, in the layout the View toggle chooses: two tabs, or
+/// one "Lists" page with the two lists side by side in a
+/// splitter. A wx widget's parent is fixed at birth, so a flip
+/// rebuilds the pages and lists and rewires them; the removed
+/// pages go the way the Sliders tab's rebuilds go (removed from
+/// the notebook, wrappers dropped). The Layers and Sliders
+/// pages are not touched.
+fn rebuild_list_pages(win: &Rc<Win>, shared: &Shared) {
+	// The selections survive the rebuild by key.
+	let palette_key = win.palette_list.borrow().selected();
+	let elements_key = win.elements_list.borrow().selected();
+	let old = win.list_pages.borrow().len();
+	for _ in 0..old {
+		win.notebook.remove_page(0);
+	}
+	let mut pages = Vec::new();
+	if shared.borrow().lists_side_by_side {
+		let page = Panel::builder(&win.notebook).build();
+		let splitter = SplitterWindow::builder(&page).build();
+		let (palette_panel, palette_list) = list_panel(&splitter, "Palette");
+		let (elements_panel, elements_list) = list_panel(&splitter, "Elements");
+		splitter.split_vertically(&palette_panel, &elements_panel, 380);
+		let sizer = BoxSizer::builder(Orientation::Vertical).build();
+		sizer.add(&splitter, 1, SizerFlag::Expand | SizerFlag::All, 5);
+		page.set_sizer(sizer, true);
+		win.notebook.insert_page(0, &page, "Lists", true, None);
+		pages.push(page);
+		*win.palette_list.borrow_mut() = palette_list;
+		*win.elements_list.borrow_mut() = elements_list;
+	} else {
+		let (palette_page, palette_list) = list_panel(&win.notebook, "Palette");
+		let (elements_page, elements_list) = list_panel(&win.notebook, "Elements");
+		win.notebook.insert_page(0, &elements_page, "Elements", false, None);
+		win.notebook.insert_page(0, &palette_page, "Palette", true, None);
+		pages.push(palette_page);
+		pages.push(elements_page);
+		*win.palette_list.borrow_mut() = palette_list;
+		*win.elements_list.borrow_mut() = elements_list;
+	}
+	*win.list_pages.borrow_mut() = pages;
+	wire_palette_list(win, shared);
+	wire_elements_list(win, shared);
+	let state = shared.borrow();
+	refresh_lists(win, &state);
+	drop(state);
+	win.palette_list.borrow().select(palette_key.as_ref());
+	win.elements_list.borrow().select(elements_key.as_ref());
+	let state = shared.borrow();
+	refresh_menu_states(win, &state);
 }
 
 /// The Sliders tab's custom keys (Elshara's semi-invisible
@@ -1395,11 +1588,24 @@ fn apply_adjustment(
 			let adjust = state.adjust;
 			if bases.is_empty() {
 				Some("The current layer has no elements to adjust.".to_string())
-			} else if state.drawing.adjust_layer_colors(li, &bases, adjust) > 0 {
-				refresh_lists(win, state);
-				None
 			} else {
-				Some("That layer changed under the adjustment; move the slider to start again.".to_string())
+				let outcome = state.drawing.adjust_layer_colors(li, &bases, adjust);
+				if outcome.changed > 0 {
+					refresh_lists(win, state);
+					Some(format!(
+						"{} element{} changed{}.",
+						outcome.changed,
+						if outcome.changed == 1 { "" } else { "s" },
+						locked_suffix(outcome.locked)
+					))
+				} else if outcome.locked > 0 {
+					Some(format!(
+						"Every element the adjustment reached is locked; nothing changed{}",
+						locked_suffix(outcome.locked)
+					))
+				} else {
+					Some("That layer changed under the adjustment; move the slider to start again.".to_string())
+				}
 			}
 		}
 		Some(AdjustBase::Depth(role, bases)) => {
@@ -1410,14 +1616,40 @@ fn apply_adjustment(
 					"No layer is tagged {} yet: tag one in Design, Layers.",
 					role.name()
 				))
-			} else if state.drawing.adjust_depth_colors(role, &bases, adjust) > 0 {
-				refresh_lists(win, state);
-				None
 			} else {
-				Some("Those layers changed under the adjustment; move the slider to start again.".to_string())
+				let outcome = state.drawing.adjust_depth_colors(role, &bases, adjust);
+				if outcome.changed > 0 {
+					refresh_lists(win, state);
+					Some(format!(
+						"{} element{} changed across the {} layers{}.",
+						outcome.changed,
+						if outcome.changed == 1 { "" } else { "s" },
+						role.name(),
+						locked_suffix(outcome.locked)
+					))
+				} else if outcome.locked > 0 {
+					Some(format!(
+						"Every element the adjustment reached is locked; nothing changed{}",
+						locked_suffix(outcome.locked)
+					))
+				} else {
+					Some("Those layers changed under the adjustment; move the slider to start again.".to_string())
+				}
 			}
 		}
 		None => Some("Nothing to adjust.".to_string()),
+	}
+}
+
+/// The tail of a bulk-change announcement: how many locked
+/// elements the change passed over, in the counts form Elshara
+/// asked for ("N changed, M locked stayed the same"). Empty
+/// when nothing was locked.
+fn locked_suffix(locked: usize) -> String {
+	if locked == 0 {
+		String::new()
+	} else {
+		format!(", {locked} locked stayed the same")
 	}
 }
 
@@ -2177,6 +2409,9 @@ fn element_rows(state: &State) -> Vec<(usize, String)> {
 			if let Some(c) = &s.caption {
 				label.push_str(&format!(" Caption: {c}"));
 			}
+			if s.locked {
+				label.push_str(". Locked: bulk changes skip it.");
+			}
 			if !layer.visible {
 				label.push_str(" (layer hidden)");
 			}
@@ -2626,6 +2861,437 @@ fn report_dialog(win: &Win, title: &str, label: &str, text: &str) {
 	dialog.show_modal();
 }
 
+/// The (layer, shape) of the element the Elements list has
+/// selected, if any.
+fn selected_element_locate(win: &Win, shared: &Shared) -> Option<(usize, usize)> {
+	let flat = win.elements_list.borrow().selected()?;
+	let state = shared.borrow();
+	locate(&state, flat)
+}
+
+/// The inspector for the selected element (Design, Inspect
+/// Selected; Enter on the Elements list): core writes the
+/// report from the drawing itself, the app shows it in the
+/// standard report dialog.
+fn inspect_selected(win: &Rc<Win>, shared: &Shared) {
+	let Some(flat) = win.elements_list.borrow().selected() else { return };
+	let state = shared.borrow();
+	if let Some(text) = inspect_shape(&state.drawing, flat) {
+		report_dialog(win, "Inspector: element", "Element inspector", &text);
+	}
+}
+
+/// One context-menu item, carrying the SAME command ID as its
+/// menu-bar twin, so a popup dispatches through the one dispatch
+/// function — no second copy of any action.
+fn ctx(menu: &Menu, id: Id, text: &str) {
+	menu.append(id, text, "", ItemKind::Normal);
+}
+
+/// The Palette list's context menu. An empty palette still gets
+/// a menu (Elshara: an empty list should show that something is
+/// there and let you start): the three ways colors arrive. With
+/// a color selected, its own actions lead.
+fn show_palette_context(win: &Rc<Win>) {
+	let mut menu = Menu::builder().build();
+	if win.palette_list.borrow().selected().is_some() {
+		ctx(&menu, ID_INSPECT_COLOR, "Inspect Color…");
+		ctx(&menu, ID_SET_BACKGROUND, "Set as Background");
+		ctx(&menu, ID_REMOVE_COLOR, "Remove Color");
+		menu.append_separator();
+	}
+	ctx(&menu, ID_ADD_COLOR, "Add Color by Hex…");
+	ctx(&menu, ID_LOAD_STARTER, "Load Starter Colors");
+	ctx(&menu, ID_OPEN_IMAGE, "Extract from Image…");
+	win.palette_list.borrow().popup_menu(&mut menu);
+}
+
+/// The Elements list's context menu: with an element selected,
+/// its actions (inspect and lock first — the two this wave
+/// adds); empty or not, the Add items are always there, so an
+/// empty list can start the design from its own menu.
+fn show_elements_context(win: &Rc<Win>) {
+	let mut menu = Menu::builder().build();
+	if win.elements_list.borrow().selected().is_some() {
+		ctx(&menu, ID_INSPECT, "Inspect Selected…");
+		ctx(&menu, ID_LOCK_TOGGLE, "Lock/Unlock Selected");
+		ctx(&menu, ID_MOVE_SHAPE, "Move…");
+		ctx(&menu, ID_ROTATE_SHAPE, "Rotate…");
+		ctx(&menu, ID_RESIZE_SHAPE, "Resize…");
+		ctx(&menu, ID_RECOLOR_SHAPE, "Set to Palette Color");
+		ctx(&menu, ID_REMOVE_SHAPE, "Remove Shape");
+		menu.append_separator();
+	}
+	ctx(&menu, ID_ADD_RECT, "Add Rectangle…");
+	ctx(&menu, ID_ADD_ELLIPSE, "Add Ellipse…");
+	ctx(&menu, ID_ADD_STROKE, "Add Stroke…");
+	ctx(&menu, ID_ADD_TEXT, "Add Text…");
+	ctx(&menu, ID_ADD_IMAGE, "Add Image…");
+	ctx(&menu, ID_ADD_SYMBOL, "Add Symbol…");
+	win.elements_list.borrow().popup_menu(&mut menu);
+}
+
+/// The Layers list's context menu: inspect the selected layer,
+/// or open the Layers dialog (where layers are added, renamed
+/// and reordered). A design always has at least one layer, so
+/// this list is never empty.
+fn show_layers_context(win: &Rc<Win>) {
+	let mut menu = Menu::builder().build();
+	if win.layers_list.selected().is_some() {
+		ctx(&menu, ID_INSPECT_LAYER, "Inspect Layer…");
+	}
+	ctx(&menu, ID_LAYERS, "Layers…");
+	win.layers_list.popup_menu(&mut menu);
+}
+
+/// The Sliders page's context menu: the pins live in Project
+/// Options, so that is the menu — add or remove sliders right
+/// from the area they would appear in.
+fn show_sliders_context(win: &Rc<Win>) {
+	let mut menu = Menu::builder().build();
+	ctx(&menu, ID_PROJECT_OPTIONS, "Project Options… (choose pinned sliders)");
+	if let Some(page) = win.slider_page.borrow().as_ref() {
+		page.popup_menu(&mut menu, None);
+	}
+}
+
+/// Put one search hit where the cursor is, and say where it
+/// landed. The cursor, honestly defined per kind: a color goes
+/// to the palette and becomes the brush color (the color the
+/// next thing drawn will use); an element or symbol is copied
+/// onto the design — right after the selected element when one
+/// is selected, at the canvas centre otherwise; a template
+/// replaces the design, the way File, New from Template does.
+/// A pattern needs its two colors first, so it opens the
+/// pattern dialog instead and returns None here.
+fn insert_hit(win: &Rc<Win>, shared: &Shared, hit: &CatalogHit) -> Option<String> {
+	match hit {
+		CatalogHit::PaletteColor { index, .. } => {
+			let color = shared.borrow().palette.get(*index)?.color;
+			let state = shared.borrow();
+			select_color(win, &state, color);
+			let format = state.color_format;
+			drop(state);
+			shared.borrow_mut().brush.color = color;
+			Some(format!(
+				"{} is now the brush color: the next element drawn uses it.",
+				describe_in(color, format)
+			))
+		}
+		CatalogHit::StarterColor { color, .. } => {
+			let mut state = shared.borrow_mut();
+			let already = state.palette.iter().any(|pc| pc.color == *color);
+			if !already {
+				state.palette.push(PaletteColor::new(*color, Provenance::Starter));
+			}
+			state.brush.color = *color;
+			let format = state.color_format;
+			drop(state);
+			let state = shared.borrow();
+			refresh_lists(win, &state);
+			select_color(win, &state, *color);
+			Some(format!(
+				"{} {} the palette and is now the brush color.",
+				describe_in(*color, format),
+				if already { "was already in" } else { "was added to" }
+			))
+		}
+		CatalogHit::Element { layer, index, .. } => {
+			let mut state = shared.borrow_mut();
+			let source = state.drawing.layers.get(*layer)?.shapes.get(*index)?.clone();
+			let words = state.drawing.plain_of(&source);
+			// The landing spot: after the selected element (in
+			// its layer, offset a step so the copy is findable),
+			// or centred on the current layer.
+			let selected = win
+				.elements_list
+				.borrow()
+				.selected()
+				.and_then(|flat| locate(&state, flat));
+			let note = match selected {
+				Some((sli, ssi)) => {
+					let mut copy = source;
+					copy.x = (copy.x + 10)
+						.min((state.drawing.width as i32 - copy.w as i32).max(0));
+					copy.y = (copy.y + 10)
+						.min((state.drawing.height as i32 - copy.h as i32).max(0));
+					let layer_name = state.drawing.layers[sli].name.clone();
+					state.drawing.insert_shape(sli, ssi + 1, copy);
+					format!("on layer \"{layer_name}\", right after the selected element")
+				}
+				None => {
+					let mut copy = source;
+					copy.x = ((state.drawing.width as i32 - copy.w as i32) / 2).max(0);
+					copy.y = ((state.drawing.height as i32 - copy.h as i32) / 2).max(0);
+					let li = state.layer.min(state.drawing.layers.len() - 1);
+					let layer_name = state.drawing.layers[li].name.clone();
+					state.drawing.add_shape(li, copy);
+					format!("at the centre of the canvas on layer \"{layer_name}\"")
+				}
+			};
+			drop(state);
+			let state = shared.borrow();
+			refresh_lists(win, &state);
+			Some(format!("Copied the {words} {note}."))
+		}
+		CatalogHit::Symbol { name, .. } => {
+			let mut state = shared.borrow_mut();
+			let color = state.brush.color;
+			// Built the way the Symbols dialog builds them: the
+			// symbol's paths in a 100 by 100 box at the centre,
+			// stroked with the brush color and captioned.
+			let cx = ((state.drawing.width as i32 - 100) / 2).max(0);
+			let cy = ((state.drawing.height as i32 - 100) / 2).max(0);
+			let paths = symbols::symbol_paths(name, cx, cy, 100, 100)?;
+			let li = state.layer.min(state.drawing.layers.len() - 1);
+			let layer_name = state.drawing.layers[li].name.clone();
+			let opacity = state.current_opacity;
+			for path in paths {
+				let mut shape = Shape::stroke(path, 3, color);
+				shape.opacity = opacity;
+				shape.caption = Some(format!("{name} symbol"));
+				state.drawing.add_shape(li, shape);
+			}
+			drop(state);
+			let state = shared.borrow();
+			refresh_lists(win, &state);
+			Some(format!(
+				"The {name} symbol was stamped at the centre of the canvas on layer \"{layer_name}\", in the brush color."
+			))
+		}
+		CatalogHit::Template { name, .. } => {
+			let design = templates::template(name)?;
+			let mut state = shared.borrow_mut();
+			state.drawing = design;
+			state.layer = 0;
+			state.pinned_sliders = Vec::new();
+			state.slider_target = AdjustTarget::BaseColor;
+			state.page_jump_percent = DEFAULT_PAGE_JUMP_PERCENT;
+			reset_adjustment(&mut state);
+			drop(state);
+			build_sliders_tab(win, shared);
+			let state = shared.borrow();
+			refresh_lists(win, &state);
+			Some(format!(
+				"The design is now the {name} template. It is a normal design now: edit it, then Save Design to keep it."
+			))
+		}
+		CatalogHit::Pattern { .. } => None,
+	}
+}
+
+/// The Search and Insert dialog (Design menu, Ctrl+F): one
+/// field over everything the design can gain — palette colors,
+/// starter colors, the design's own elements, symbols,
+/// templates, patterns — and an Insert button (or Enter on a
+/// result) that puts the chosen thing at the cursor. Modelled
+/// on the Dictionary dialog: type, press Search, choose, insert.
+fn search_dialog(win: &Rc<Win>, shared: &Shared) {
+	let frame = win.frame;
+	let dialog =
+		Dialog::builder(&frame, "Search and Insert").with_size(620, 560).build();
+	let sizer = BoxSizer::builder(Orientation::Vertical).build();
+	let search_label = StaticText::builder(&dialog).with_label("Search for").build();
+	let field = TextCtrl::builder(&dialog).build();
+	let search_button = Button::builder(&dialog).with_label("Search").build();
+	let search_row = BoxSizer::builder(Orientation::Horizontal).build();
+	search_row.add(&search_label, 0, SizerFlag::All, 5);
+	search_row.add(&field, 1, SizerFlag::All, 5);
+	search_row.add(&search_button, 0, SizerFlag::All, 5);
+	sizer.add_sizer(&search_row, 0, SizerFlag::Expand, 0);
+	let list_label = StaticText::builder(&dialog).with_label("Results").build();
+	sizer.add(&list_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	let list = QuietList::<usize>::new(&dialog, "Results");
+	sizer.add(&list, 1, SizerFlag::Expand | SizerFlag::All, 5);
+	let insert = Button::builder(&dialog).with_label("Insert").build();
+	let close = Button::builder(&dialog).with_label("Close").build();
+	let buttons = BoxSizer::builder(Orientation::Horizontal).build();
+	buttons.add(&insert, 0, SizerFlag::All, 5);
+	buttons.add(&close, 0, SizerFlag::All, 5);
+	sizer.add_sizer(&buttons, 0, SizerFlag::All, 5);
+	dialog.set_sizer(sizer, true);
+	let list = Rc::new(list);
+	let hits: Rc<RefCell<Vec<CatalogHit>>> = Rc::new(RefCell::new(Vec::new()));
+	let run_search = {
+		let (list, field, hits, shared) =
+			(list.clone(), field.clone(), hits.clone(), shared.clone());
+		move || {
+			let project = {
+				let state = shared.borrow();
+				Project {
+					drawing: state.drawing.clone(),
+					palette: state.palette.clone(),
+					pinned_sliders: state.pinned_sliders.clone(),
+					slider_target: state.slider_target,
+					page_jump_percent: state.page_jump_percent,
+				}
+			};
+			let found = search_catalog(&project, &field.get_value());
+			let rows: Vec<(usize, String)> = found
+				.iter()
+				.enumerate()
+				.map(|(i, h)| (i, h.label().to_string()))
+				.collect();
+			*hits.borrow_mut() = found;
+			list.update_labelled(rows, Select::Start);
+		}
+	};
+	let run_search = Rc::new(run_search);
+	run_search();
+	{
+		let run = run_search.clone();
+		search_button.on_click(move |_| run());
+	}
+	let do_insert = {
+		let (list, hits, dialog, win, shared) =
+			(list.clone(), hits.clone(), dialog.clone(), win.clone(), shared.clone());
+		move || {
+			let Some(i) = list.selected() else { return };
+			let hit = hits.borrow().get(i).cloned();
+			let Some(hit) = hit else { return };
+			if let CatalogHit::Pattern { name, .. } = hit {
+				// A pattern needs its two colors first.
+				dialog.end_modal(ID_CANCEL);
+				pattern_dialog(&win, &shared, Some(name));
+				build_sliders_tab(&win, &shared);
+				let state = shared.borrow();
+				refresh_lists(&win, &state);
+				return;
+			}
+			if let Some(note) = insert_hit(&win, &shared, &hit) {
+				dialog.end_modal(ID_OK);
+				report_dialog(&win, "Inserted", "What was inserted", &note);
+			}
+		}
+	};
+	let do_insert = Rc::new(do_insert);
+	{
+		let go = do_insert.clone();
+		insert.on_click(move |_| go());
+	}
+	{
+		let go = do_insert.clone();
+		list.on_key_down(move |data| {
+			let WindowEventData::Keyboard(kb) = data else { return false };
+			if kb.get_key_code() == Some(WXK_RETURN) {
+				go();
+				true
+			} else {
+				false
+			}
+		});
+	}
+	{
+		let dialog = dialog.clone();
+		close.on_click(move |_| dialog.end_modal(ID_CANCEL));
+	}
+	dialog.show_modal();
+}
+
+/// The Pattern dialog (File, New from Pattern; also where a
+/// pattern search result lands): pick the weave and the two
+/// colors it is woven from — the marks and the ground — then
+/// start the design. The palette pickers list the palette; a
+/// project with no colors yet is told to add some first.
+fn pattern_dialog(win: &Rc<Win>, shared: &Shared, preselect: Option<&str>) {
+	let frame = win.frame;
+	let (names, colors) = {
+		let state = shared.borrow();
+		if state.palette.is_empty() {
+			frame.set_status_text(
+				"A pattern is woven from two palette colors, and this project has none yet: add a color or load the starter colors first.",
+				0,
+			);
+			return;
+		}
+		(
+			state.palette.iter().map(|pc| pc.spoken(state.color_format)).collect::<Vec<_>>(),
+			state.palette.iter().map(|pc| pc.color).collect::<Vec<_>>(),
+		)
+	};
+	// The ground defaults to the design's background when the
+	// palette holds it, else the second color.
+	let background = shared.borrow().drawing.background;
+	let ground_default = colors
+		.iter()
+		.position(|c| *c == background)
+		.unwrap_or(if colors.len() > 1 { 1 } else { 0 });
+	let dialog = Dialog::builder(&frame, "New from Pattern").build();
+	let sizer = BoxSizer::builder(Orientation::Vertical).build();
+	let kind_label = StaticText::builder(&dialog).with_label("Pattern").build();
+	sizer.add(&kind_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	let kinds = Choice::builder(&dialog).build();
+	for name in templates::PATTERN_NAMES {
+		kinds.append(name);
+	}
+	kinds.set_selection(
+		preselect
+			.and_then(|p| templates::PATTERN_NAMES.iter().position(|n| *n == p))
+			.unwrap_or(0) as u32,
+	);
+	sizer.add(&kinds, 0, SizerFlag::Expand | SizerFlag::All, 5);
+	let first_label =
+		StaticText::builder(&dialog).with_label("First color (the marks)").build();
+	sizer.add(&first_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	let first = Choice::builder(&dialog).build();
+	for row in &names {
+		first.append(row);
+	}
+	first.set_selection(0);
+	sizer.add(&first, 0, SizerFlag::Expand | SizerFlag::All, 5);
+	let second_label =
+		StaticText::builder(&dialog).with_label("Second color (the ground)").build();
+	sizer.add(&second_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	let second = Choice::builder(&dialog).build();
+	for row in &names {
+		second.append(row);
+	}
+	second.set_selection(ground_default as u32);
+	sizer.add(&second, 0, SizerFlag::Expand | SizerFlag::All, 5);
+	let start = Button::builder(&dialog).with_label("Start Pattern Design").build();
+	let close = Button::builder(&dialog).with_label("Close").build();
+	let buttons = BoxSizer::builder(Orientation::Horizontal).build();
+	buttons.add(&start, 0, SizerFlag::All, 5);
+	buttons.add(&close, 0, SizerFlag::All, 5);
+	sizer.add_sizer(&buttons, 0, SizerFlag::All, 5);
+	dialog.set_sizer(sizer, true);
+	{
+		let (dialog, shared) = (dialog.clone(), shared.clone());
+		start.on_click(move |_| {
+			let kind = templates::PATTERN_NAMES
+				.get(kinds.get_selection().map(|i| i as usize).unwrap_or(0))
+				.copied();
+			let a = colors.get(first.get_selection().map(|i| i as usize).unwrap_or(0)).copied();
+			let b = colors
+				.get(second.get_selection().map(|i| i as usize).unwrap_or(0))
+				.copied();
+			let (Some(kind), Some(a), Some(b)) = (kind, a, b) else { return };
+			let Some(design) = templates::pattern_template(kind, a, b) else { return };
+			let mut state = shared.borrow_mut();
+			state.drawing = design;
+			state.layer = 0;
+			// A new project starts from scratch, like a template.
+			state.pinned_sliders = Vec::new();
+			state.slider_target = AdjustTarget::BaseColor;
+			state.page_jump_percent = DEFAULT_PAGE_JUMP_PERCENT;
+			reset_adjustment(&mut state);
+			drop(state);
+			frame.set_status_text(
+				&format!("Started a new {kind} design from the two colors. It is a normal design now: edit it, then Save Design to keep it."),
+				0,
+			);
+			dialog.end_modal(ID_OK);
+		});
+	}
+	{
+		let dialog = dialog.clone();
+		close.on_click(move |_| dialog.end_modal(ID_CANCEL));
+	}
+	dialog.show_modal();
+	// The caller (dispatch / the search dialog) refreshes the
+	// lists and sliders tab, the way a template load does.
+}
+
 /// The Viewability dialog (Design menu): ask where the viewer
 /// stands (an angle in degrees — 0 is straight on from the
 /// front, and an element turned more than 90 degrees away from
@@ -2813,6 +3479,7 @@ fn color_tools_dialog(win: &Rc<Win>, shared: &Shared) {
 		if !state.palette.is_empty() {
 			let sel = win
 				.palette_list
+				.borrow()
 				.selected()
 				.filter(|i| *i < state.palette.len())
 				.unwrap_or(0);
@@ -3613,6 +4280,16 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 				}
 			}
 		}
+		ID_ADD_COLOR => {
+			// Adding a color by hand happens in the hex field on
+			// the main window (the palette context menu's way in):
+			// take the user there and say so.
+			win.hex_field.set_focus();
+			frame.set_status_text(
+				"Type a hex value in the Hex value field, then press Apply Hex to add the color.",
+				0,
+			);
+		}
 		ID_LOAD_STARTER => {
 			let mut state = shared.borrow_mut();
 			load_starter_colors(win, &mut state);
@@ -3685,7 +4362,7 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 		}
 		ID_REMOVE_COLOR => {
 			let mut state = shared.borrow_mut();
-			if let Some(i) = win.palette_list.selected() {
+			if let Some(i) = win.palette_list.borrow().selected() {
 				if i < state.palette.len() {
 					let gone = state.palette.remove(i).color;
 					let label = describe_in(gone, state.color_format);
@@ -3923,7 +4600,7 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 			}
 		}
 		ID_MOVE_SHAPE | ID_ROTATE_SHAPE => {
-			let Some(flat) = win.elements_list.selected() else {
+			let Some(flat) = win.elements_list.borrow().selected() else {
 				frame.set_status_text("Select a shape first.", 0);
 				return;
 			};
@@ -3977,7 +4654,7 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 			}
 		}
 		ID_RESIZE_SHAPE => {
-			let Some(flat) = win.elements_list.selected() else {
+			let Some(flat) = win.elements_list.borrow().selected() else {
 				frame.set_status_text("Select a shape first.", 0);
 				return;
 			};
@@ -4019,7 +4696,7 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 		}
 		ID_RECOLOR_SHAPE => {
 			let mut state = shared.borrow_mut();
-			let (Some(flat), Some(c)) = (win.elements_list.selected(), selected_color(win, &state))
+			let (Some(flat), Some(c)) = (win.elements_list.borrow().selected(), selected_color(win, &state))
 			else {
 				frame.set_status_text("Select a shape and a palette color first.", 0);
 				return;
@@ -4063,6 +4740,73 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 			symbols_dialog(win, shared);
 			let state = shared.borrow();
 			refresh_lists(win, &state);
+		}
+		ID_PATTERN_TEMPLATES => {
+			pattern_dialog(win, shared, None);
+			// A pattern is a new project too: rebuild the tab the
+			// way a template load does.
+			build_sliders_tab(win, shared);
+			let state = shared.borrow();
+			refresh_lists(win, &state);
+		}
+		ID_INSPECT => inspect_selected(win, shared),
+		ID_INSPECT_LAYER => {
+			if let Some(i) = win.layers_list.selected() {
+				let state = shared.borrow();
+				if let Some(text) = inspect_layer(&state.drawing, i) {
+					report_dialog(win, "Inspector: layer", "Layer inspector", &text);
+				}
+			}
+		}
+		ID_INSPECT_COLOR => {
+			if let Some(i) = win.palette_list.borrow().selected() {
+				let state = shared.borrow();
+				if let Some(text) =
+					inspect_color(&state.drawing, &state.palette, i)
+				{
+					report_dialog(win, "Inspector: color", "Color inspector", &text);
+				}
+			}
+		}
+		ID_LOCK_TOGGLE => {
+			if let Some((li, si)) = selected_element_locate(win, shared) {
+				let now = {
+					let mut state = shared.borrow_mut();
+					let next = !state.drawing.layers[li].shapes[si].locked;
+					state.drawing.set_shape_locked(li, si, next);
+					next
+				};
+				let state = shared.borrow();
+				refresh_lists(win, &state);
+				frame.set_status_text(
+					if now {
+						"Element locked: bulk changes will skip it; direct edits still work."
+					} else {
+						"Element unlocked: bulk changes reach it again."
+					},
+					0,
+				);
+			}
+		}
+		ID_SEARCH_INSERT => search_dialog(win, shared),
+		ID_LISTS_SIDE_BY_SIDE => {
+			let on = {
+				let mut state = shared.borrow_mut();
+				state.lists_side_by_side = !state.lists_side_by_side;
+				state.lists_side_by_side
+			};
+			if let Some(bar) = frame.get_menu_bar() {
+				bar.check_item(ID_LISTS_SIDE_BY_SIDE, on);
+			}
+			rebuild_list_pages(win, shared);
+			frame.set_status_text(
+				if on {
+					"Palette and Elements now sit side by side on the Lists page."
+				} else {
+					"Palette and Elements are back on their own tabs."
+				},
+				0,
+			);
 		}
 		ID_VIEWABILITY => viewability_dialog(win, shared),
 		ID_SAVE_SCENE => {
@@ -4326,7 +5070,7 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 		ID_BRUSHES => brushes_dialog(win, shared),
 		ID_REMOVE_SHAPE => {
 			let mut state = shared.borrow_mut();
-			if let Some(flat) = win.elements_list.selected() {
+			if let Some(flat) = win.elements_list.borrow().selected() {
 				if let Some((li, si)) = locate(&state, flat) {
 					state.drawing.remove_shape(li, si);
 					refresh_lists(win, &state);
@@ -4374,6 +5118,7 @@ fn build_menus(frame: &Frame) {
 	file.append(ID_SAVE_SCENE, "Save Sc&ene…", "Save the current design as a scene file, ready to insert into other designs as a group.", ItemKind::Normal);
 	file.append(ID_INSERT_SCENE, "Insert &Scene…", "Insert a saved scene's elements onto the current layer, captioned as one group under the scene's name.", ItemKind::Normal);
 	file.append(ID_TEMPLATES, "New from &Template…", "Start a new design from a built-in layout: birthday card, house, face, chart, portrait or landscape.", ItemKind::Normal);
+	file.append(ID_PATTERN_TEMPLATES, "New from &Pattern…", "Start a new design as a two-color pattern — checkerboard, stripes or dots — woven from two palette colors you pick.", ItemKind::Normal);
 	file.append_separator();
 	file.append_submenu(import, "&Import", "Bring images, colors and designs in.");
 	file.append_submenu(export, "&Export", "Write the design out: pictures, pages, text and touch.");
@@ -4428,6 +5173,9 @@ fn build_menus(frame: &Frame) {
 	design.append_submenu(arrange, "A&rrange Selected Shape", "Move, turn, resize, recolor or remove the selected element.");
 	design.append_separator();
 	design.append(ID_ELEMENTS, "E&lements…", "Every element in plain language, with rename, describe, move, resize, recolor and delete.", ItemKind::Normal);
+	design.append(ID_INSPECT, "In&spect Selected…", "The inspector: what the selected element is, where it is used, what can change it and what happens if it is left alone. Enter on the Elements list does the same.", ItemKind::Normal);
+	design.append(ID_LOCK_TOGGLE, "&Lock/Unlock Selected", "Lock the selected element so bulk changes skip it, or unlock it so they reach it again. Direct edits work either way.", ItemKind::Normal);
+	design.append(ID_SEARCH_INSERT, "&Search and Insert…\tCtrl+F", "Search palette colors, starter colors, elements, symbols and templates by name, and insert what you find at the cursor.", ItemKind::Normal);
 	design.append(ID_LAYERS, "&Layers…", "Add, rename, reorder, show or hide layers, and choose where new shapes land.", ItemKind::Normal);
 	design.append(ID_ANIMATION, "Anim&ation…", "Build a film from frames of the canvas, each with its own duration.", ItemKind::Normal);
 	design.append(ID_DESCRIBE_AREA, "&Describe Area…", "Hear only the elements inside one part of the canvas.", ItemKind::Normal);
@@ -4455,6 +5203,7 @@ fn build_menus(frame: &Frame) {
 	view.append(ID_FORMAT_BINARY, "Color Values as &Binary", "Show and speak color values as a 24-bit binary string.", ItemKind::Check);
 	view.append_separator();
 	view.append(ID_ANNOUNCE_SLIDERS, "&Announce Slider Changes", "Moving a slider says what changed and that everything else stayed the same. Off: only the slider's name and new value are said.", ItemKind::Check);
+	view.append(ID_LISTS_SIDE_BY_SIDE, "Lists &Side by Side", "Show the Palette and Elements lists side by side on one Lists page instead of on separate tabs. This session only.", ItemKind::Check);
 
 	let help = Menu::builder().build();
 	help.append(ID_DICTIONARY, "&Dictionary…", "Plain-language definitions of the color and design terms the app uses.", ItemKind::Normal);
@@ -4494,30 +5243,9 @@ fn main() {
 		// a new project starts with an empty palette, no elements
 		// and its one real layer.
 		let notebook = Notebook::builder(&panel).build();
-		let palette_page = Panel::builder(&notebook).build();
-		let palette_label = StaticText::builder(&palette_page).with_label("Palette").build();
-		let palette_list = QuietList::new(&palette_page, "Palette");
-		let palette_page_sizer = BoxSizer::builder(Orientation::Vertical).build();
-		palette_page_sizer
-			.add(&palette_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
-		palette_page_sizer.add(&palette_list, 1, SizerFlag::Expand | SizerFlag::All, 5);
-		palette_page.set_sizer(palette_page_sizer, true);
-		let elements_page = Panel::builder(&notebook).build();
-		let elements_label = StaticText::builder(&elements_page).with_label("Elements").build();
-		let elements_list = QuietList::new(&elements_page, "Elements");
-		let elements_page_sizer = BoxSizer::builder(Orientation::Vertical).build();
-		elements_page_sizer
-			.add(&elements_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
-		elements_page_sizer.add(&elements_list, 1, SizerFlag::Expand | SizerFlag::All, 5);
-		elements_page.set_sizer(elements_page_sizer, true);
-		let layers_page = Panel::builder(&notebook).build();
-		let layers_label = StaticText::builder(&layers_page).with_label("Layers").build();
-		let layers_list = QuietList::new(&layers_page, "Layers");
-		let layers_page_sizer = BoxSizer::builder(Orientation::Vertical).build();
-		layers_page_sizer
-			.add(&layers_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
-		layers_page_sizer.add(&layers_list, 1, SizerFlag::Expand | SizerFlag::All, 5);
-		layers_page.set_sizer(layers_page_sizer, true);
+		let (palette_page, palette_list) = list_panel(&notebook, "Palette");
+		let (elements_page, elements_list) = list_panel(&notebook, "Elements");
+		let (layers_page, layers_list) = list_panel(&notebook, "Layers");
 		notebook.add_page(&palette_page, "Palette", true, None);
 		notebook.add_page(&elements_page, "Elements", false, None);
 		notebook.add_page(&layers_page, "Layers", false, None);
@@ -4610,13 +5338,15 @@ fn main() {
 			adjust_base: None,
 			scale_base: None,
 			channel_run: None,
+			lists_side_by_side: false,
 		}));
 		let win = Rc::new(Win {
 			frame,
 			notebook,
-			palette_list,
-			elements_list,
+			palette_list: RefCell::new(palette_list),
+			elements_list: RefCell::new(elements_list),
 			layers_list,
+			list_pages: RefCell::new(vec![palette_page, elements_page]),
 			stats_text,
 			readout,
 			hex_field,
@@ -4637,29 +5367,27 @@ fn main() {
 			refresh_lists(&win, &state);
 		}
 
+		wire_palette_list(&win, &shared);
+		wire_elements_list(&win, &shared);
 		{
 			let (w, s) = (win.clone(), shared.clone());
-			win.palette_list.on_selection_changed(move || {
-				let state = s.borrow();
-				if let Some(c) = selected_color(&w, &state) {
-					select_color(&w, &state, c);
+			win.layers_list.on_key_down(move |data| {
+				let WindowEventData::Keyboard(kb) = data else { return false };
+				if kb.get_key_code() != Some(WXK_RETURN) {
+					return false;
 				}
-				refresh_menu_states(&w, &state);
+				if let Some(i) = w.layers_list.selected() {
+					let state = s.borrow();
+					if let Some(text) = inspect_layer(&state.drawing, i) {
+						report_dialog(&w, "Inspector: layer", "Layer inspector", &text);
+					}
+				}
+				true
 			});
 		}
 		{
-			let (w, s) = (win.clone(), shared.clone());
-			win.elements_list.on_selection_changed(move || {
-				// A different element is a different adjustment
-				// and scale target: the next slider move starts
-				// a fresh run from its colors and size.
-				if let Ok(mut state) = s.try_borrow_mut() {
-					reset_adjustment(&mut state);
-				}
-				let state = s.borrow();
-				refresh_menu_states(&w, &state);
-				refresh_slider_values(&w, &state);
-			});
+			let w = win.clone();
+			win.layers_list.on_context_menu(move || show_layers_context(&w));
 		}
 		{
 			let (w, s) = (win.clone(), shared.clone());
@@ -4699,7 +5427,7 @@ fn main() {
 				match Srgb::from_hex(text.trim()) {
 					Some(c) => {
 						let mut state = s.borrow_mut();
-						if let Some(i) = w.palette_list.selected() {
+						if let Some(i) = w.palette_list.borrow().selected() {
 							if i < state.palette.len() {
 								state.palette[i] = PaletteColor::typed(c);
 								refresh_lists(&w, &state);
@@ -4728,7 +5456,7 @@ fn main() {
 				);
 				let c = o.to_srgb();
 				let mut state = s.borrow_mut();
-				if let Some(i) = w.palette_list.selected() {
+				if let Some(i) = w.palette_list.borrow().selected() {
 					if i < state.palette.len() {
 						state.palette[i] = PaletteColor::typed(c);
 						refresh_lists(&w, &state);

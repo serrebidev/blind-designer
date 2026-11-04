@@ -4,6 +4,26 @@ Readable release history for Blind Designer (renamed from Transversion at 0.2.0)
 section is its GitHub release note, taken from this file by the release
 workflow.
 
+## Unreleased
+
+- One interaction surface at a time, per project (Elshara's
+  principle: on screen, anything that is not an editor is a
+  slider, a wizard or a menu — what cannot be drawn is slid,
+  and what cannot be slid is typed). Each project now has an
+  interaction mode — Draw, Slide or Type — switched in one
+  place, Design, Project Options, and saved in the design
+  file. In Slide mode the Sliders tab is the surface and the
+  typed hex and L C H fields hide; Move, Resize and Rotate
+  rest on the selected shape's part sliders instead of
+  opening their dialogs. In Type mode the typed fields show
+  and the Sliders tab is not there. In Draw mode a Draw with
+  Pointer button, and a line saying the drawing tools lead,
+  take the fields' place. New projects — the setup wizard's,
+  templates and patterns — start in Slide mode. Projects
+  opened from files keep the mode they were saved with, and
+  a file saved before modes existed opens in Type mode, the
+  surface it has always known.
+
 ## 0.17.0
 
 - Every value broken into its parts, as sliders (Elshara's

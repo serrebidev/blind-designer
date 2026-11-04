@@ -27,10 +27,13 @@
 //! Two project-level sections follow the same rule — present
 //! only when they carry something: the sliders section gains a
 //! "slider-grayscale-start" line when the project starts in
-//! grayscale, and a project with a stated goal (see
-//! `crate::goals`) ends with a "goal" section holding its kind
-//! and one line per focus answer, an open answer written as a
-//! dash. A project with neither writes neither, byte for byte.
+//! grayscale and a "slider-interaction-mode" line when the
+//! project's interaction mode is not the typed-fields mode a
+//! file without one means, and a project with a stated goal
+//! (see `crate::goals`) ends with a "goal" section holding its
+//! kind and one line per focus answer, an open answer written
+//! as a dash. A project with neither writes neither, byte for
+//! byte.
 //!
 //! The format is hand-rolled line-oriented text in the recreation
 //! file's spirit (serde is not a workspace dependency, and one design
@@ -75,6 +78,61 @@ pub struct Project {
 	/// projects that already had their colours, so they load
 	/// with it off.
 	pub grayscale_start: bool,
+	/// The project's interaction mode (Elshara's principle:
+	/// one interaction surface at a time — the pointer drawing
+	/// tools, the sliders, or typed fields — switched in
+	/// Project Options). Files that do not say load as
+	/// [`InteractionMode::Type`], the surface those projects
+	/// were saved from; new projects start in Slide, app-side.
+	pub interaction_mode: InteractionMode,
+}
+
+/// One project's interaction surface (Elshara's principle:
+/// anything on screen that is not a document editor is a
+/// slider, a wizard or a menu — what cannot be drawn is slid,
+/// what cannot be slid is typed, and only one of the three
+/// surfaces shows at a time, per project). The mode is the
+/// project's own, persisted with its slider settings and
+/// switched in one place: Project Options.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum InteractionMode {
+	/// The pointer drawing tools lead.
+	Draw,
+	/// The Sliders tab is the surface; typed fields hide.
+	Slide,
+	/// The typed fields show (the hex box, the L C H numbers);
+	/// the Sliders tab hides. The mode a file that does not
+	/// name one means — the surface every project knew before
+	/// modes existed.
+	#[default]
+	Type,
+}
+
+impl InteractionMode {
+	pub const ALL: [InteractionMode; 3] =
+		[InteractionMode::Draw, InteractionMode::Slide, InteractionMode::Type];
+
+	/// The spoken name, for the Project Options picker.
+	pub fn name(self) -> &'static str {
+		match self {
+			InteractionMode::Draw => "Draw",
+			InteractionMode::Slide => "Slide",
+			InteractionMode::Type => "Type",
+		}
+	}
+
+	/// The id the file format writes.
+	pub fn id(self) -> &'static str {
+		match self {
+			InteractionMode::Draw => "draw",
+			InteractionMode::Slide => "slide",
+			InteractionMode::Type => "type",
+		}
+	}
+
+	pub fn from_id(id: &str) -> Option<InteractionMode> {
+		InteractionMode::ALL.iter().find(|m| m.id() == id).copied()
+	}
 }
 
 /// The page-jump percent a project starts with, and the value a
@@ -953,6 +1011,7 @@ impl Project {
 			|| self.slider_target != AdjustTarget::BaseColor
 			|| self.page_jump_percent != DEFAULT_PAGE_JUMP_PERCENT
 			|| self.grayscale_start
+			|| self.interaction_mode != InteractionMode::Type
 		{
 			out.push_str(&format!("sliders {}\n", self.pinned_sliders.len()));
 			for id in &self.pinned_sliders {
@@ -966,6 +1025,12 @@ impl Project {
 			}
 			if self.grayscale_start {
 				out.push_str("slider-grayscale-start\n");
+			}
+			if self.interaction_mode != InteractionMode::Type {
+				out.push_str(&format!(
+					"slider-interaction-mode {}\n",
+					self.interaction_mode.id()
+				));
 			}
 		}
 		// The goal section, likewise only when the project has
@@ -1071,6 +1136,7 @@ impl Project {
 		let mut slider_target = AdjustTarget::BaseColor;
 		let mut page_jump_percent = DEFAULT_PAGE_JUMP_PERCENT;
 		let mut grayscale_start = false;
+		let mut interaction_mode = InteractionMode::Type;
 		let mut goal: Option<ProjectGoal> = None;
 		loop {
 			let section = all
@@ -1131,6 +1197,12 @@ impl Project {
 						next("the grayscale start line")?;
 						grayscale_start = true;
 					}
+					if peek_is("slider-interaction-mode") {
+						let toks = next("the interaction mode")?;
+						let id = toks.get(1).ok_or("missing interaction mode")?;
+						interaction_mode = InteractionMode::from_id(id)
+							.ok_or_else(|| format!("unknown interaction mode: {id}"))?;
+					}
 				}
 				Some("goal") => {
 					let head = next("the project goal")?;
@@ -1169,6 +1241,7 @@ impl Project {
 			page_jump_percent,
 			goal,
 			grayscale_start,
+			interaction_mode,
 		})
 	}
 }
@@ -1258,6 +1331,7 @@ mod tests {
 			page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT,
 			goal: None,
 			grayscale_start: false,
+			interaction_mode: InteractionMode::Type,
 		}
 	}
 
@@ -1301,6 +1375,7 @@ mod tests {
 			page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT,
 			goal: None,
 			grayscale_start: false,
+			interaction_mode: InteractionMode::Type,
 		};
 		let back = Project::from_text(&project.to_text()).unwrap();
 		assert_eq!(back.to_text(), project.to_text());
@@ -1316,7 +1391,7 @@ mod tests {
 		let mut dashed = Shape::stroke(vec![(1, 1), (90, 90)], 5, Srgb::new(0, 0, 255));
 		dashed.pattern = "dashed".to_string();
 		d.add_shape(0, dashed);
-		let project = Project { drawing: d, palette: Vec::new(), pinned_sliders: Vec::new(), slider_target: AdjustTarget::BaseColor, page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT, goal: None, grayscale_start: false };
+		let project = Project { drawing: d, palette: Vec::new(), pinned_sliders: Vec::new(), slider_target: AdjustTarget::BaseColor, page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT, goal: None, grayscale_start: false, interaction_mode: InteractionMode::Type };
 		let text = project.to_text();
 		let back = Project::from_text(&text).expect("the new kinds read back");
 		assert_eq!(back.to_text(), text);
@@ -1367,7 +1442,7 @@ end
 		d.set_background(Srgb::BLACK);
 		d.add_layer("Back");
 		d.add_frame();
-		let project = Project { drawing: d, palette: Vec::new(), pinned_sliders: Vec::new(), slider_target: AdjustTarget::BaseColor, page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT, goal: None, grayscale_start: false };
+		let project = Project { drawing: d, palette: Vec::new(), pinned_sliders: Vec::new(), slider_target: AdjustTarget::BaseColor, page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT, goal: None, grayscale_start: false, interaction_mode: InteractionMode::Type };
 		let text = project.to_text();
 		assert!(text.contains("frames 2\n"), "{text}");
 		let back = Project::from_text(&text).expect("a project with frames reads back");
@@ -1474,6 +1549,56 @@ end
 	}
 
 	#[test]
+	fn interaction_mode_round_trips_for_all_three_modes() {
+		for mode in InteractionMode::ALL {
+			let mut project = rich_project();
+			project.interaction_mode = mode;
+			let text = project.to_text();
+			let back = Project::from_text(&text).unwrap();
+			assert_eq!(back.interaction_mode, mode);
+			assert_eq!(back.to_text(), text);
+			if mode == InteractionMode::Type {
+				// Type is what a file without the line means, so
+				// Type itself is never written.
+				assert!(!text.contains("slider-interaction-mode"), "{text}");
+			} else {
+				assert!(
+					text.contains(&format!("slider-interaction-mode {}\n", mode.id())),
+					"{text}"
+				);
+			}
+		}
+	}
+
+	#[test]
+	fn a_file_without_an_interaction_mode_loads_as_type() {
+		// Every project saved before modes existed: no line in
+		// the sliders section (here no section at all), and the
+		// project keeps the typed-fields surface it was saved
+		// from.
+		let project = rich_project();
+		assert_eq!(project.interaction_mode, InteractionMode::Type);
+		let text = project.to_text();
+		assert!(!text.contains("sliders"), "{text}");
+		let back = Project::from_text(&text).unwrap();
+		assert_eq!(back.interaction_mode, InteractionMode::Type);
+		// A malformed mode is a load error, never a silent guess.
+		let bad = "\
+blind-designer-project 1
+canvas 800 600
+background #FFFFFF
+palette 0
+layers 1
+layer \"Layer 1\" visible 0
+log 0
+sliders 0
+slider-interaction-mode spin
+end
+";
+		assert!(Project::from_text(bad).is_err());
+	}
+
+	#[test]
 	fn variables_substituted_events_round_trip() {
 		let mut d = Drawing::new(100, 100, Srgb::WHITE);
 		d.add_shape(
@@ -1489,6 +1614,7 @@ end
 			page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT,
 			goal: None,
 			grayscale_start: false,
+			interaction_mode: InteractionMode::Type,
 		};
 		let text = project.to_text();
 		assert!(text.contains("event variables-substituted 1\n"), "{text}");
@@ -1515,6 +1641,7 @@ end
 			page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT,
 			goal: None,
 			grayscale_start: false,
+			interaction_mode: InteractionMode::Type,
 		};
 		let text = project.to_text();
 		assert!(text.contains("event color-treated \"layer \\\"Layer 1\\\"\" 1 0\n"), "{text}");
@@ -1558,7 +1685,7 @@ end
 		veil.opacity = 25;
 		d.add_shape(0, veil);
 		d.add_shape(0, Shape::new(ShapeKind::Ellipse, 5, 5, 20, 20, Srgb::WHITE));
-		let project = Project { drawing: d, palette: Vec::new(), pinned_sliders: Vec::new(), slider_target: AdjustTarget::BaseColor, page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT, goal: None, grayscale_start: false };
+		let project = Project { drawing: d, palette: Vec::new(), pinned_sliders: Vec::new(), slider_target: AdjustTarget::BaseColor, page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT, goal: None, grayscale_start: false, interaction_mode: InteractionMode::Type };
 		let text = project.to_text();
 		// The translucent shapes carry their percent last; the
 		// fully opaque ellipse's line is exactly the old shape.
@@ -1595,7 +1722,7 @@ end
 		d.set_shape_locked(0, 2, true);
 		// An unlocked shape: nothing extra, byte-identical.
 		d.add_shape(0, Shape::new(ShapeKind::Ellipse, 5, 5, 20, 20, Srgb::WHITE));
-		let project = Project { drawing: d, palette: Vec::new(), pinned_sliders: Vec::new(), slider_target: AdjustTarget::BaseColor, page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT, goal: None, grayscale_start: false };
+		let project = Project { drawing: d, palette: Vec::new(), pinned_sliders: Vec::new(), slider_target: AdjustTarget::BaseColor, page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT, goal: None, grayscale_start: false, interaction_mode: InteractionMode::Type };
 		let text = project.to_text();
 		assert!(text.contains("shape rectangle 10 10 50 50 #000000 0.0 3 - - locked\n"), "{text}");
 		assert!(text.contains("shape rectangle 100 10 50 50 #000000 0.0 3 - - 40 r30 locked\n"), "{text}");
@@ -1625,7 +1752,7 @@ end
 		let near = d.add_layer("Near");
 		d.set_layer_depth(near, DepthRole::Foreground);
 		d.add_layer("Plain");
-		let project = Project { drawing: d, palette: Vec::new(), pinned_sliders: Vec::new(), slider_target: AdjustTarget::BaseColor, page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT, goal: None, grayscale_start: false };
+		let project = Project { drawing: d, palette: Vec::new(), pinned_sliders: Vec::new(), slider_target: AdjustTarget::BaseColor, page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT, goal: None, grayscale_start: false, interaction_mode: InteractionMode::Type };
 		let text = project.to_text();
 		// Role-carrying layers name the role last; the unassigned
 		// layer's line is exactly the old shape.
@@ -1678,7 +1805,7 @@ end
 		d.add_shape(0, ghost_round);
 		d.add_shape(0, Shape::new(ShapeKind::Rectangle, 130, 10, 50, 50, Srgb::BLACK));
 		d.set_shape_corner(0, 0, 30);
-		let project = Project { drawing: d, palette: Vec::new(), pinned_sliders: Vec::new(), slider_target: AdjustTarget::BaseColor, page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT, goal: None, grayscale_start: false };
+		let project = Project { drawing: d, palette: Vec::new(), pinned_sliders: Vec::new(), slider_target: AdjustTarget::BaseColor, page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT, goal: None, grayscale_start: false, interaction_mode: InteractionMode::Type };
 		let text = project.to_text();
 		// A fully opaque rounded rectangle writes its opacity so
 		// the corner can follow it; the sharp rectangle's line is
@@ -1712,7 +1839,7 @@ end
 			),
 			crate::drawing::BulkOutcome { changed: 1, locked: 0 }
 		);
-		let project = Project { drawing: d, palette: Vec::new(), pinned_sliders: Vec::new(), slider_target: AdjustTarget::BaseColor, page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT, goal: None, grayscale_start: false };
+		let project = Project { drawing: d, palette: Vec::new(), pinned_sliders: Vec::new(), slider_target: AdjustTarget::BaseColor, page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT, goal: None, grayscale_start: false, interaction_mode: InteractionMode::Type };
 		let text = project.to_text();
 		assert!(text.contains("event depth-adjusted midground 1"), "{text}");
 		let back = Project::from_text(&text).expect("depth events read back");
@@ -1726,13 +1853,13 @@ end
 		let mut scene = Drawing::new(300, 200, Srgb::WHITE);
 		scene.add_shape(0, Shape::new(ShapeKind::Rectangle, 0, 150, 300, 50, Srgb::new(30, 60, 120)));
 		scene.add_shape(0, Shape::new(ShapeKind::Ellipse, 240, 20, 40, 40, Srgb::new(255, 205, 0)));
-		let scene_project = Project { drawing: scene, palette: Vec::new(), pinned_sliders: Vec::new(), slider_target: AdjustTarget::BaseColor, page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT, goal: None, grayscale_start: false };
+		let scene_project = Project { drawing: scene, palette: Vec::new(), pinned_sliders: Vec::new(), slider_target: AdjustTarget::BaseColor, page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT, goal: None, grayscale_start: false, interaction_mode: InteractionMode::Type };
 		let scene_text = scene_project.to_text();
 		// Later: open the scene file and insert it into a design.
 		let loaded = Project::from_text(&scene_text).expect("a scene file reads back");
 		let mut d = Drawing::new(800, 600, Srgb::WHITE);
 		assert_eq!(d.insert_scene(0, &loaded.drawing, "Harbour"), 2);
-		let project = Project { drawing: d, palette: Vec::new(), pinned_sliders: Vec::new(), slider_target: AdjustTarget::BaseColor, page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT, goal: None, grayscale_start: false };
+		let project = Project { drawing: d, palette: Vec::new(), pinned_sliders: Vec::new(), slider_target: AdjustTarget::BaseColor, page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT, goal: None, grayscale_start: false, interaction_mode: InteractionMode::Type };
 		let text = project.to_text();
 		assert!(text.contains("event scene-inserted \"Harbour\" 2\n"), "{text}");
 		let back = Project::from_text(&text).expect("a design holding a scene reads back");
@@ -1755,7 +1882,7 @@ end
 		);
 		let bases: Vec<Srgb> = d.layers[0].shapes.iter().map(|s| s.fill).collect();
 		d.adjust_layer_colors(0, &bases, crate::sliders::ColorAdjust { warmth: 15, ..Default::default() });
-		let project = Project { drawing: d, palette: Vec::new(), pinned_sliders: Vec::new(), slider_target: AdjustTarget::BaseColor, page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT, goal: None, grayscale_start: false };
+		let project = Project { drawing: d, palette: Vec::new(), pinned_sliders: Vec::new(), slider_target: AdjustTarget::BaseColor, page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT, goal: None, grayscale_start: false, interaction_mode: InteractionMode::Type };
 		let text = project.to_text();
 		assert!(text.contains("event shape-opacity"), "{text}");
 		assert!(text.contains("event shape-adjusted"), "{text}");
@@ -1788,6 +1915,7 @@ end
 			page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT,
 			goal: None,
 			grayscale_start: false,
+			interaction_mode: InteractionMode::Type,
 		};
 		let text = project.to_text();
 		// The styled shape's line ends with its style token;

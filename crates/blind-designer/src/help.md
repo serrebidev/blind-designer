@@ -340,11 +340,48 @@ brush, as with Add Stroke by typed points — which remains
 the way to draw when exact coordinates matter more than a
 hand's path.
 
+INTERACTION MODES
+
+One project, one surface at a time — the principle the whole
+window follows: anything on screen that is not an editor is a
+slider, a wizard or a menu, so what cannot be drawn is slid,
+and what cannot be slid is typed. Each project has an
+interaction mode, saved in its file and switched in one
+place, Design, Project Options:
+
+- Slide: the Sliders tab (next section) is the surface. The
+  typed fields — the hex box and the L C H numbers under the
+  lists — are hidden, and the Arrange commands (Move,
+  Resize, Rotate) rest on the selected shape's part sliders
+  (Across, Width, Rotation) instead of opening their number
+  dialogs.
+- Type: the typed fields show, exactly the surface projects
+  have always had, and the Sliders tab is not there.
+- Draw: the pointer drawing tools lead — a line saying so
+  and the Draw with Pointer button take the typed fields'
+  place, and the Sliders tab is not there. (Design, Draw
+  with Pointer opens the same dialog in every mode.)
+
+Menus and wizards are there in every mode; only the surface
+under the lists changes. A hidden surface leaves the tab
+order along with its visibility: there is nothing to land
+on that is not showing. Switching modes puts the keyboard
+on the new surface — the hex field, the Draw button, or the
+Sliders tab's first slider.
+
+New projects start in Slide mode: the setup wizard's
+projects, templates and patterns included. A project opened
+from a file brings its own mode with it — and a file saved
+before modes existed says nothing, which means Type, the
+surface that project was saved from.
+
 THE SLIDERS TAB
 
 Instead of a dialog for every setting, the settings you keep
 coming back to can live as sliders on their own tab, and they
-apply the moment you move them. Each slider spans the smallest to
+apply the moment you move them. The tab is the Slide mode's
+surface (see INTERACTION MODES above): in the other modes it
+is not there. Each slider spans the smallest to
 the largest value it can take, with the finest step there is:
 
 - Arrow keys move a slider by its smallest step (one unit: one
@@ -550,6 +587,10 @@ SETTINGS: WHAT EACH ONE CHANGES
 - Pinned sliders (Design, Project Options): which sliders this
   project keeps on its Sliders tab. Starts empty — pin only what
   you use. Saved in the design file.
+- Interaction mode (Project Options): which interaction
+  surface the main window shows — Draw, Slide or Type, one at
+  a time. See INTERACTION MODES above. Saved in the design
+  file.
 - Color adjustments act on (Project Options, and the picker at
   the top of the Sliders tab): the current color, the selected
   element, or the whole current layer. Saved in the design file.

@@ -627,12 +627,59 @@ impl Drawing {
 		true
 	}
 
+	/// Set a shape's position outright — the geometry sliders'
+	/// absolute counterpart to `shift_shape`'s relative move.
+	/// The shape's points travel with it, as a shift's do. Logged
+	/// like the other slider edits: a run of position sets for one
+	/// shape is one ShapeShifted step whose delta is the whole
+	/// run's travel, so a slider drag through twenty positions is
+	/// one log line naming the net move.
+	pub fn set_shape_position(&mut self, layer: usize, index: usize, x: i32, y: i32) -> bool {
+		let (dx, dy, name) = {
+			let Some(l) = self.layers.get_mut(layer) else { return false };
+			let Some(s) = l.shapes.get_mut(index) else { return false };
+			let (dx, dy) = (x - s.x, y - s.y);
+			s.x = x;
+			s.y = y;
+			for p in &mut s.points {
+				p.0 += dx;
+				p.1 += dy;
+			}
+			(dx, dy, l.name.clone())
+		};
+		// Merge with the shift this run continues, if the log's
+		// last step is one for the same shape: the logged delta
+		// becomes the travel from where the run began.
+		let (mut dx, mut dy) = (dx, dy);
+		if let Some(Event::ShapeShifted { layer: l, index: i, dx: ox, dy: oy }) =
+			self.log.last()
+		{
+			if *l == name && *i == index {
+				dx += ox;
+				dy += oy;
+			}
+		}
+		self.log_slider_event(
+			Event::ShapeShifted { layer: name.clone(), index, dx, dy },
+			|e| matches!(e, Event::ShapeShifted { layer: l, index: i, .. } if *l == name && *i == index),
+		);
+		true
+	}
+
 	pub fn rotate_shape(&mut self, layer: usize, index: usize, angle: f64) -> bool {
-		let Some(l) = self.layers.get_mut(layer) else { return false };
-		let Some(s) = l.shapes.get_mut(index) else { return false };
-		s.angle = angle;
-		let name = l.name.clone();
-		self.log.push(Event::ShapeRotated { layer: name, index, angle });
+		let name = {
+			let Some(l) = self.layers.get_mut(layer) else { return false };
+			let Some(s) = l.shapes.get_mut(index) else { return false };
+			s.angle = angle;
+			l.name.clone()
+		};
+		// Logged like the other slider edits (see resize_shape):
+		// a rotation slider's drag through many angles keeps the
+		// final one as one log step.
+		self.log_slider_event(
+			Event::ShapeRotated { layer: name.clone(), index, angle },
+			|e| matches!(e, Event::ShapeRotated { layer: l, index: i, .. } if *l == name && *i == index),
+		);
 		true
 	}
 
@@ -1523,6 +1570,34 @@ mod tests {
 			vec![(0, 0, red()), (0, 1, red()), (front, 0, red())];
 		assert_eq!(d.adjust_depth_colors(DepthRole::Background, &wrong, adj), BulkOutcome::ZERO);
 		assert_eq!(d.layers[0].shapes[0].fill, adj.apply(red()));
+	}
+
+	#[test]
+	fn set_shape_position_moves_points_and_merges_its_log() {
+		let mut d = Drawing::new(200, 200, Srgb::WHITE);
+		d.add_shape(0, Shape::stroke(vec![(10, 10), (30, 10), (30, 30)], 3, red()));
+		d.add_shape(0, Shape::new(ShapeKind::Rectangle, 100, 100, 20, 20, red()));
+		let logged = d.log.len();
+		// Absolute set: the shape lands where it is put, and a
+		// stroke's points travel with it.
+		assert!(d.set_shape_position(0, 0, 15, 12));
+		let s = &d.layers[0].shapes[0];
+		assert_eq!((s.x, s.y), (15, 12));
+		assert_eq!(s.points, vec![(15, 12), (35, 12), (35, 32)]);
+		// A run of sets is ONE log step naming the net travel
+		// from where the run began (+5/+2, then +3/+2).
+		assert!(d.set_shape_position(0, 0, 18, 14));
+		assert_eq!(d.log.len(), logged + 1, "the run is one step");
+		let text = d.log.last().unwrap().describe(&d);
+		assert!(text.contains("shift shape 1 by 8 across and 4 down"), "{text}");
+		// A set aimed at a different shape starts its own step.
+		assert!(d.set_shape_position(0, 1, 90, 90));
+		assert_eq!(d.log.len(), logged + 2);
+		assert_eq!((d.layers[0].shapes[1].x, d.layers[0].shapes[1].y), (90, 90));
+		// Missing layer or shape: nothing set, nothing logged.
+		assert!(!d.set_shape_position(0, 9, 0, 0));
+		assert!(!d.set_shape_position(9, 0, 0, 0));
+		assert_eq!(d.log.len(), logged + 2);
 	}
 
 	#[test]

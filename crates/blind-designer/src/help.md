@@ -393,8 +393,7 @@ the descriptive ones: temperature (warm or cool), vibrancy
 or soft) — act on a target you choose: the current color (the
 brush color new strokes paint with), the selected element, or the
 whole current layer at once. Picking the target is the picker at
-the top of the Sliders tab when any adjustment is pinned, and
-also lives in Project Options. An adjustment is always worked out
+the top of the Sliders tab, and also lives in Project Options. An adjustment is always worked out
 from the color the target had when you started moving its
 sliders, never piled on top of the last move, so sliding back to
 zero restores the original color exactly. A layer adjustment is
@@ -402,27 +401,33 @@ one step in the log for the whole layer, spoken in words.
 
 COLOR CHANNEL SLIDERS
 
-Pin "Color channels (in current format)" in Project Options and
-the Sliders tab grows a group under a "Color channels" heading:
-one slider for every channel of the color format you picked in
-the View menu — hex's red, green and blue; LCH's lightness,
-chroma and hue; CMYK's four inks; and so on for every system.
-Each slider carries its spoken name ("LCH hue") and a readout of
-its value, and moving one says what changed and that everything
-else stayed the same: "LCH lightness 62.0. Everything else
-unchanged." You hear what you are changing while you change it,
-instead of typing a number and finding out after.
+The Sliders tab always ends with a group under a "Color
+channels" heading — it is a permanent resident of the tab, no
+pinning needed: one slider for every part of a color value, in
+whichever format the group's own "Channel format" picker is set
+to. The picker starts at the View menu's format and then goes
+its own way — change either one and the other stays where it
+is, so every format's breakdown is always here: LCH's lightness,
+chroma and hue; CMYK's four inks; RGB's red, green and blue; and
+so on for every system. Hex breaks down to its digits: six
+sliders, one per digit, each running 0 to 15 — slide them and
+you are spelling the hex code itself. Each slider carries its
+spoken name ("LCH hue", "Hex green first digit") and a readout
+of its value, and moving one says what changed and that
+everything else stayed the same: "LCH lightness 62.0.
+Everything else unchanged." You hear what you are changing
+while you change it, instead of typing a number and finding
+out after.
 
 The channels act on the same target as the color adjustments —
 the picker at the top of the tab: the current color, or the
 selected element. (A layer or a depth is many colors at once,
 and channels edit one color at a time, so for those targets the
 channel sliders grey out and a note under the group says so.)
-Changing the View menu's format rebuilds the group as the new
-format's channels. The keys are the tab's own: arrows move by
-the channel's smallest step, Page Up and Page Down jump by your
-page-jump percent, Home and End go to the ends, Ctrl plus an
-arrow hops from channel to channel.
+The keys are the tab's own: arrows move by the channel's
+smallest step, Page Up and Page Down jump by your page-jump
+percent, Home and End go to the ends, Ctrl plus an arrow hops
+from channel to channel.
 
 The ranges are each system's full range, and the fine-grained
 systems move finer than their readouts print: XYZ channels run
@@ -442,7 +447,40 @@ Lab family's values move in tenths. Three honest exceptions:
 - Binary has no channel sliders at all. Binary is a readout,
   not an editing system: it writes the color out as bits, and
   bits are not values you can slide. The group shows that
-  sentence instead; pick any other format to edit channels.
+  sentence instead; pick any other format in the group's own
+  picker to edit channels.
+
+SHAPE PART SLIDERS
+
+Under the color channels sits a second group, "Shape parts of
+the selected element": the selected element's geometry broken
+into its parts, one slider each — Across and Down (where it
+sits, running the whole canvas), Width and Height (one pixel
+to the whole canvas), Rotation (the full turn, 0 to 359
+degrees), and Roundedness (0 to 50 percent). They move the
+element exactly as the Move, Resize and Rotate dialogs do, and
+they land in the log the same way — a run of position moves is
+one step naming the whole travel. Moving one announces itself
+like the other sliders: "Width 240 pixels. Everything else
+unchanged." The keys are the tab's own: arrows step by one,
+Page Up and Page Down jump by your page-jump percent, Home and
+End go to the ends, Ctrl plus an arrow hops from part to part.
+
+Two parts have honest limits, and the sliders say so instead of
+pretending: Roundedness only affects rectangles (ellipses are
+already round and strokes have no corners), and a stroke's size
+is its points, so a stroke's Width and Height sliders stay off.
+With nothing selected, all six sit greyed out over the words
+"no element selected".
+
+Drawn a shape freehand and want it clean? Design, Recognize
+Shape from Stroke reads the selected stroke's path and replaces
+it with the known shape it traces — a line, a rectangle, an
+ellipse or a triangle — in the same color and brush width, in
+the same place in the layer, captioned "Recognized rectangle"
+and so on. It is plain geometry, no guessing: a stroke that
+does not clearly trace one of the four is left exactly as
+drawn, and the status line says it was not recognized.
 
 THE MENUS
 
@@ -469,8 +507,10 @@ bar saying what it does.
   image, or symbol; Arrange Selected Shape — move, rotate, resize,
   recolor, or remove the element selected in the Elements list or
   tab; the Elements and Layers dialogs; Animation; Describe Area;
-  Project Statistics; Project Options; save the current brush and
-  open the brush library.
+  Project Statistics; Project Options; Draw with Pointer;
+  Recognize Shape from Stroke — replace the selected stroke with
+  the line, rectangle, ellipse or triangle it traces; save the
+  current brush and open the brush library.
 - View: how color values are shown and spoken — hex, RGB, HSL or
   HSV — and whether slider changes announce that everything else
   stayed the same.

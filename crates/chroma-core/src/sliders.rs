@@ -280,7 +280,7 @@ pub const SLIDERS: &[SliderDef] = &[
 	def("color-blue", "Color blue", 0, 255, 1, SliderTarget::ColorBlue),
 	def(
 		"color-channels",
-		"Color channels (in current format)",
+		"Color channels (always on the Sliders tab)",
 		0,
 		100,
 		1,

@@ -23,6 +23,7 @@ pub mod palette;
 pub mod pdf;
 pub mod plain;
 pub mod project;
+pub mod recognize;
 pub mod search;
 pub mod sliders;
 pub mod sound;

@@ -724,6 +724,12 @@ pub fn srgb_from_hsl(h: f32, s: f32, l: f32) -> Srgb {
 //   number, which is what the number is made of.
 // - Binary is a readout, not an editing system: it writes the
 //   color out as bits, and bits are not values you slide.
+//
+// Hex breaks down the way Elshara asked for every format to break
+// down — "every individual part of a value" gets its own slider —
+// so its channels are its six digits, one slider per digit, each
+// running 0 to 15: slide the digits and you are spelling the hex
+// code itself.
 
 /// How a channel slider's value is spoken.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -734,8 +740,8 @@ pub enum ChannelUnit {
 	Percent,
 	/// "187 degrees".
 	Degrees,
-	/// Two-digit hex: "5E" — the hex format's own voice.
-	HexByte,
+	/// One hex digit: "E" — a hex channel's own voice.
+	HexDigit,
 	/// Degrees with decimals: one slider unit is 10^-decimals of
 	/// a degree. LCH's hue needs the tenths — at high chroma a
 	/// whole degree of hue is several sRGB steps.
@@ -784,7 +790,7 @@ impl ChannelDef {
 			ChannelUnit::DegreesFixed(d) => {
 				format!("{:.*} degrees", d as usize, value as f64 / 10f64.powi(d as i32))
 			}
-			ChannelUnit::HexByte => format!("{:02X}", value as u8),
+			ChannelUnit::HexDigit => format!("{:X}", value as u8),
 			ChannelUnit::Fixed(d) => {
 				format!("{:.*}", d as usize, value as f64 / 10f64.powi(d as i32))
 			}
@@ -854,7 +860,14 @@ pub fn channels(format: ColorFormat) -> ChannelSet {
 	// and b by half a unit is several sRGB steps of red at blue).
 	let light = |system: &'static str| ch("lightness", system, 0, 1000, 1, Fixed(1));
 	ChannelSet::Sliders(match format {
-		ColorFormat::Hex => rgb("Hex", 1, HexByte),
+		ColorFormat::Hex => vec![
+			ch("red first digit", "Hex", 0, 15, 1, HexDigit),
+			ch("red second digit", "Hex", 0, 15, 1, HexDigit),
+			ch("green first digit", "Hex", 0, 15, 1, HexDigit),
+			ch("green second digit", "Hex", 0, 15, 1, HexDigit),
+			ch("blue first digit", "Hex", 0, 15, 1, HexDigit),
+			ch("blue second digit", "Hex", 0, 15, 1, HexDigit),
+		],
 		ColorFormat::Rgb => rgb("RGB", 1, Plain),
 		ColorFormat::Hsl => vec![
 			hue("HSL"),
@@ -923,7 +936,15 @@ pub fn channels(format: ColorFormat) -> ChannelSet {
 pub fn channel_values(format: ColorFormat, color: Srgb) -> Vec<i32> {
 	let ChannelSet::Sliders(defs) = channels(format) else { return Vec::new() };
 	let raw: Vec<f64> = match format {
-		ColorFormat::Hex | ColorFormat::Rgb | ColorFormat::Decimal => {
+		ColorFormat::Hex => vec![
+			(color.r >> 4) as f64,
+			(color.r & 0xF) as f64,
+			(color.g >> 4) as f64,
+			(color.g & 0xF) as f64,
+			(color.b >> 4) as f64,
+			(color.b & 0xF) as f64,
+		],
+		ColorFormat::Rgb | ColorFormat::Decimal => {
 			vec![color.r as f64, color.g as f64, color.b as f64]
 		}
 		ColorFormat::WebSafe => {
@@ -984,7 +1005,12 @@ pub fn color_from_channels(format: ColorFormat, values: &[i32]) -> Srgb {
 		defs.get(i).map_or(0, |d| d.clamp(*values.get(i).unwrap_or(&0))) as u8
 	};
 	match format {
-		ColorFormat::Hex | ColorFormat::Rgb => Srgb::new(byte(0), byte(1), byte(2)),
+		ColorFormat::Hex => Srgb::new(
+			(byte(0) << 4) | byte(1),
+			(byte(2) << 4) | byte(3),
+			(byte(4) << 4) | byte(5),
+		),
+		ColorFormat::Rgb => Srgb::new(byte(0), byte(1), byte(2)),
 		ColorFormat::Decimal => Srgb::from_decimal(
 			(byte(0) as u32) << 16 | (byte(1) as u32) << 8 | byte(2) as u32,
 		),
@@ -1316,7 +1342,7 @@ mod tests {
 	#[test]
 	fn every_format_has_channels_or_an_honest_reason() {
 		let counts: &[(ColorFormat, usize)] = &[
-			(ColorFormat::Hex, 3),
+			(ColorFormat::Hex, 6),
 			(ColorFormat::Rgb, 3),
 			(ColorFormat::Hsl, 3),
 			(ColorFormat::Hsv, 3),
@@ -1355,15 +1381,55 @@ mod tests {
 	}
 
 	#[test]
+	fn hex_channels_are_its_six_digits() {
+		let ChannelSet::Sliders(defs) = channels(ColorFormat::Hex) else {
+			panic!("hex has sliders")
+		};
+		assert_eq!(defs.len(), 6);
+		assert!(defs.iter().all(|d| d.min == 0 && d.max == 15 && d.step == 1));
+		// The digits of a color, spelled out: 0xAB is A then B.
+		// The 0x00 and 0xFF edges are in the list on purpose —
+		// a digit at its end must still round-trip exactly.
+		for c in [
+			Srgb::BLACK,
+			Srgb::WHITE,
+			Srgb::new(0xAB, 0xCD, 0xEF),
+			Srgb::new(0x00, 0xFF, 0x80),
+			Srgb::new(0x3A, 0x7C, 0xA5),
+		] {
+			let values = channel_values(ColorFormat::Hex, c);
+			assert_eq!(
+				values,
+				vec![
+					(c.r >> 4) as i32,
+					(c.r & 0xF) as i32,
+					(c.g >> 4) as i32,
+					(c.g & 0xF) as i32,
+					(c.b >> 4) as i32,
+					(c.b & 0xF) as i32,
+				],
+				"{c} digits"
+			);
+			assert_eq!(color_from_channels(ColorFormat::Hex, &values), c, "{c} round trip");
+		}
+		// Setting one digit moves only its own nibble.
+		assert_eq!(
+			set_channel(ColorFormat::Hex, Srgb::new(0x3A, 0x7C, 0xA5), 3, 0),
+			Srgb::new(0x3A, 0x70, 0xA5)
+		);
+	}
+
+	#[test]
 	fn channel_values_speak_in_words() {
 		let defs = |f: ColorFormat| match channels(f) {
 			ChannelSet::Sliders(d) => d,
 			_ => panic!("{} has sliders", f.name()),
 		};
-		// Hex speaks its bytes as two-digit hex.
-		assert_eq!(defs(ColorFormat::Hex)[0].format_value(0x5E), "5E");
-		assert_eq!(defs(ColorFormat::Hex)[0].format_value(5), "05");
-		assert_eq!(defs(ColorFormat::Hex)[0].label(), "Hex red");
+		// Hex speaks its digits one at a time.
+		assert_eq!(defs(ColorFormat::Hex)[0].format_value(0xE), "E");
+		assert_eq!(defs(ColorFormat::Hex)[0].format_value(5), "5");
+		assert_eq!(defs(ColorFormat::Hex)[0].label(), "Hex red first digit");
+		assert_eq!(defs(ColorFormat::Hex)[5].label(), "Hex blue second digit");
 		// LCH: lightness in tenths, degrees for hue.
 		assert_eq!(defs(ColorFormat::Lch)[0].format_value(620), "62.0");
 		assert_eq!(defs(ColorFormat::Lch)[2].format_value(1870), "187.0 degrees");
@@ -1384,8 +1450,9 @@ mod tests {
 	#[test]
 	fn set_channel_matches_the_direct_conversions() {
 		let c = Srgb::new(15, 94, 104);
-		// Hex red is the byte itself.
-		assert_eq!(set_channel(ColorFormat::Hex, c, 0, 0xAB), Srgb::new(0xAB, 94, 104));
+		// Hex's first channel is red's first digit: red 0x0F
+		// with its first digit set to A becomes 0xAF.
+		assert_eq!(set_channel(ColorFormat::Hex, c, 0, 0xA), Srgb::new(0xAF, 94, 104));
 		// LCH hue: setting the hue channel is from_lch at that hue
 		// (LCH lightness and chroma ride in tenths).
 		let (l, ch, _) = c.to_lch();

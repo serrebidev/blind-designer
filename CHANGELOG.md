@@ -4,6 +4,34 @@ Readable release history for Blind Designer (renamed from Transversion at 0.2.0)
 section is its GitHub release note, taken from this file by the release
 workflow.
 
+## 0.17.0
+
+- Every value broken into its parts, as sliders (Elshara's
+  principle: every individual part of a value gets its own
+  slider). The color-channels group is now a permanent
+  resident of the Sliders tab — no pinning needed — with its
+  own Channel format picker: it starts at the View format
+  and then goes its own way, so every format's breakdown is
+  always there. Hex breaks down the way it is written: six
+  sliders, one per digit, each running 0 to 15 — sliding
+  them spells the hex code itself. Binary stays a readout,
+  as before.
+- The selected element's shape is sliders now too: a Shape
+  parts group on the Sliders tab — Across, Down, Width,
+  Height, Rotation and Roundedness, one slider per part,
+  running the canvas (rotation the full turn). They land in
+  the log like the Move, Resize and Rotate dialogs they
+  share their machinery with. Roundedness still only
+  affects rectangles, and a stroke's size is still its
+  points; those sliders say so and stay off.
+- Design, Recognize Shape from Stroke: a drawn stroke is
+  read as the shape its path traces — a line, a rectangle,
+  an ellipse or a triangle — and replaced with the clean
+  shape, same color, same brush width, same place in the
+  layer, captioned as recognized. Plain geometry, no
+  guessing: a stroke that matches nothing known is left
+  exactly as drawn, and the status line says so.
+
 ## 0.16.0
 
 - Feedback fixes, from hands-on testing of 0.15.0. The

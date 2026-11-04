@@ -37,6 +37,7 @@ use chroma_core::formats::{
 	text_readability, ChannelSet,
 };
 use chroma_core::inspect::{inspect_color, inspect_layer, inspect_shape};
+use chroma_core::recognize::{recognize, Recognized};
 use chroma_core::variables;
 use chroma_core::search::{search_catalog, CatalogHit};
 use chroma_core::sound::{cue_at, cue_for_shape, tone_wav_at, Cue};
@@ -127,6 +128,7 @@ const ID_NEW_WINDOW: Id = 132;
 const ID_TEXT_STUDIO: Id = 334;
 const ID_EMBED_FEED: Id = 335;
 const ID_EMBED_PASTE: Id = 336;
+const ID_RECOGNIZE_SHAPE: Id = 337;
 const ID_ABOUT: Id = 401;
 const ID_DICTIONARY: Id = 402;
 const ID_HELP_FILE: Id = 403;
@@ -259,6 +261,7 @@ const MENU_IDS: &[Id] = &[
 	ID_TEXT_STUDIO,
 	ID_EMBED_FEED,
 	ID_EMBED_PASTE,
+	ID_RECOGNIZE_SHAPE,
 	ID_ANNOUNCE_SLIDERS,
 	ID_LISTS_SIDE_BY_SIDE,
 	ID_FOCUS_MODE,
@@ -313,6 +316,11 @@ struct State {
 	sound_cues: bool,
 	/// How color values are spoken and displayed (View menu).
 	color_format: ColorFormat,
+	/// The color-channels group's own format, chosen by its
+	/// picker on the Sliders tab: it starts at the View format
+	/// and then goes its own way — changing one never rewrites
+	/// the other. Session-only, like the View format.
+	channel_format: ColorFormat,
 	/// The analogous scheme's spread in degrees (Color, Schemes,
 	/// Scheme Settings). Session-only, like the color format.
 	scheme_spread: f32,
@@ -431,10 +439,68 @@ struct SliderRow {
 }
 
 /// One row of the color-channels group on the Sliders tab: which
-/// channel of the current color format it drives, the native
-/// slider control, and the value readout after it.
+/// channel of the group's chosen color format it drives, the
+/// native slider control, and the value readout after it.
 struct ChannelRow {
 	index: usize,
+	slider: Slider,
+	readout: StaticText,
+}
+
+/// One part of a shape the shape-parts group on the Sliders tab
+/// puts on a slider: where it sits (Across, Down), how big it is
+/// (Width, Height), how it is turned (Rotation), and how round
+/// its corners are (Roundedness — rectangles only).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ShapePart {
+	Across,
+	Down,
+	Width,
+	Height,
+	Rotation,
+	Roundedness,
+}
+
+impl ShapePart {
+	const ALL: [ShapePart; 6] = [
+		ShapePart::Across,
+		ShapePart::Down,
+		ShapePart::Width,
+		ShapePart::Height,
+		ShapePart::Rotation,
+		ShapePart::Roundedness,
+	];
+
+	/// The spoken name, the row's label and the slider's name.
+	fn name(self) -> &'static str {
+		match self {
+			ShapePart::Across => "Across",
+			ShapePart::Down => "Down",
+			ShapePart::Width => "Width",
+			ShapePart::Height => "Height",
+			ShapePart::Rotation => "Rotation",
+			ShapePart::Roundedness => "Roundedness",
+		}
+	}
+
+	/// A value in words: "240 pixels", "90 degrees",
+	/// "25 percent" — the readout's text and the announcement's.
+	fn words(self, value: i32) -> String {
+		match self {
+			ShapePart::Rotation => format!("{value} degrees"),
+			ShapePart::Roundedness => format!("{value} percent"),
+			_ => format!("{value} pixels"),
+		}
+	}
+}
+
+/// One row of the shape-parts group: which part it drives, its
+/// range (from the canvas, fixed when the page is built), the
+/// native slider control, and the value readout after it.
+struct ShapeRow {
+	part: ShapePart,
+	min: i32,
+	max: i32,
 	slider: Slider,
 	readout: StaticText,
 }
@@ -469,13 +535,24 @@ struct Win {
 	slider_page: RefCell<Option<Panel>>,
 	slider_rows: RefCell<Vec<SliderRow>>,
 	slider_target_choice: RefCell<Option<Choice>>,
-	/// The color-channels group's rows on the Sliders page (empty
-	/// unless the group is pinned) and the note under it, which
-	/// says why the channels cannot be edited when they cannot
-	/// (a multi-color target, no element selected) — or, for the
-	/// binary format, why there are no channel sliders at all.
+	/// The color-channels group's rows on the Sliders page (the
+	/// group is a permanent resident of the page) and the note
+	/// under it, which says why the channels cannot be edited
+	/// when they cannot (a multi-color target, no element
+	/// selected) — or, for the binary format, why there are no
+	/// channel sliders at all.
 	channel_rows: RefCell<Vec<ChannelRow>>,
 	channel_note: RefCell<Option<StaticText>>,
+	/// The shape-parts group's rows on the Sliders page: the
+	/// selected element's position, size, rotation and
+	/// roundedness as sliders, refreshed on every selection
+	/// change like the other rows.
+	shape_rows: RefCell<Vec<ShapeRow>>,
+	/// The one-shot timer that rebuilds the Sliders tab after
+	/// the channel-format picker changes: the rebuild destroys
+	/// the picker itself, so it cannot run inside the picker's
+	/// own event — the tick runs it once the event is done.
+	channel_rebuild_timer: Timer<Frame>,
 	/// True while code (not the user) is setting slider values, so
 	/// the change handler stays out of refreshes.
 	slider_refreshing: std::cell::Cell<bool>,
@@ -762,6 +839,11 @@ fn refresh_menu_states(win: &Win, state: &State) {
 	}
 	bar.enable_item(ID_INSPECT_LAYER, win.layers_list.selected().is_some());
 	bar.enable_item(ID_INSPECT_COLOR, has_color);
+	// Recognize Shape acts on one selected stroke, nothing else.
+	bar.enable_item(
+		ID_RECOGNIZE_SHAPE,
+		selected_shape(state, win).is_some_and(|(_, _, s)| s.kind == ShapeKind::Stroke),
+	);
 	bar.enable_item(ID_RECOLOR_SHAPE, has_color && has_element);
 	bar.enable_item(ID_EXPORT_ANIM_DESC, !state.drawing.frames.is_empty());
 }
@@ -908,11 +990,11 @@ fn channel_note_text(state: &State, win: &Win) -> &'static str {
 fn channel_display_values(win: &Win, state: &State) -> Option<Vec<i32>> {
 	let (id, color) = channel_target(state, win)?;
 	if let Some(run) = &state.channel_run {
-		if run.format == state.color_format && run.target == id {
+		if run.format == state.channel_format && run.target == id {
 			return Some(run.values.clone());
 		}
 	}
-	Some(channel_values(state.color_format, color))
+	Some(channel_values(state.channel_format, color))
 }
 
 /// Push the current values into the channel group's controls,
@@ -922,7 +1004,7 @@ fn refresh_channel_values(win: &Win, state: &State) {
 	if win.channel_rows.borrow().is_empty() {
 		return;
 	}
-	let ChannelSet::Sliders(defs) = format_channels(state.color_format) else { return };
+	let ChannelSet::Sliders(defs) = format_channels(state.channel_format) else { return };
 	let editable = channel_target(state, win).is_some();
 	let values = channel_display_values(win, state);
 	win.slider_refreshing.set(true);
@@ -956,7 +1038,10 @@ fn selected_shape<'a>(state: &'a State, win: &Win) -> Option<(usize, usize, &'a 
 /// with the project; guarded so programmatic sets never re-enter
 /// the change handler.
 fn refresh_slider_values(win: &Win, state: &State) {
-	if win.slider_rows.borrow().is_empty() && win.channel_rows.borrow().is_empty() {
+	if win.slider_rows.borrow().is_empty()
+		&& win.channel_rows.borrow().is_empty()
+		&& win.shape_rows.borrow().is_empty()
+	{
 		return;
 	}
 	win.slider_refreshing.set(true);
@@ -972,20 +1057,26 @@ fn refresh_slider_values(win: &Win, state: &State) {
 	}
 	win.slider_refreshing.set(false);
 	refresh_channel_values(win, state);
+	refresh_shape_values(win, state);
 }
 
 /// Build the color-channels group into the Sliders page: a
-/// header, then one row per channel of the CURRENT color format
-/// — a label, a NATIVE slider carrying the channel's spoken name
-/// ("LCH hue"), and a value readout — editing the one color the
-/// adjustments target picker names. Accessibility follows the
-/// slider rows: real accessible names, no programmatic focus
-/// moves (Ctrl+arrow hops are the user's own keys, as on the
-/// Sliders tab). For the binary format there are no sliders:
-/// the group is the core's own sentence about why — binary is a
-/// readout, not an editing system. When the target names many
-/// colors (a layer, a depth) or no element is selected, the
-/// sliders grey out and the note under the group says why.
+/// header, the group's own format picker, then one row per
+/// channel of the CHOSEN format — every part of the value on
+/// its own slider (hex spells itself out as six digit sliders)
+/// — a label, a NATIVE slider carrying the channel's spoken
+/// name ("LCH hue"), and a value readout — editing the one
+/// color the adjustments target picker names. The picker is
+/// the group's own: it starts at the View format and then goes
+/// its own way, so every format's breakdown is here whether or
+/// not the View menu agrees. Accessibility follows the slider
+/// rows: real accessible names, no programmatic focus moves
+/// (Ctrl+arrow hops are the user's own keys, as on the Sliders
+/// tab). For the binary format there are no sliders: the group
+/// is the core's own sentence about why — binary is a readout,
+/// not an editing system. When the target names many colors (a
+/// layer, a depth) or no element is selected, the sliders grey
+/// out and the note under the group says why.
 fn build_channel_group(
 	win: &Rc<Win>,
 	shared: &Shared,
@@ -997,11 +1088,44 @@ fn build_channel_group(
 	let (format, values) = {
 		let state = shared.borrow();
 		let values =
-			channel_target(&state, win).map(|(_, color)| channel_values(state.color_format, color));
-		(state.color_format, values)
+			channel_target(&state, win).map(|(_, color)| channel_values(state.channel_format, color));
+		(state.channel_format, values)
 	};
 	let header = StaticText::builder(page).with_label("Color channels").build();
 	sizer.add(&header, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	{
+		let label = StaticText::builder(page).with_label("Channel format").build();
+		let choice = Choice::builder(page).build();
+		for f in ColorFormat::ALL {
+			choice.append(f.name());
+		}
+		let at = ColorFormat::ALL.iter().position(|f| *f == format).unwrap_or(0);
+		choice.set_selection(at as u32);
+		choice.set_name("Channel format");
+		let row = BoxSizer::builder(Orientation::Horizontal).build();
+		row.add(&label, 0, SizerFlag::All, 5);
+		row.add(&choice, 0, SizerFlag::All, 5);
+		sizer.add_sizer(&row, 0, SizerFlag::Expand, 0);
+		{
+			let (w, s, choice) = (win.clone(), shared.clone(), choice.clone());
+			choice.on_selection_changed(move |_| {
+				let Some(sel) = choice.get_selection() else { return };
+				let Some(&format) = ColorFormat::ALL.get(sel as usize) else { return };
+				{
+					let mut state = s.borrow_mut();
+					if state.channel_format == format {
+						return;
+					}
+					state.channel_format = format;
+					state.channel_run = None;
+				}
+				// The rebuild destroys this very Choice, so it
+				// waits for the rebuild timer's tick — the pick
+				// event has finished by then.
+				w.channel_rebuild_timer.start(1, true);
+			});
+		}
+	}
 	match format_channels(format) {
 		ChannelSet::ReadoutOnly(reason) => {
 			let note = StaticText::builder(page).with_label(reason).build();
@@ -1055,6 +1179,351 @@ fn build_channel_group(
 	}
 }
 
+/// What one shape part's slider should show right now: its
+/// value (before clamping into the row's range), the readout's
+/// words, and whether the slider can be moved. Parts a shape
+/// kind does not have say so instead of a number — a stroke's
+/// size is its points, and roundedness only affects rectangles
+/// — the same answers the dialogs give.
+fn shape_part_state(win: &Win, state: &State, part: ShapePart) -> (Option<i32>, String, bool) {
+	let Some((_, _, s)) = selected_shape(state, win) else {
+		return (None, "no element selected".to_string(), false);
+	};
+	let (cw, ch) = (state.drawing.width as i32, state.drawing.height as i32);
+	match part {
+		ShapePart::Across => {
+			let v = s.x.clamp(0, cw.max(0));
+			(Some(v), part.words(v), true)
+		}
+		ShapePart::Down => {
+			let v = s.y.clamp(0, ch.max(0));
+			(Some(v), part.words(v), true)
+		}
+		ShapePart::Width => {
+			if s.kind == ShapeKind::Stroke {
+				(Some(s.w as i32), "a stroke's size is its points".to_string(), false)
+			} else {
+				let v = (s.w as i32).clamp(1, cw.max(1));
+				(Some(v), part.words(v), true)
+			}
+		}
+		ShapePart::Height => {
+			if s.kind == ShapeKind::Stroke {
+				(Some(s.h as i32), "a stroke's size is its points".to_string(), false)
+			} else {
+				let v = (s.h as i32).clamp(1, ch.max(1));
+				(Some(v), part.words(v), true)
+			}
+		}
+		ShapePart::Rotation => {
+			let v = ((s.angle.round() as i32) % 360 + 360) % 360;
+			(Some(v), part.words(v), true)
+		}
+		ShapePart::Roundedness => {
+			if s.kind == ShapeKind::Rectangle {
+				let v = s.corner as i32;
+				(Some(v), part.words(v), true)
+			} else {
+				(Some(s.corner as i32), "roundedness only affects rectangles".to_string(), false)
+			}
+		}
+	}
+}
+
+/// Build the shape-parts group into the Sliders page: a header
+/// and its note, then the six part rows — label, NATIVE slider
+/// carrying the part's name, value readout — the selected
+/// element's geometry broken into its parts the way the color
+/// channels break a color into its parts (Elshara's principle:
+/// every part of a value its own slider). The rows are always
+/// here; with nothing selected they sit greyed out over the
+/// words "no element selected", like the registry rows do.
+/// Ranges come from the canvas at build time: across and down
+/// run the canvas, width and height run from one pixel to the
+/// canvas, rotation is the full turn, roundedness its percent.
+fn build_shape_group(
+	win: &Rc<Win>,
+	shared: &Shared,
+	page: &Panel,
+	sizer: &BoxSizer,
+	rows: &mut Vec<ShapeRow>,
+) {
+	let header = StaticText::builder(page)
+		.with_label("Shape parts of the selected element")
+		.build();
+	sizer.add(&header, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	let note = StaticText::builder(page)
+		.with_label(
+			"Roundedness only affects rectangles; a stroke's size is its points, so a stroke's width and height sliders stay off.",
+		)
+		.build();
+	sizer.add(&note, 0, SizerFlag::Left | SizerFlag::Right, 5);
+	let (cw, ch) = {
+		let state = shared.borrow();
+		(state.drawing.width as i32, state.drawing.height as i32)
+	};
+	for part in ShapePart::ALL {
+		let (min, max) = match part {
+			ShapePart::Across => (0, cw.max(0)),
+			ShapePart::Down => (0, ch.max(0)),
+			ShapePart::Width => (1, cw.max(1)),
+			ShapePart::Height => (1, ch.max(1)),
+			ShapePart::Rotation => (0, 359),
+			ShapePart::Roundedness => (0, 50),
+		};
+		let (value, text, enabled) = {
+			let state = shared.borrow();
+			shape_part_state(win, &state, part)
+		};
+		let label = StaticText::builder(page).with_label(part.name()).build();
+		let slider = Slider::builder(page)
+			.with_min_value(min)
+			.with_max_value(max)
+			.with_value(value.unwrap_or(min).clamp(min, max))
+			.build();
+		slider.set_name(part.name());
+		slider.enable(enabled);
+		let readout = StaticText::builder(page).with_label(&text).build();
+		let row_sizer = BoxSizer::builder(Orientation::Horizontal).build();
+		row_sizer.add(&label, 0, SizerFlag::All, 5);
+		row_sizer.add(&slider, 1, SizerFlag::Expand | SizerFlag::All, 5);
+		row_sizer.add(&readout, 0, SizerFlag::All, 5);
+		sizer.add_sizer(&row_sizer, 0, SizerFlag::Expand, 0);
+		{
+			let (w, s) = (win.clone(), shared.clone());
+			slider.on_slider(move |e| {
+				if w.slider_refreshing.get() {
+					return;
+				}
+				apply_shape_part(&w, &s, part, e.get_value());
+			});
+		}
+		{
+			let (w, s) = (win.clone(), shared.clone());
+			slider.on_key_down(move |data| {
+				shape_key(&w, &s, part, &data);
+			});
+		}
+		rows.push(ShapeRow { part, min, max, slider, readout });
+	}
+}
+
+/// Push the selected element's parts into the shape group's
+/// controls and readouts. Runs inside every slider refresh, so
+/// the group always agrees with the selection; guarded like
+/// the other refreshes so programmatic sets never re-enter the
+/// change handler.
+fn refresh_shape_values(win: &Win, state: &State) {
+	if win.shape_rows.borrow().is_empty() {
+		return;
+	}
+	win.slider_refreshing.set(true);
+	for row in win.shape_rows.borrow().iter() {
+		let (value, text, enabled) = shape_part_state(win, state, row.part);
+		row.slider.enable(enabled);
+		if let Some(v) = value {
+			row.slider.set_value(v.clamp(row.min, row.max));
+		}
+		row.readout.set_label(&text);
+	}
+	win.slider_refreshing.set(false);
+}
+
+/// Apply one shape part's new value to the selected element,
+/// through the same drawing calls the Move, Resize and Rotate
+/// dialogs use, so it lands in the log like every other edit —
+/// a position run is one merged shift step, a rotation keeps
+/// its final angle. The announcement names the part and its
+/// new value, and that everything else stayed the same.
+fn apply_shape_part(win: &Win, shared: &Shared, part: ShapePart, value: i32) {
+	let mut note: Option<String> = None;
+	{
+		let mut state = shared.borrow_mut();
+		match selected_shape(&state, win).map(|(li, si, s)| (li, si, s.clone())) {
+			Some((li, si, s)) => {
+				let landed = match part {
+					ShapePart::Across => {
+						state.drawing.set_shape_position(li, si, value, s.y)
+					}
+					ShapePart::Down => {
+						state.drawing.set_shape_position(li, si, s.x, value)
+					}
+					ShapePart::Width => {
+						if s.kind == ShapeKind::Stroke {
+							note = Some(
+								"A stroke's size is its points; move it or add a new one."
+									.to_string(),
+							);
+							false
+						} else {
+							state.drawing.resize_shape(li, si, value.max(1) as u32, s.h)
+						}
+					}
+					ShapePart::Height => {
+						if s.kind == ShapeKind::Stroke {
+							note = Some(
+								"A stroke's size is its points; move it or add a new one."
+									.to_string(),
+							);
+							false
+						} else {
+							state.drawing.resize_shape(li, si, s.w, value.max(1) as u32)
+						}
+					}
+					ShapePart::Rotation => {
+						state.drawing.rotate_shape(li, si, value as f64)
+					}
+					ShapePart::Roundedness => {
+						if s.kind == ShapeKind::Rectangle {
+							state.drawing.set_shape_corner(li, si, value as u8)
+						} else {
+							note = Some(
+								"Roundedness acts on a selected rectangle; ellipses are already round and strokes have no corners."
+									.to_string(),
+							);
+							false
+						}
+					}
+				};
+				if landed {
+					refresh_lists(win, &state);
+				}
+			}
+			None => note = Some("Select an element first.".to_string()),
+		}
+	}
+	match note {
+		Some(text) => win.frame.set_status_text(&text, 0),
+		None => {
+			let announce_on = shared.borrow().announce_sliders;
+			let words = format!("{} {}", part.name(), part.words(value));
+			win.frame.set_status_text(
+				&if announce_on {
+					format!("{words}. Everything else unchanged.")
+				} else {
+					format!("{words}.")
+				},
+				0,
+			);
+		}
+	}
+}
+
+/// The shape rows' custom keys, the Sliders tab's own: Ctrl
+/// plus an arrow hops focus from part to part; Page Up and Page
+/// Down jump by the project's page-jump percent of the part's
+/// range. Plain arrows, Home and End are the native slider's
+/// own behavior, skipped onward untouched.
+fn shape_key(win: &Rc<Win>, shared: &Shared, part: ShapePart, data: &WindowEventData) {
+	let WindowEventData::Keyboard(kb) = data else {
+		data.skip(true);
+		return;
+	};
+	let Some(code) = kb.get_key_code() else {
+		data.skip(true);
+		return;
+	};
+	let rows = win.shape_rows.borrow();
+	let Some(pos) = rows.iter().position(|r| r.part == part) else {
+		data.skip(true);
+		return;
+	};
+	if kb.control_down() && matches!(code, WXK_LEFT | WXK_UP | WXK_RIGHT | WXK_DOWN) {
+		let back = matches!(code, WXK_LEFT | WXK_UP);
+		let next = if back {
+			pos.saturating_sub(1)
+		} else {
+			(pos + 1).min(rows.len() - 1)
+		};
+		if let Some(dest) = rows.get(next) {
+			dest.slider.set_focus();
+		}
+		return;
+	}
+	if matches!(code, WXK_PAGEUP | WXK_PAGEDOWN) {
+		let percent = shared.borrow().page_jump_percent;
+		let Some(row) = rows.get(pos) else {
+			data.skip(true);
+			return;
+		};
+		let span = (row.max - row.min).max(0);
+		let jump = ((span * percent.min(100) as i32) / 100).max(1);
+		let delta = if code == WXK_PAGEUP { jump } else { -jump };
+		let value = (row.slider.get_value() + delta).clamp(row.min, row.max);
+		row.slider.set_value(value);
+		drop(rows);
+		apply_shape_part(win, shared, part, value);
+		return;
+	}
+	data.skip(true);
+}
+
+/// Design, Recognize Shape from Stroke: read the selected
+/// stroke's sampled points and, when they trace a known shape,
+/// replace the stroke with the clean shape — same place in the
+/// layer, same color, brush width, pattern and opacity, with a
+/// caption that says what it was recognized as. The swap goes
+/// through the drawing (remove, then insert at the same index),
+/// so it lands in the log like every other edit, and `announce`
+/// speaks the new element. A stroke that matches nothing known
+/// is left exactly as drawn, and the status line says so
+/// plainly instead of guessing.
+fn recognize_selected(win: &Rc<Win>, shared: &Shared) {
+	let mut state = shared.borrow_mut();
+	let Some((li, si, old)) =
+		selected_shape(&state, win).map(|(li, si, s)| (li, si, s.clone()))
+	else {
+		win.frame.set_status_text("Select a stroke first.", 0);
+		return;
+	};
+	if old.kind != ShapeKind::Stroke {
+		win.frame.set_status_text(
+			"Recognize Shape works on a selected stroke: draw one with the pointer, or add a stroke by its points.",
+			0,
+		);
+		return;
+	}
+	let mut clean = match recognize(&old.points) {
+		Recognized::Line { from, to } => {
+			let mut s = Shape::stroke(vec![from, to], old.brush, old.fill);
+			s.caption = Some("Recognized line".to_string());
+			s
+		}
+		Recognized::Rectangle { x, y, w, h } => {
+			let mut s = Shape::new(ShapeKind::Rectangle, x, y, w, h, old.fill);
+			s.caption = Some("Recognized rectangle".to_string());
+			s
+		}
+		Recognized::Ellipse { x, y, w, h } => {
+			let mut s = Shape::new(ShapeKind::Ellipse, x, y, w, h, old.fill);
+			s.caption = Some("Recognized ellipse".to_string());
+			s
+		}
+		Recognized::Triangle { corners } => {
+			let mut pts = corners.to_vec();
+			pts.push(corners[0]);
+			let mut s = Shape::stroke(pts, old.brush, old.fill);
+			s.caption = Some("Recognized triangle".to_string());
+			s
+		}
+		Recognized::Unknown => {
+			win.frame.set_status_text(
+				"That stroke was not recognized as a known shape; it stays exactly as drawn.",
+				0,
+			);
+			return;
+		}
+	};
+	// The stroke's own paint carries over: its pattern and
+	// opacity (its color and brush width are already placed).
+	clean.pattern = old.pattern.clone();
+	clean.opacity = old.opacity;
+	state.drawing.remove_shape(li, si);
+	state.drawing.insert_shape(li, si, clean);
+	refresh_lists(win, &state);
+	announce(win, &state);
+}
+
 /// (Re)build the Sliders notebook page from the project's pinned
 /// sliders. Accessibility: each row is a label, a NATIVE slider
 /// (arrow keys move it by its fine step — the smallest step there
@@ -1080,7 +1549,7 @@ fn build_sliders_tab(win: &Rc<Win>, shared: &Shared) {
 			win.notebook.remove_page(i);
 		}
 	}
-	let (pins, target, any_adjust, channels_pinned, showing_all) = {
+	let (pins, target, showing_all) = {
 		let state = shared.borrow();
 		// No pins means EVERY slider, in registry order: the
 		// tab must never be a dead end of static text with
@@ -1093,28 +1562,15 @@ fn build_sliders_tab(win: &Rc<Win>, shared: &Shared) {
 		} else {
 			state.pinned_sliders.clone()
 		};
-		let any_adjust = effective
-			.iter()
-			.filter_map(|id| slider_by_id(id))
-			.any(|d| d.is_adjustment());
-		let channels_pinned = effective
-			.iter()
-			.filter_map(|id| slider_by_id(id))
-			.any(|d| d.target == SliderTarget::ColorChannels);
-		(
-			effective,
-			state.slider_target,
-			any_adjust,
-			channels_pinned,
-			showing_all,
-		)
+		(effective, state.slider_target, showing_all)
 	};
 	let page = Panel::builder(&win.notebook).build();
 	let sizer = BoxSizer::builder(Orientation::Vertical).build();
 	let mut rows: Vec<SliderRow> = Vec::new();
 	let mut channel_rows: Vec<ChannelRow> = Vec::new();
 	let mut channel_note: Option<StaticText> = None;
-	let mut target_choice: Option<Choice> = None;
+	let mut shape_rows: Vec<ShapeRow> = Vec::new();
+	let target_choice: Option<Choice>;
 	if showing_all {
 		let note = StaticText::builder(&page)
 			.with_label(
@@ -1124,7 +1580,11 @@ fn build_sliders_tab(win: &Rc<Win>, shared: &Shared) {
 		sizer.add(&note, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
 	}
 	{
-		if any_adjust || channels_pinned {
+		// The adjustments target picker always shows now: the
+		// color-channels group below is a permanent resident of
+		// the page, and the picker names the one color the
+		// channels (and any pinned adjustments) act on.
+		{
 			let label =
 				StaticText::builder(&page).with_label("Color adjustments act on").build();
 			let choice = Choice::builder(&page).build();
@@ -1159,14 +1619,8 @@ fn build_sliders_tab(win: &Rc<Win>, shared: &Shared) {
 		for id in &pins {
 			let Some(def) = slider_by_id(id) else { continue };
 			if def.target == SliderTarget::ColorChannels {
-				build_channel_group(
-					win,
-					shared,
-					&page,
-					&sizer,
-					&mut channel_rows,
-					&mut channel_note,
-				);
+				// The channels group is permanent — it is built
+				// after this loop, pins or no pins.
 				continue;
 			}
 			let (value, text) = match read_slider_value(win, &state, def) {
@@ -1205,6 +1659,17 @@ fn build_sliders_tab(win: &Rc<Win>, shared: &Shared) {
 			rows.push(SliderRow { id: def.id, slider, readout });
 		}
 	}
+	// The two per-part groups close the page, always: the
+	// color's channels and the selected element's shape parts.
+	build_channel_group(
+		win,
+		shared,
+		&page,
+		&sizer,
+		&mut channel_rows,
+		&mut channel_note,
+	);
+	build_shape_group(win, shared, &page, &sizer, &mut shape_rows);
 	page.set_sizer(sizer, true);
 	win.notebook.add_page(&page, "Sliders", false, None);
 	{
@@ -1217,6 +1682,7 @@ fn build_sliders_tab(win: &Rc<Win>, shared: &Shared) {
 	*win.slider_rows.borrow_mut() = rows;
 	*win.channel_rows.borrow_mut() = channel_rows;
 	*win.channel_note.borrow_mut() = channel_note;
+	*win.shape_rows.borrow_mut() = shape_rows;
 	*win.slider_target_choice.borrow_mut() = target_choice;
 }
 
@@ -1576,7 +2042,7 @@ fn channel_key(win: &Rc<Win>, shared: &Shared, index: usize, data: &WindowEventD
 	if matches!(code, WXK_PAGEUP | WXK_PAGEDOWN) {
 		let (format, percent) = {
 			let state = shared.borrow();
-			(state.color_format, state.page_jump_percent)
+			(state.channel_format, state.page_jump_percent)
 		};
 		let ChannelSet::Sliders(defs) = format_channels(format) else {
 			data.skip(true);
@@ -1615,7 +2081,7 @@ fn apply_channel(win: &Win, shared: &Shared, index: usize, value: i32) {
 	let mut note: Option<String> = None;
 	let announcement: Option<String> = {
 		let mut state = shared.borrow_mut();
-		let format = state.color_format;
+		let format = state.channel_format;
 		let ChannelSet::Sliders(defs) = format_channels(format) else { return };
 		let Some(def) = defs.get(index).copied() else { return };
 		let value = def.clamp(value);
@@ -6121,6 +6587,7 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 		ID_COLOR_TREATMENT => color_treatment_dialog(win, shared),
 		ID_REPLACEMENT_VARIABLES => replacement_variables_dialog(win, shared),
 		ID_DRAW_POINTER => draw_pointer_dialog(win, shared),
+		ID_RECOGNIZE_SHAPE => recognize_selected(win, shared),
 		ID_FOCUS_MODE => {
 			let on = !shared.borrow().focus_mode;
 			set_focus_mode(win, shared, on);
@@ -6228,9 +6695,9 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 				refresh_lists(win, &state);
 				current = selected_color(win, &state);
 			}
-			// The channel group's sliders are the new format's
-			// channels: rebuild the Sliders tab to match.
-			build_sliders_tab(win, shared);
+			// The channel group has its own format picker now
+			// and goes its own way: a View change no longer
+			// rebuilds the Sliders tab.
 			match current {
 				Some(c) => {
 					let state = shared.borrow();
@@ -7554,6 +8021,7 @@ fn build_menus(frame: &Frame) {
 	design.append(ID_SETUP_WIZARD, "Setup &Wizard…", "State (or restate) this project's goal through the wizard: what you want to create or build, and its focus questions — any answer may be left with no fixed answer.", ItemKind::Normal);
 	design.append(ID_COLOR_TREATMENT, "Apply Colour &Treatment…", "Grayscale start's second half: give the grayscale shapes of one layer, or of a whole depth, the palette colours in paint order. Locked shapes stay grayscale.", ItemKind::Normal);
 	design.append(ID_DRAW_POINTER, "Draw with &Pointer…", "Draw one stroke with the mouse or touch: press and drag on the surface, release, Finish. Keys 1 to 9 set the brush width while you draw; C cycles the brush colour.", ItemKind::Normal);
+	design.append(ID_RECOGNIZE_SHAPE, "Recognize Shape from &Stroke", "Read the selected stroke's path and replace it with the known shape it traces — a line, a rectangle, an ellipse or a triangle — in the same color and brush width. A stroke that matches nothing known stays exactly as drawn.", ItemKind::Normal);
 	design.append_separator();
 	design.append(ID_SAVE_BRUSH, "Save Current Br&ush…", "Keep the current brush — width, color, pattern — in the brush library under a name.", ItemKind::Normal);
 	design.append(ID_BRUSHES, "Brush Li&brary…", "The saved brushes; apply one to make it current for new strokes.", ItemKind::Normal);
@@ -7694,6 +8162,7 @@ fn main() {
 			layer: 0,
 			sound_cues: true,
 			color_format: ColorFormat::Hex,
+			channel_format: ColorFormat::Hex,
 			scheme_spread: 30.0,
 			wheel_ryb: false,
 			brush: Brush::new("", 3, start, "solid"),
@@ -7732,6 +8201,7 @@ fn main() {
 			let fp = project_fingerprint(&state);
 			state.saved_fingerprint = fp;
 		}
+		let channel_rebuild_timer = Timer::new(&frame);
 		let win = Rc::new(Win {
 			frame,
 			notebook,
@@ -7749,6 +8219,8 @@ fn main() {
 			slider_rows: RefCell::new(Vec::new()),
 			channel_rows: RefCell::new(Vec::new()),
 			channel_note: RefCell::new(None),
+			shape_rows: RefCell::new(Vec::new()),
+			channel_rebuild_timer,
 			slider_target_choice: RefCell::new(None),
 			slider_refreshing: std::cell::Cell::new(false),
 			focus_frame: RefCell::new(None),
@@ -7756,6 +8228,15 @@ fn main() {
 			focus_body: RefCell::new(None),
 		});
 
+		{
+			// The channel-format picker's deferred rebuild: one
+			// tick after a pick, rebuild the Sliders tab for the
+			// newly chosen format (see build_channel_group).
+			let (w, s) = (win.clone(), shared.clone());
+			win.channel_rebuild_timer.on_tick(move |_| {
+				build_sliders_tab(&w, &s);
+			});
+		}
 		build_sliders_tab(&win, &shared);
 		{
 			let state = shared.borrow();

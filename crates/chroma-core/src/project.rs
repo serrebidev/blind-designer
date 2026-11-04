@@ -12,7 +12,12 @@
 //! (pinned sliders, adjustment target, page jump) when they differ
 //! from the defaults; a shape below full opacity stores its percent
 //! as one trailing field on its shape line, so fully opaque designs
-//! keep the exact file shape they had before opacity existed.
+//! keep the exact file shape they had before opacity existed. Two
+//! more trailing fields follow the same rule: a layer with a depth
+//! role ends its layer line with the role's id, and a rounded
+//! rectangle ends its shape line (after the opacity, which is then
+//! always written) with r<percent> — a design with neither keeps
+//! its old file shape byte for byte.
 //!
 //! The format is hand-rolled line-oriented text in the recreation
 //! file's spirit (serde is not a workspace dependency, and one design
@@ -25,7 +30,7 @@
 
 use crate::animation::Frame;
 use crate::design::{Shape, ShapeKind};
-use crate::drawing::{Drawing, Event, Layer};
+use crate::drawing::{DepthRole, Drawing, Event, Layer};
 use crate::palette::{PaletteColor, Provenance};
 use crate::sliders::AdjustTarget;
 use crate::Srgb;
@@ -229,11 +234,20 @@ fn hex(toks: &[String], i: usize) -> Result<Srgb, String> {
 /// "shape" line per shape. Shared by the drawing's own layers and by
 /// each animation frame's layers.
 fn layer_lines(layer: &Layer) -> String {
+	// A layer with a depth role carries the role's id as one
+	// trailing field; an unassigned layer writes nothing extra,
+	// so files from before depth roles stay byte-identical.
+	let depth = if layer.depth == DepthRole::Unassigned {
+		String::new()
+	} else {
+		format!(" {}", layer.depth.id())
+	};
 	let mut out = format!(
-		"layer {} {} {}\n",
+		"layer {} {} {}{}\n",
 		quote(&layer.name),
 		if layer.visible { "visible" } else { "hidden" },
-		layer.shapes.len()
+		layer.shapes.len(),
+		depth
 	);
 	for shape in &layer.shapes {
 		out.push_str(&format!("shape {}\n", shape_fields(shape)));
@@ -294,11 +308,18 @@ fn shape_fields(s: &Shape) -> String {
 		}
 		_ => {}
 	}
-	// A shape below full opacity carries its percent as one last
-	// field; a fully opaque shape writes nothing extra, so older
-	// files and fully opaque designs stay byte-identical.
-	if s.opacity < 100 {
+	// The trailing fields, in write order: the opacity percent,
+	// then a rounded rectangle's corner as r<percent>. Opacity is
+	// written when it is below full OR a corner follows (the
+	// corner takes the place after it). A shape with neither
+	// writes nothing extra, so older files and plain designs stay
+	// byte-identical.
+	let rounded = s.kind == ShapeKind::Rectangle && s.corner > 0;
+	if s.opacity < 100 || rounded {
 		out.push_str(&format!(" {}", s.opacity));
+	}
+	if rounded {
+		out.push_str(&format!(" r{}", s.corner));
 	}
 	out
 }
@@ -346,57 +367,70 @@ fn parse_shape(toks: &[String]) -> Result<Shape, String> {
 		font_size: 0,
 		image_path: String::new(),
 		opacity: 100,
+		corner: 0,
 	};
-	// The appended fields of the newer kinds; absent in old files.
-	// Each kind has a known count of them; one field beyond that
-	// count can only be the opacity percent (written last, and
-	// only when the shape is not fully opaque).
-	let mut extra: &[String] = &toks[10..];
+	// The appended fields; absent in old files. Each kind has a
+	// known count of its own (a text's phrase, font and size; an
+	// image's path); what follows them is the trailing run, in
+	// write order: a stroke's pattern word, the opacity percent,
+	// and a rounded rectangle's corner as r<percent> — each
+	// present only when the shape carries it.
+	let extra: &[String] = &toks[10..];
 	let expected = match kind {
 		ShapeKind::Text => 3,
 		ShapeKind::Image => 1,
 		_ => 0,
 	};
-	if kind != ShapeKind::Stroke && extra.len() == expected + 1 {
-		shape.opacity = num(extra, expected, "shape opacity")?;
-		extra = &extra[..expected];
+	if extra.len() < expected {
+		return Err(format!(
+			"a {} shape needs {} fields, got {}",
+			toks[0],
+			10 + expected,
+			toks.len()
+		));
 	}
+	let (kind_extra, mut tail) = extra.split_at(expected);
 	match kind {
 		ShapeKind::Text => {
-			if extra.len() != 3 {
-				return Err(format!("a text shape needs 13 fields, got {}", toks.len()));
-			}
-			shape.text = extra[0].clone();
-			shape.font = extra[1].clone();
-			shape.font_size = num(extra, 2, "font size")?;
+			shape.text = kind_extra[0].clone();
+			shape.font = kind_extra[1].clone();
+			shape.font_size = num(kind_extra, 2, "font size")?;
 		}
 		ShapeKind::Image => {
-			if extra.len() != 1 {
-				return Err(format!("an image shape needs 11 fields, got {}", toks.len()));
-			}
-			shape.image_path = extra[0].clone();
+			shape.image_path = kind_extra[0].clone();
 		}
-		ShapeKind::Stroke => {
-			// A stroke's extras are its pattern (a word) and then
-			// the opacity (a number); either may appear alone.
-			if extra.len() > 2 {
-				return Err(format!("a stroke needs at most 12 fields, got {}", toks.len()));
-			}
-			if extra.len() == 2 {
-				shape.pattern = extra[0].clone();
-				shape.opacity = num(extra, 1, "shape opacity")?;
-			} else if extra.len() == 1 {
-				match extra[0].parse::<u8>() {
-					Ok(opacity) => shape.opacity = opacity,
-					Err(_) => shape.pattern = extra[0].clone(),
-				}
+		_ => {}
+	}
+	if kind == ShapeKind::Stroke {
+		// A stroke's pattern is a word: a first trailing token
+		// that is neither a number nor a corner is the pattern.
+		if let Some(first) = tail.first() {
+			if !first.starts_with('r') && first.parse::<u8>().is_err() {
+				shape.pattern = first.clone();
+				tail = &tail[1..];
 			}
 		}
-		_ => {
-			if !extra.is_empty() {
-				return Err(format!("a shape needs 10 fields, got {}", toks.len()));
-			}
+	}
+	if let Some(first) = tail.first() {
+		if !first.starts_with('r') {
+			shape.opacity = num(tail, 0, "shape opacity")?;
+			tail = &tail[1..];
 		}
+	}
+	if let Some(first) = tail.first() {
+		match first.strip_prefix('r') {
+			Some(rest) => {
+				shape.corner = rest
+					.parse::<u8>()
+					.map_err(|_| format!("bad corner: {first}"))?
+					.min(50);
+				tail = &tail[1..];
+			}
+			None => return Err(format!("unexpected shape field: {first}")),
+		}
+	}
+	if !tail.is_empty() {
+		return Err(format!("a shape has too many fields: {}", toks.len()));
 	}
 	shape.opacity = shape.opacity.min(100);
 	Ok(shape)
@@ -506,6 +540,33 @@ fn event_line(e: &Event) -> String {
 			"event layer-adjusted {} {count} {shade} {tint} {tone} {chroma} {undertone} {warmth} {vibrancy} {brightness} {clarity} {fog} {hardness}",
 			quote(name)
 		),
+		Event::LayerDepthSet { name, role } => {
+			format!("event layer-depth {} {}", quote(name), role.id())
+		}
+		Event::DepthColorsAdjusted {
+			role,
+			count,
+			shade,
+			tint,
+			tone,
+			chroma,
+			undertone,
+			warmth,
+			vibrancy,
+			brightness,
+			clarity,
+			fog,
+			hardness,
+		} => format!(
+			"event depth-adjusted {} {count} {shade} {tint} {tone} {chroma} {undertone} {warmth} {vibrancy} {brightness} {clarity} {fog} {hardness}",
+			role.id()
+		),
+		Event::ShapeCornerSet { layer, index, corner } => {
+			format!("event shape-corner {} {index} {corner}", quote(layer))
+		}
+		Event::SceneInserted { name, count } => {
+			format!("event scene-inserted {} {count}", quote(name))
+		}
 		Event::FrameAdded { index, duration_ms } => {
 			format!("event frame-added {index} {duration_ms}")
 		}
@@ -617,6 +678,36 @@ fn parse_event(toks: &[String]) -> Result<Event, String> {
 			fog: num(toks, 13, "fog")?,
 			hardness: num(toks, 14, "hardness")?,
 		}),
+		Some("layer-depth") => Ok(Event::LayerDepthSet {
+			name: name(2)?,
+			role: DepthRole::from_id(toks.get(3).map(String::as_str).unwrap_or(""))
+				.ok_or("unknown depth role")?,
+		}),
+		Some("depth-adjusted") => Ok(Event::DepthColorsAdjusted {
+			role: DepthRole::from_id(toks.get(2).map(String::as_str).unwrap_or(""))
+				.ok_or("unknown depth role")?,
+			count: num(toks, 3, "element count")?,
+			shade: num(toks, 4, "shade")?,
+			tint: num(toks, 5, "tint")?,
+			tone: num(toks, 6, "tone")?,
+			chroma: num(toks, 7, "chroma")?,
+			undertone: num(toks, 8, "undertone")?,
+			warmth: num(toks, 9, "warmth")?,
+			vibrancy: num(toks, 10, "vibrancy")?,
+			brightness: num(toks, 11, "brightness")?,
+			clarity: num(toks, 12, "clarity")?,
+			fog: num(toks, 13, "fog")?,
+			hardness: num(toks, 14, "hardness")?,
+		}),
+		Some("shape-corner") => Ok(Event::ShapeCornerSet {
+			layer: name(2)?,
+			index: num(toks, 3, "shape index")?,
+			corner: num(toks, 4, "corner")?,
+		}),
+		Some("scene-inserted") => Ok(Event::SceneInserted {
+			name: name(2)?,
+			count: num(toks, 3, "element count")?,
+		}),
 		Some("frame-added") => Ok(Event::FrameAdded {
 			index: num(toks, 2, "frame index")?,
 			duration_ms: num(toks, 3, "frame duration")?,
@@ -665,6 +756,13 @@ fn parse_layer(
 			Some("visible") => true,
 			Some("hidden") => false,
 			_ => return Err("bad layer visibility".to_string()),
+		},
+		// The optional trailing depth-role field; absent in
+		// every file written before depth roles existed.
+		depth: match toks.get(4) {
+			None => DepthRole::Unassigned,
+			Some(id) => DepthRole::from_id(id)
+				.ok_or_else(|| format!("unknown depth role: {id}"))?,
 		},
 		shapes: Vec::new(),
 	};
@@ -1222,6 +1320,130 @@ end
 		assert_eq!(shapes[1].opacity, 25);
 		assert_eq!(shapes[1].pattern, "dashed");
 		assert_eq!(shapes[2].opacity, 100);
+	}
+
+	#[test]
+	fn layer_depth_roles_round_trip_as_one_trailing_field() {
+		let mut d = Drawing::new(800, 600, Srgb::WHITE);
+		d.set_layer_depth(0, DepthRole::Background);
+		let near = d.add_layer("Near");
+		d.set_layer_depth(near, DepthRole::Foreground);
+		d.add_layer("Plain");
+		let project = Project { drawing: d, palette: Vec::new(), pinned_sliders: Vec::new(), slider_target: AdjustTarget::BaseColor, page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT };
+		let text = project.to_text();
+		// Role-carrying layers name the role last; the unassigned
+		// layer's line is exactly the old shape.
+		assert!(text.contains("layer \"Layer 1\" visible 0 background\n"), "{text}");
+		assert!(text.contains("layer \"Near\" visible 0 foreground\n"), "{text}");
+		assert!(text.contains("layer \"Plain\" visible 0\n"), "{text}");
+		// The depth event is in the log too.
+		assert!(text.contains("event layer-depth \"Layer 1\" background\n"), "{text}");
+		let back = Project::from_text(&text).expect("depth roles read back");
+		assert_eq!(back.to_text(), text);
+		assert_eq!(back.drawing.layers[0].depth, DepthRole::Background);
+		assert_eq!(back.drawing.layers[1].depth, DepthRole::Foreground);
+		assert_eq!(back.drawing.layers[2].depth, DepthRole::Unassigned);
+	}
+
+	#[test]
+	fn files_written_before_depth_roles_load_unassigned() {
+		// The legacy files in the earlier tests carry no role
+		// field; say it out loud for the layer line itself.
+		let legacy = "\
+blind-designer-project 1
+canvas 100 80
+background #FFFFFF
+palette 0
+layers 1
+layer \"Layer 1\" visible 1
+shape rectangle 1 2 30 40 #FF0000 0 3 - -
+log 3
+event canvas 100 80
+event background #FFFFFF
+event layer-added \"Layer 1\"
+end
+";
+		let project = Project::from_text(legacy).expect("a pre-depth file loads");
+		assert_eq!(project.drawing.layers[0].depth, DepthRole::Unassigned);
+		// And re-saving it does not invent a role field.
+		assert!(!project.to_text().contains("background\nlayer"));
+		assert!(project.to_text().contains("layer \"Layer 1\" visible 1\n"));
+	}
+
+	#[test]
+	fn shape_corner_round_trips_after_the_opacity() {
+		let mut d = Drawing::new(800, 600, Srgb::WHITE);
+		let mut round = Shape::new(ShapeKind::Rectangle, 10, 10, 50, 50, Srgb::BLACK);
+		round.corner = 30;
+		d.add_shape(0, round);
+		let mut ghost_round = Shape::new(ShapeKind::Rectangle, 70, 10, 50, 50, Srgb::BLACK);
+		ghost_round.corner = 50;
+		ghost_round.opacity = 40;
+		d.add_shape(0, ghost_round);
+		d.add_shape(0, Shape::new(ShapeKind::Rectangle, 130, 10, 50, 50, Srgb::BLACK));
+		d.set_shape_corner(0, 0, 30);
+		let project = Project { drawing: d, palette: Vec::new(), pinned_sliders: Vec::new(), slider_target: AdjustTarget::BaseColor, page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT };
+		let text = project.to_text();
+		// A fully opaque rounded rectangle writes its opacity so
+		// the corner can follow it; the sharp rectangle's line is
+		// exactly the old shape.
+		assert!(text.contains("shape rectangle 10 10 50 50 #000000 0.0 3 - - 100 r30\n"), "{text}");
+		assert!(text.contains("shape rectangle 70 10 50 50 #000000 0.0 3 - - 40 r50\n"), "{text}");
+		assert!(text.contains("shape rectangle 130 10 50 50 #000000 0.0 3 - -\n"), "{text}");
+		assert!(text.contains("event shape-corner \"Layer 1\" 0 30\n"), "{text}");
+		let back = Project::from_text(&text).expect("rounded shapes read back");
+		assert_eq!(back.to_text(), text);
+		let shapes = &back.drawing.layers[0].shapes;
+		assert_eq!(shapes[0].corner, 30);
+		assert_eq!(shapes[0].opacity, 100);
+		assert_eq!(shapes[1].corner, 50);
+		assert_eq!(shapes[1].opacity, 40);
+		assert_eq!(shapes[2].corner, 0);
+	}
+
+	#[test]
+	fn depth_adjustment_events_round_trip_in_the_log() {
+		let mut d = Drawing::new(100, 100, Srgb::WHITE);
+		d.set_layer_depth(0, DepthRole::Midground);
+		d.add_shape(0, Shape::new(ShapeKind::Rectangle, 5, 5, 10, 10, Srgb::new(200, 40, 30)));
+		let bases: Vec<(usize, usize, Srgb)> =
+			vec![(0, 0, d.layers[0].shapes[0].fill)];
+		assert_eq!(
+			d.adjust_depth_colors(
+				DepthRole::Midground,
+				&bases,
+				crate::sliders::ColorAdjust { fog: 25, ..Default::default() },
+			),
+			1
+		);
+		let project = Project { drawing: d, palette: Vec::new(), pinned_sliders: Vec::new(), slider_target: AdjustTarget::BaseColor, page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT };
+		let text = project.to_text();
+		assert!(text.contains("event depth-adjusted midground 1"), "{text}");
+		let back = Project::from_text(&text).expect("depth events read back");
+		assert_eq!(back.to_text(), text);
+	}
+
+	#[test]
+	fn a_scene_saves_as_a_project_and_inserts_into_another() {
+		// Build a scene and save it the way File, Save Scene does:
+		// a project whose drawing is the scene.
+		let mut scene = Drawing::new(300, 200, Srgb::WHITE);
+		scene.add_shape(0, Shape::new(ShapeKind::Rectangle, 0, 150, 300, 50, Srgb::new(30, 60, 120)));
+		scene.add_shape(0, Shape::new(ShapeKind::Ellipse, 240, 20, 40, 40, Srgb::new(255, 205, 0)));
+		let scene_project = Project { drawing: scene, palette: Vec::new(), pinned_sliders: Vec::new(), slider_target: AdjustTarget::BaseColor, page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT };
+		let scene_text = scene_project.to_text();
+		// Later: open the scene file and insert it into a design.
+		let loaded = Project::from_text(&scene_text).expect("a scene file reads back");
+		let mut d = Drawing::new(800, 600, Srgb::WHITE);
+		assert_eq!(d.insert_scene(0, &loaded.drawing, "Harbour"), 2);
+		let project = Project { drawing: d, palette: Vec::new(), pinned_sliders: Vec::new(), slider_target: AdjustTarget::BaseColor, page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT };
+		let text = project.to_text();
+		assert!(text.contains("event scene-inserted \"Harbour\" 2\n"), "{text}");
+		let back = Project::from_text(&text).expect("a design holding a scene reads back");
+		assert_eq!(back.to_text(), text);
+		let shapes = &back.drawing.layers[0].shapes;
+		assert_eq!(shapes.len(), 2);
+		assert!(shapes.iter().all(|s| s.caption.as_deref().is_some_and(|c| c.starts_with("Harbour: "))));
 	}
 
 	#[test]

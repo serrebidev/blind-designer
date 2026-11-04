@@ -6,6 +6,28 @@ workflow.
 
 ## Unreleased
 
+- Depth (Elshara's vision: shape, movement, depth of
+  visibility): layers gain a depth role — background, midground,
+  foreground, sideground, or no role — set in Design, Layers,
+  spoken in the layer lists, saved in the design file, and the
+  tactile sheet now describes the background first, as the base.
+  The color adjustments can act on a whole depth at once:
+  Background layers, Midground layers and Foreground layers join
+  the adjustment target picker, one logged step per depth.
+  Rectangles gain roundedness: a new Roundedness slider (0 sharp
+  to 50 fully rounded) and a Corners field in the Elements
+  dialog's Resize — rounded rectangles paint round in the PNG,
+  carry a border-radius in HTML, and describe themselves as
+  "rounded rectangle, corners 30 percent". New Design,
+  Viewability reports how the design reads from a viewing angle
+  and depth: each element viewable, partly hidden or hidden
+  behind what paints over it, turned away at so many degrees, or
+  outside the chosen depth (box maths, stated in the report).
+  Scenes within scenes: File, Save Scene and Insert Scene store
+  a design as a reusable group, its elements landing on the
+  current layer with the scene's name prefixed to their
+  captions. Two new templates, Portrait and Landscape, are built
+  in depth style with their layers already tagged by role.
 - Every color system (Elshara's colorhexa ask): the View menu's
   color format choice grows from 4 to 14 — CMYK, CIE XYZ, xyY,
   CIE Lab, CIE LCH, CIE LUV, Hunter Lab, decimal, web safe and

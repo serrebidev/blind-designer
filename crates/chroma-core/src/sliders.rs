@@ -39,6 +39,9 @@ pub enum SliderTarget {
 	/// The selected element's size, percent of the size it had
 	/// when it was selected.
 	ElementScale,
+	/// The selected rectangle's corner roundedness, percent:
+	/// 0 sharp, 50 fully rounded.
+	ElementRoundedness,
 	/// The selected stroke's brush width in pixels.
 	StrokeWidth,
 	/// The last animation frame's duration in milliseconds.
@@ -141,6 +144,11 @@ impl SliderDef {
 				opacity_words(value)
 			}
 			SliderTarget::ElementScale => format!("{value} percent"),
+			SliderTarget::ElementRoundedness => match value {
+				0 => "sharp corners".to_string(),
+				50 => "fully rounded".to_string(),
+				v => format!("corners {v} percent"),
+			},
 			SliderTarget::FrameDuration => format!("{value} milliseconds"),
 			SliderTarget::ExtractCount => {
 				if value == 1 {
@@ -264,6 +272,7 @@ pub const SLIDERS: &[SliderDef] = &[
 	def("transparency", "Transparency", 0, 100, 1, SliderTarget::CurrentAlpha),
 	def("element-opacity", "Element transparency", 0, 100, 1, SliderTarget::ElementOpacity),
 	def("element-scale", "Element scale", 10, 400, 1, SliderTarget::ElementScale),
+	def("element-roundedness", "Roundedness", 0, 50, 1, SliderTarget::ElementRoundedness),
 	def("stroke-width", "Stroke width", 1, 200, 1, SliderTarget::StrokeWidth),
 	def(
 		"frame-duration",
@@ -327,15 +336,20 @@ pub fn scaled_size(w: u32, h: u32, percent: i32) -> (u32, u32) {
 }
 
 /// What the color-adjustment sliders act on: the current (base)
-/// color, the selected element, or every element on the current
-/// layer. Chosen in Project Options and on the Sliders tab, and
-/// stored in the project file.
+/// color, the selected element, every element on the current
+/// layer, or every element on the layers of one depth (all the
+/// background layers, say — the depth-wide adjustments a scene's
+/// planes ask for). Chosen in Project Options and on the Sliders
+/// tab, and stored in the project file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum AdjustTarget {
 	#[default]
 	BaseColor,
 	Element,
 	Layer,
+	DepthBackground,
+	DepthMidground,
+	DepthForeground,
 }
 
 impl AdjustTarget {
@@ -345,6 +359,9 @@ impl AdjustTarget {
 			AdjustTarget::BaseColor => "base",
 			AdjustTarget::Element => "element",
 			AdjustTarget::Layer => "layer",
+			AdjustTarget::DepthBackground => "depth-background",
+			AdjustTarget::DepthMidground => "depth-midground",
+			AdjustTarget::DepthForeground => "depth-foreground",
 		}
 	}
 
@@ -353,6 +370,9 @@ impl AdjustTarget {
 			"base" => Some(AdjustTarget::BaseColor),
 			"element" => Some(AdjustTarget::Element),
 			"layer" => Some(AdjustTarget::Layer),
+			"depth-background" => Some(AdjustTarget::DepthBackground),
+			"depth-midground" => Some(AdjustTarget::DepthMidground),
+			"depth-foreground" => Some(AdjustTarget::DepthForeground),
 			_ => None,
 		}
 	}
@@ -363,12 +383,32 @@ impl AdjustTarget {
 			AdjustTarget::BaseColor => "Current color",
 			AdjustTarget::Element => "Selected element",
 			AdjustTarget::Layer => "Current layer",
+			AdjustTarget::DepthBackground => "Background layers",
+			AdjustTarget::DepthMidground => "Midground layers",
+			AdjustTarget::DepthForeground => "Foreground layers",
 		}
 	}
 
-	/// All three targets, in chooser order.
-	pub const ALL: [AdjustTarget; 3] =
-		[AdjustTarget::BaseColor, AdjustTarget::Element, AdjustTarget::Layer];
+	/// The depth role this target adjusts, for the depth-wide
+	/// targets; `None` for the original three.
+	pub fn depth_role(&self) -> Option<crate::drawing::DepthRole> {
+		match self {
+			AdjustTarget::DepthBackground => Some(crate::drawing::DepthRole::Background),
+			AdjustTarget::DepthMidground => Some(crate::drawing::DepthRole::Midground),
+			AdjustTarget::DepthForeground => Some(crate::drawing::DepthRole::Foreground),
+			_ => None,
+		}
+	}
+
+	/// All six targets, in chooser order.
+	pub const ALL: [AdjustTarget; 6] = [
+		AdjustTarget::BaseColor,
+		AdjustTarget::Element,
+		AdjustTarget::Layer,
+		AdjustTarget::DepthBackground,
+		AdjustTarget::DepthMidground,
+		AdjustTarget::DepthForeground,
+	];
 }
 
 /// The color adjustments at once, as the sliders hold them: the
@@ -826,6 +866,29 @@ mod tests {
 		assert!(hard.c > base.c * 1.2, "hard raises chroma");
 		let soft = ColorAdjust { hardness: -50, ..Default::default() }.apply(sky()).to_oklch();
 		assert!(soft.c < base.c * 0.6, "soft lowers chroma");
+	}
+
+	#[test]
+	fn roundedness_formats_its_ends_and_middle() {
+		let f = |v: i32| slider_by_id("element-roundedness").unwrap().format(v);
+		assert_eq!(f(0), "sharp corners");
+		assert_eq!(f(30), "corners 30 percent");
+		assert_eq!(f(50), "fully rounded");
+		let def = slider_by_id("element-roundedness").unwrap();
+		assert_eq!((def.min, def.max), (0, 50));
+	}
+
+	#[test]
+	fn depth_targets_name_the_layers_of_one_depth() {
+		assert_eq!(AdjustTarget::DepthBackground.name(), "Background layers");
+		assert_eq!(AdjustTarget::DepthMidground.name(), "Midground layers");
+		assert_eq!(AdjustTarget::DepthForeground.name(), "Foreground layers");
+		assert_eq!(
+			AdjustTarget::DepthBackground.depth_role(),
+			Some(crate::drawing::DepthRole::Background)
+		);
+		assert_eq!(AdjustTarget::Layer.depth_role(), None);
+		assert_eq!(AdjustTarget::from_id("depth-foreground"), Some(AdjustTarget::DepthForeground));
 	}
 
 	#[test]

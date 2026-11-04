@@ -57,6 +57,12 @@ pub struct Shape {
 	pub image_path: String,
 	/// Rotation in degrees, clockwise, around the shape's centre.
 	pub angle: f64,
+	/// Corner roundedness of a rectangle, as a percent: 0 paints
+	/// sharp corners, 50 is fully rounded (each corner's arc has
+	/// radius half the shorter side, measured as that percent of
+	/// it). Only rectangles read it; ellipses are already round
+	/// and strokes have no corners.
+	pub corner: u8,
 	/// How opaque the shape paints, as a percent: 100 paints the
 	/// fill color exactly, lower values blend with whatever is
 	/// already painted beneath, in paint order.
@@ -82,6 +88,7 @@ impl Shape {
 			font_size: 0,
 			image_path: String::new(),
 			angle: 0.0,
+			corner: 0,
 			opacity: 100,
 			caption: None,
 		}
@@ -162,6 +169,29 @@ fn put_shape_pixel(
 	let a = opacity as u32;
 	let mix = |new: u8, old: u8| ((new as u32 * a + old as u32 * (100 - a)) / 100) as u8;
 	img.put_pixel(x, y, image::Rgb([mix(px[0], old[0]), mix(px[1], old[1]), mix(px[2], old[2])]));
+}
+
+/// Is a point at shape-local coordinates (lx, ly) — offsets from
+/// the rectangle's centre — inside the rectangle with its corner
+/// roundedness applied? The corner arcs have radius
+/// corner-percent of half the shorter side, so 50 percent rounds
+/// fully over. Sharp corners (0) are the plain box test.
+fn rect_local_inside(shape: &Shape, lx: f64, ly: f64) -> bool {
+	let (hw, hh) = (shape.w as f64 / 2.0, shape.h as f64 / 2.0);
+	if lx.abs() > hw || ly.abs() > hh {
+		return false;
+	}
+	let r = shape.corner.min(50) as f64 / 100.0 * hw.min(hh);
+	if r <= 0.0 {
+		return true;
+	}
+	// In a corner region, the point must fall within the arc
+	// around that corner's centre; everywhere else it's inside.
+	let (ax, ay) = (lx.abs() - (hw - r), ly.abs() - (hh - r));
+	if ax <= 0.0 || ay <= 0.0 {
+		return true;
+	}
+	ax * ax + ay * ay <= r * r
 }
 
 #[derive(Debug, Clone)]
@@ -376,11 +406,18 @@ impl Design {
 				} else {
 					"huge"
 				};
+				let (kind_word, corners) =
+					if kind == ShapeKind::Rectangle && shape.corner > 0 {
+						(
+							"rounded rectangle",
+							format!(", corners {} percent", shape.corner),
+						)
+					} else {
+						(kind.name(), String::new())
+					};
 				format!(
-					"{size} {words} {} at {at} ({} by {} pixels)",
-					kind.name(),
-					shape.w,
-					shape.h
+					"{size} {words} {kind_word} at {at} ({} by {} pixels){corners}",
+					shape.w, shape.h
 				)
 			}
 		};
@@ -423,7 +460,11 @@ impl Design {
 				for y in y0.max(0)..y1.min(self.height as i32) {
 					for x in x0.max(0)..x1.min(self.width as i32) {
 						let inside = match shape.kind {
-							ShapeKind::Rectangle => true,
+							ShapeKind::Rectangle => rect_local_inside(
+								shape,
+								x as f64 + 0.5 - (x0 as f64 + shape.w as f64 / 2.0),
+								y as f64 + 0.5 - (y0 as f64 + shape.h as f64 / 2.0),
+							),
 							_ => {
 								let (cx, cy) = (
 									x0 as f32 + shape.w as f32 / 2.0,
@@ -458,9 +499,7 @@ impl Design {
 						let (dx, dy) = (x as f64 + 0.5 - cx, y as f64 + 0.5 - cy);
 						let (lx, ly) = (dx * cos - dy * sin, dx * sin + dy * cos);
 						let inside = match shape.kind {
-							ShapeKind::Rectangle => {
-								lx.abs() <= shape.w as f64 / 2.0 && ly.abs() <= shape.h as f64 / 2.0
-							}
+							ShapeKind::Rectangle => rect_local_inside(shape, lx, ly),
 							_ => {
 								let (rx, ry) = (shape.w as f64 / 2.0, shape.h as f64 / 2.0);
 								rx > 0.0
@@ -695,6 +734,37 @@ mod tests {
 		d.shapes.push(Shape::new(ShapeKind::Rectangle, 0, 0, 4, 4, Srgb::BLACK));
 		assert_eq!(d.shapes[0].opacity, 100, "shapes start fully opaque");
 		assert_eq!(*d.render().get_pixel(2, 2), image::Rgb([0, 0, 0]));
+	}
+
+	#[test]
+	fn rounded_rectangles_cut_their_corners_and_say_so() {
+		let mut d = Design::new(40, 40, Srgb::WHITE);
+		let mut s = Shape::new(ShapeKind::Rectangle, 10, 10, 20, 20, Srgb::BLACK);
+		d.shapes.push(s.clone());
+		// Sharp: the very corner pixel paints.
+		assert_eq!(*d.render().get_pixel(10, 10), image::Rgb([0, 0, 0]));
+		s.corner = 50;
+		d.shapes[0] = s;
+		let img = d.render();
+		// Fully rounded: the corner pixel is background again,
+		// while the middle of each edge still paints.
+		assert_eq!(*img.get_pixel(10, 10), image::Rgb([255, 255, 255]));
+		assert_eq!(*img.get_pixel(20, 10), image::Rgb([0, 0, 0]));
+		assert_eq!(*img.get_pixel(10, 20), image::Rgb([0, 0, 0]));
+		assert_eq!(*img.get_pixel(20, 20), image::Rgb([0, 0, 0]));
+		// The description names the rounding and its percent;
+		// a sharp rectangle says neither.
+		let plain = d.describe_plain(&d.shapes[0]);
+		assert!(plain.contains("rounded rectangle"), "{plain}");
+		assert!(plain.contains("corners 50 percent"), "{plain}");
+		let sharp = Design::new(40, 40, Srgb::WHITE);
+		assert!(!sharp.describe_plain(&Shape::new(ShapeKind::Rectangle, 0, 0, 5, 5, Srgb::BLACK)).contains("rounded"));
+		// Ellipses ignore the corner field entirely.
+		let mut e = Design::new(40, 40, Srgb::WHITE);
+		let mut ball = Shape::new(ShapeKind::Ellipse, 10, 10, 20, 20, Srgb::BLACK);
+		ball.corner = 50;
+		e.shapes.push(ball);
+		assert!(!e.describe_plain(&e.shapes[0]).contains("rounded"));
 	}
 
 	#[test]

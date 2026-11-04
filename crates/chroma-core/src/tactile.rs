@@ -10,7 +10,7 @@
 
 use crate::braille::to_braille;
 use crate::design::{Design, Shape, ShapeKind};
-use crate::drawing::Drawing;
+use crate::drawing::{DepthRole, Drawing};
 use crate::{color_words, extract_palette, Srgb};
 
 /// Line styles for the raised-line SVG, one per layer, in order.
@@ -167,10 +167,13 @@ impl Drawing {
 		out
 	}
 
-	/// The tactile text sheet: a walk through the design, layer by
-	/// layer, elements in reading order, each with its plain-language
-	/// description, its caption, and its braille label. Hidden layers
-	/// are noted and skipped, as they are everywhere else.
+	/// The tactile text sheet: a walk through the design, depth
+	/// first (the background described first, as the base the rest
+	/// stands on; layers without a depth role keep their paint
+	/// order, last), elements in reading order, each with its
+	/// plain-language description, its caption, and its braille
+	/// label. Hidden layers are noted and skipped, as they are
+	/// everywhere else.
 	pub fn tactile_sheet(&self) -> String {
 		let total: usize = self
 			.layers
@@ -180,14 +183,20 @@ impl Drawing {
 			.sum();
 		let mut out = format!(
 			"Tactile sheet for a design {} by {} pixels, background {} ({}).\n\
-			 {total} elements. The walk goes layer by layer; inside a layer, \
-			 top to bottom, left to right — the order a hand reads.\n",
+			 {total} elements. The walk goes depth by depth — the background \
+			 first, as the base — and inside a layer, top to bottom, left to \
+			 right — the order a hand reads.\n",
 			self.width,
 			self.height,
 			color_words(self.background),
 			self.background.to_hex()
 		);
-		for (li, layer) in self.layers.iter().enumerate() {
+		// The walk order: layers sorted by depth rank, stable, so
+		// same-depth layers (and role-less designs) keep paint order.
+		let mut order: Vec<usize> = (0..self.layers.len()).collect();
+		order.sort_by_key(|&li| self.layers[li].depth.sheet_rank());
+		for li in order {
+			let layer = &self.layers[li];
 			if !layer.visible {
 				out.push_str(&format!(
 					"\nLayer \"{}\" is hidden; it is not part of the tactile design.\n",
@@ -196,9 +205,17 @@ impl Drawing {
 				continue;
 			}
 			let (style_name, _) = line_style(li);
+			let role_note = match layer.depth {
+				DepthRole::Unassigned => String::new(),
+				DepthRole::Background => {
+					", the background — the base the rest stands on".to_string()
+				}
+				role => format!(", the {}", role.name()),
+			};
 			out.push_str(&format!(
-				"\nLayer \"{}\" ({} lines in the raised-line version), {} elements:\n",
+				"\nLayer \"{}\"{} ({} lines in the raised-line version), {} elements:\n",
 				layer.name,
+				role_note,
 				style_name,
 				layer.shapes.len()
 			));
@@ -645,6 +662,28 @@ mod tests {
 		assert!(red < blue, "reading order: red (top) before blue (bottom):\n{sheet}");
 		// The caption's braille label rides along.
 		assert!(sheet.contains(&to_braille("red square")), "{sheet}");
+	}
+
+	#[test]
+	fn tactile_sheet_describes_the_background_first_as_the_base() {
+		let mut d = Drawing::new(300, 300, Srgb::WHITE);
+		// Paint order puts the figure's layer first and the
+		// backdrop last; the sheet must still start from the base.
+		let front = d.add_layer("Figure");
+		d.set_layer_depth(front, crate::drawing::DepthRole::Foreground);
+		d.add_shape(front, Shape::new(ShapeKind::Ellipse, 100, 100, 60, 60, Srgb::new(0, 0, 255)));
+		let back = d.add_layer("Backdrop");
+		d.set_layer_depth(back, crate::drawing::DepthRole::Background);
+		d.add_shape(back, Shape::new(ShapeKind::Rectangle, 0, 0, 300, 300, Srgb::new(255, 0, 0)));
+		let sheet = d.tactile_sheet();
+		let base = sheet.find("the base the rest stands on").unwrap();
+		let figure = sheet.find("Layer \"Figure\"").unwrap();
+		assert!(base < figure, "background before foreground:\n{sheet}");
+		assert!(sheet.contains("Layer \"Figure\", the foreground"), "{sheet}");
+		// A design with no roles keeps its paint order and gains
+		// no role notes.
+		let plain = sample().tactile_sheet();
+		assert!(!plain.contains("stands on"), "{plain}");
 	}
 
 	#[test]

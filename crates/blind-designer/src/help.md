@@ -521,6 +521,67 @@ sun (top right), then the walls, the roof stroke, the door, the
 windows, and the grass along the bottom — the order your hand
 would meet them.
 
+DEPTH: BACK, MIDDLE AND FRONT
+
+A design can say how deep its scene runs. Every layer can carry
+a depth role — background, midground, foreground or sideground —
+set in Design, Layers: select the layer, then choose its role
+from the Depth role choice under the list. A layer with no role
+behaves exactly as layers always have; the role never changes
+how anything paints. It changes what the depth tools say and do:
+
+- The tactile sheet describes the background first, as the base
+  the rest stands on, then the midground, the foreground and
+  the sideground. Layers with no role keep their paint order,
+  last.
+- The color adjustments can act on a whole depth at once. When
+  an adjustment slider is pinned, the target picker on the
+  Sliders tab (and in Project Options) offers Background
+  layers, Midground layers and Foreground layers alongside the
+  current color, the selected element and the current layer:
+  fog the background, sharpen the foreground, and everything
+  else stays put. One change to a whole depth is one step in
+  the log.
+- Design, Viewability reports how the design reads from where
+  a viewer stands. Give a viewing angle in degrees — 0 is
+  straight on from the front, and an element rotated more than
+  90 degrees away from your angle shows its back — and a depth
+  to judge (all depths, or one of background, midground,
+  foreground). Each element is reported in plain words:
+  viewable; partly hidden or hidden behind the element painted
+  over it (an element counts as hidden when one box covers
+  nearly all of it, partly hidden from 60 percent covered);
+  turned away at so many degrees; or outside the chosen depth.
+  The maths uses each element's box and rotation only, so
+  curves, holes and see-through parts are not taken into
+  account — the report says so at its top.
+
+Sharp and rounded: a rectangle's corners can round over. The
+Roundedness slider (pin it in Project Options) runs from 0 —
+sharp corners — to 50 — fully rounded, each corner's arc half
+the rectangle's shorter side. The Resize dialog in Design,
+Elements carries the same Corners value for a selected
+rectangle. Rounded rectangles paint round in the PNG, carry a
+border-radius in the HTML export, and describe themselves as
+"rounded rectangle, corners 30 percent". Ellipses are already
+round and strokes have no corners, so roundedness does not
+apply to them.
+
+Scenes within scenes: File, Save Scene writes the current
+design as a scene file (an ordinary .bdd design file). File,
+Insert Scene places a saved scene's elements onto the current
+layer of the design you have open, as one group: every inserted
+element's caption gains the scene's name in front of it —
+"Harbour: ..." — so the group reads as a group in the elements
+list, the tactile sheet and every export. Build a harbour once;
+drop it into every poster after that.
+
+The Portrait and Landscape templates (File, New from Template)
+are built in depth style: their layers arrive already tagged —
+a wall as background, a framed picture as midground, the sitter
+as foreground; a sky and far hills as background, the near
+ground as foreground.
+
 SYMBOLS AND TEMPLATES
 
 Design, Add, Symbol stamps a ready-made symbol — star, heart,
@@ -529,9 +590,10 @@ whatever size. A symbol is ordinary strokes under one caption, so
 it moves, resizes, recolors and exports like anything else.
 
 File, New from Template starts a design from a layout: a birthday
-card, a simple house, a face, or a chart. Loading a template
-replaces the design you have open, and the template is a normal
-design from then on — change anything, then Save Design.
+card, a simple house, a face, a chart, a portrait or a landscape.
+Loading a template replaces the design you have open, and the
+template is a normal design from then on — change anything, then
+Save Design.
 
 PICTURES BY TOUCH AND COMPARISON
 

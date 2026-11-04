@@ -4,7 +4,7 @@ Readable release history for Blind Designer (renamed from Transversion at 0.2.0)
 section is its GitHub release note, taken from this file by the release
 workflow.
 
-## Unreleased
+## 0.10.0
 
 - Depth (Elshara's vision: shape, movement, depth of
   visibility): layers gain a depth role — background, midground,

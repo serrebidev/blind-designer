@@ -20,9 +20,9 @@ use chroma_core::brushes::{Brush, BrushLibrary, PATTERNS};
 use chroma_core::design::{css_for_colors, Shape, ShapeKind};
 use chroma_core::dictionary;
 use chroma_core::drawing::{Drawing, Event};
-use chroma_core::palette::{PaletteColor, Provenance};
+use chroma_core::palette::{starter_palette, PaletteColor, Provenance};
 use chroma_core::plain::{parse_color, parse_position, parse_size};
-use chroma_core::project::Project;
+use chroma_core::project::{Project, ProjectStats};
 use chroma_core::sound::{cue_at, cue_for_shape, tone_wav, Cue};
 use chroma_core::symbols;
 use chroma_core::tactile::{compare_images, tactile_grid};
@@ -46,6 +46,7 @@ const ID_SHADES: Id = 206;
 const ID_TINTS: Id = 207;
 const ID_TONES: Id = 208;
 const ID_REMOVE_COLOR: Id = 209;
+const ID_LOAD_STARTER: Id = 210;
 const ID_CANVAS_SIZE: Id = 301;
 const ID_ADD_RECT: Id = 302;
 const ID_ADD_ELLIPSE: Id = 303;
@@ -81,6 +82,7 @@ const ID_COMPARE_IMAGES: Id = 120;
 const ID_TACTILE_GRID: Id = 121;
 const ID_DESCRIBE_AREA: Id = 318;
 const ID_ADD_SYMBOL: Id = 319;
+const ID_STATS: Id = 320;
 const ID_ABOUT: Id = 401;
 const ID_DICTIONARY: Id = 402;
 const ID_HELP_FILE: Id = 403;
@@ -129,6 +131,7 @@ const MENU_IDS: &[Id] = &[
 	ID_TINTS,
 	ID_TONES,
 	ID_REMOVE_COLOR,
+	ID_LOAD_STARTER,
 	ID_CANVAS_SIZE,
 	ID_ADD_RECT,
 	ID_ADD_ELLIPSE,
@@ -148,6 +151,7 @@ const MENU_IDS: &[Id] = &[
 	ID_ANIMATION,
 	ID_DESCRIBE_AREA,
 	ID_ADD_SYMBOL,
+	ID_STATS,
 	ID_ABOUT,
 	ID_DICTIONARY,
 	ID_HELP_FILE,
@@ -195,7 +199,9 @@ struct State {
 struct Win {
 	frame: Frame,
 	palette_list: QuietList<usize>,
-	shapes_list: QuietList<usize>,
+	elements_list: QuietList<usize>,
+	layers_list: QuietList<usize>,
+	stats_text: StaticText,
 	readout: StaticText,
 	hex_field: TextCtrl,
 	l_spin: SpinCtrlDouble,
@@ -214,25 +220,10 @@ fn palette_rows(state: &State) -> Vec<(usize, String)> {
 		.collect()
 }
 
-/// Shape rows across all layers, in paint order. The payload is the
-/// flat index over every layer's shapes; `locate` turns it back into
+/// The main window's element rows are `element_rows` (plain language,
+/// defined with the Elements dialog): its payload is the flat index
+/// over every layer's shapes, which `locate` turns back into
 /// (layer, shape) for the edit actions.
-fn shape_rows(state: &State) -> Vec<(usize, String)> {
-	let design = state.drawing.flatten();
-	let mut rows = Vec::new();
-	let mut flat = 0;
-	for layer in &state.drawing.layers {
-		for s in &layer.shapes {
-			let mut label = format!("{}: {}", layer.name, design.caption_for(s));
-			if !layer.visible {
-				label.push_str(" (layer hidden)");
-			}
-			rows.push((flat, label));
-			flat += 1;
-		}
-	}
-	rows
-}
 
 /// Flat shape index -> (layer index, shape index within the layer).
 fn locate(state: &State, mut flat: usize) -> Option<(usize, usize)> {
@@ -319,7 +310,43 @@ fn readout_text(state: &State, color: Srgb) -> String {
 
 fn refresh_lists(win: &Win, state: &State) {
 	win.palette_list.update_labelled(palette_rows(state), Select::Keep);
-	win.shapes_list.update_labelled(shape_rows(state), Select::Keep);
+	win.elements_list.update_labelled(element_rows(state), Select::Keep);
+	win.layers_list.update_labelled(layer_rows(state), Select::Keep);
+	win.stats_text
+		.set_label(&ProjectStats::gather(&state.drawing, state.palette.len()).one_line());
+	refresh_menu_states(win, state);
+}
+
+/// Grey the menu actions that cannot do anything right now, so the
+/// menus themselves say what the project is missing: the color
+/// schemes, shades/tints/tones, Remove Color and Set Background need
+/// a palette color selected; Move/Rotate/Resize/Remove Shape need
+/// an element selected; Recolor needs both; the animation
+/// description export needs at least one frame. Everything else
+/// works on any project, empty or not, and stays enabled.
+fn refresh_menu_states(win: &Win, state: &State) {
+	let Some(bar) = win.frame.get_menu_bar() else { return };
+	let has_color = win.palette_list.selected().is_some();
+	let has_element = win.elements_list.selected().is_some();
+	for id in [
+		ID_COMPLEMENTARY,
+		ID_SPLIT,
+		ID_ANALOGOUS,
+		ID_TRIADIC,
+		ID_TETRADIC,
+		ID_SHADES,
+		ID_TINTS,
+		ID_TONES,
+		ID_REMOVE_COLOR,
+		ID_SET_BACKGROUND,
+	] {
+		bar.enable_item(id, has_color);
+	}
+	for id in [ID_MOVE_SHAPE, ID_ROTATE_SHAPE, ID_RESIZE_SHAPE, ID_REMOVE_SHAPE] {
+		bar.enable_item(id, has_element);
+	}
+	bar.enable_item(ID_RECOLOR_SHAPE, has_color && has_element);
+	bar.enable_item(ID_EXPORT_ANIM_DESC, !state.drawing.frames.is_empty());
 }
 
 fn select_color(win: &Win, state: &State, color: Srgb) {
@@ -583,6 +610,33 @@ fn parse_points(text: &str) -> Option<Vec<(i32, i32)>> {
 	Some(nums.chunks(2).map(|p| (p[0], p[1])).collect())
 }
 
+/// Grey a dialog's selection-dependent buttons whenever its list
+/// has no selection, and keep them live-or-greyed as the selection
+/// changes: an action that needs a selected row is never offered as
+/// a dead end. Buttons that always work (Add, Close) are not passed
+/// in. Called once, after the list and buttons exist; the returned
+/// handle re-applies the greying, for dialogs whose own edits can
+/// empty the list without a selection event.
+fn grey_with_selection(list: &Rc<QuietList<usize>>, buttons: &[Button]) -> Rc<dyn Fn()> {
+	let buttons: Vec<Button> = buttons.to_vec();
+	let apply = {
+		let (list, buttons) = (list.clone(), buttons.clone());
+		move || {
+			let on = list.selected().is_some();
+			for b in &buttons {
+				b.enable(on);
+			}
+		}
+	};
+	apply();
+	let apply: Rc<dyn Fn()> = Rc::new(apply);
+	{
+		let apply = apply.clone();
+		list.on_selection_changed(move || apply());
+	}
+	apply
+}
+
 fn layer_rows(state: &State) -> Vec<(usize, String)> {
 	state
 		.drawing
@@ -629,15 +683,18 @@ fn layers_dialog(win: &Win, shared: &Shared) {
 		let state = shared.borrow();
 		list.update_labelled(layer_rows(&state), Select::Start);
 	}
+	let grey = grey_with_selection(&list, &[rename, remove, toggle, current]);
 	// Refresh the dialog list and speak the newest log entry.
 	let sync = {
-		let (list, shared) = (list.clone(), shared.clone());
+		let (list, shared, grey) = (list.clone(), shared.clone(), grey.clone());
 		move || {
 			let state = shared.borrow();
 			list.update_labelled(layer_rows(&state), Select::Keep);
 			if let Some(last) = state.drawing.log.last() {
 				frame.set_status_text(&last.describe(&state.drawing), 0);
 			}
+			drop(state);
+			grey();
 		}
 	};
 	let sync = Rc::new(sync);
@@ -777,15 +834,19 @@ fn animation_dialog(win: &Win, shared: &Shared) {
 			);
 		}
 	}
+	let grey =
+		grey_with_selection(&list, &[duplicate, remove, up, down, duration, load, replace]);
 	// Refresh the dialog list and speak the newest log entry.
 	let sync = {
-		let (list, shared) = (list.clone(), shared.clone());
+		let (list, shared, grey) = (list.clone(), shared.clone(), grey.clone());
 		move || {
 			let state = shared.borrow();
 			list.update_labelled(frame_rows(&state), Select::Keep);
 			if let Some(last) = state.drawing.log.last() {
 				frame.set_status_text(&last.describe(&state.drawing), 0);
 			}
+			drop(state);
+			grey();
 		}
 	};
 	let sync = Rc::new(sync);
@@ -942,15 +1003,21 @@ fn elements_dialog(win: &Win, shared: &Shared) {
 		let state = shared.borrow();
 		list.update_labelled(element_rows(&state), Select::Start);
 	}
+	let grey = grey_with_selection(
+		&list,
+		&[caption_btn, describe_btn, move_btn, resize_btn, recolor_btn, delete_btn],
+	);
 	// Refresh the list and speak the newest log entry.
 	let sync = {
-		let (list, shared) = (list.clone(), shared.clone());
+		let (list, shared, grey) = (list.clone(), shared.clone(), grey.clone());
 		move || {
 			let state = shared.borrow();
 			list.update_labelled(element_rows(&state), Select::Keep);
 			if let Some(last) = state.drawing.log.last() {
 				frame.set_status_text(&last.describe(&state.drawing), 0);
 			}
+			drop(state);
+			grey();
 		}
 	};
 	let sync = Rc::new(sync);
@@ -1137,6 +1204,7 @@ fn brushes_dialog(win: &Win, shared: &Shared) {
 		let state = shared.borrow();
 		list.update_labelled(rows(&state), Select::Start);
 	}
+	let grey = grey_with_selection(&list, &[apply, delete]);
 	{
 		let (list, shared) = (list.clone(), shared.clone());
 		apply.on_click(move |_| {
@@ -1152,7 +1220,7 @@ fn brushes_dialog(win: &Win, shared: &Shared) {
 		});
 	}
 	{
-		let (list, shared) = (list.clone(), shared.clone());
+		let (list, shared, grey) = (list.clone(), shared.clone(), grey.clone());
 		delete.on_click(move |_| {
 			let Some(i) = list.selected() else { return };
 			let mut state = shared.borrow_mut();
@@ -1170,6 +1238,7 @@ fn brushes_dialog(win: &Win, shared: &Shared) {
 				.collect::<Vec<(usize, String)>>();
 			drop(state);
 			list.update_labelled(rows_now, Select::Keep);
+			grey();
 			frame.set_status_text(&format!("Deleted brush \"{name}\" from the library."), 0);
 		});
 	}
@@ -1882,6 +1951,29 @@ fn dispatch(win: &Win, shared: &Shared, id: Id) {
 				}
 			}
 		}
+		ID_LOAD_STARTER => {
+			let mut state = shared.borrow_mut();
+			let fresh: Vec<PaletteColor> = starter_palette()
+				.into_iter()
+				.filter(|pc| !state.palette.iter().any(|p| p.color == pc.color))
+				.collect();
+			if fresh.is_empty() {
+				frame.set_status_text("The starter colors are already in the palette.", 0);
+				return;
+			}
+			let names: Vec<String> =
+				fresh.iter().map(|pc| pc.spoken(state.color_format)).collect();
+			state.palette.extend(fresh);
+			refresh_lists(win, &state);
+			frame.set_status_text(&format!("Loaded starter colors: {}", names.join("; ")), 0);
+		}
+		ID_STATS => {
+			let report = {
+				let state = shared.borrow();
+				ProjectStats::gather(&state.drawing, state.palette.len()).report()
+			};
+			report_dialog(win, "Project statistics", "What is in this project", &report);
+		}
 		ID_COMPLEMENTARY | ID_SPLIT | ID_ANALOGOUS | ID_TRIADIC | ID_TETRADIC | ID_SHADES
 		| ID_TINTS | ID_TONES => {
 			let mut state = shared.borrow_mut();
@@ -1950,6 +2042,7 @@ fn dispatch(win: &Win, shared: &Shared, id: Id) {
 				let mut state = shared.borrow_mut();
 				state.drawing.set_canvas(v[0] as u32, v[1] as u32);
 				announce(win, &state);
+				refresh_lists(win, &state);
 			}
 		}
 		ID_ADD_RECT | ID_ADD_ELLIPSE => {
@@ -2131,7 +2224,7 @@ fn dispatch(win: &Win, shared: &Shared, id: Id) {
 			}
 		}
 		ID_MOVE_SHAPE | ID_ROTATE_SHAPE => {
-			let Some(flat) = win.shapes_list.selected() else {
+			let Some(flat) = win.elements_list.selected() else {
 				frame.set_status_text("Select a shape first.", 0);
 				return;
 			};
@@ -2185,7 +2278,7 @@ fn dispatch(win: &Win, shared: &Shared, id: Id) {
 			}
 		}
 		ID_RESIZE_SHAPE => {
-			let Some(flat) = win.shapes_list.selected() else {
+			let Some(flat) = win.elements_list.selected() else {
 				frame.set_status_text("Select a shape first.", 0);
 				return;
 			};
@@ -2227,7 +2320,7 @@ fn dispatch(win: &Win, shared: &Shared, id: Id) {
 		}
 		ID_RECOLOR_SHAPE => {
 			let mut state = shared.borrow_mut();
-			let (Some(flat), Some(c)) = (win.shapes_list.selected(), selected_color(win, &state))
+			let (Some(flat), Some(c)) = (win.elements_list.selected(), selected_color(win, &state))
 			else {
 				frame.set_status_text("Select a shape and a palette color first.", 0);
 				return;
@@ -2424,7 +2517,7 @@ fn dispatch(win: &Win, shared: &Shared, id: Id) {
 		ID_BRUSHES => brushes_dialog(win, shared),
 		ID_REMOVE_SHAPE => {
 			let mut state = shared.borrow_mut();
-			if let Some(flat) = win.shapes_list.selected() {
+			if let Some(flat) = win.elements_list.selected() {
 				if let Some((li, si)) = locate(&state, flat) {
 					state.drawing.remove_shape(li, si);
 					refresh_lists(win, &state);
@@ -2439,85 +2532,110 @@ fn dispatch(win: &Win, shared: &Shared, id: Id) {
 }
 
 fn build_menus(frame: &Frame) {
-	let file = Menu::builder()
-		.append_item(ID_OPEN_DESIGN, "Open &Design…", "")
-		.append_item(ID_SAVE_DESIGN, "&Save Design…", "")
-		.append_item(ID_TEMPLATES, "New from &Template…", "")
-		.append_separator()
-		.append_item(ID_OPEN_IMAGE, "&Open Image…\tCtrl+O", "")
-		.append_item(ID_EXTRACT_IMAGE, "&Extract Colors from Image…", "")
-		.append_item(ID_IMPORT_CSS, "Import &CSS Colors…", "")
-		.append_item(ID_IMPORT_HTML, "Import &HTML Design…", "")
-		.append_item(ID_COMPARE_IMAGES, "Compare I&mages…", "")
-		.append_item(ID_TACTILE_GRID, "Describe Image as &Tactile Grid…", "")
-		.append_separator()
-		.append_item(ID_EXPORT_PNG, "Export &PNG…\tCtrl+E", "")
-		.append_item(ID_EXPORT_CAPTIONS, "Export &Captions…", "")
-		.append_item(ID_EXPORT_CSS, "Export C&SS…", "")
-		.append_item(ID_EXPORT_SUMMARY, "Export &Summary (recreation file)…", "")
-		.append_item(ID_EXPORT_HTML, "Export HT&ML Page…", "")
-		.append_item(ID_EXPORT_GIF, "Export Animated &GIF…", "")
-		.append_item(ID_EXPORT_ANIM_HTML, "Export Animated HTML…", "")
-		.append_item(ID_EXPORT_ANIM_DESC, "Export Animation &Description…", "")
-		.append_item(ID_EXPORT_TACTILE_SVG, "Export &Raised-Line SVG…", "")
-		.append_item(ID_EXPORT_TACTILE_SHEET, "Export Tactile &Sheet…", "")
-		.append_item(ID_EXPORT_BRAILLE, "Export &Braille Labels…", "")
-		.append_separator()
-		.append_item(ID_EXIT, "E&xit", "")
-		.build();
-	let palette = Menu::builder()
-		.append_item(ID_COMPLEMENTARY, "&Complementary (hue + 180)", "")
-		.append_item(ID_SPLIT, "&Split Complementary (hue ± 150)", "")
-		.append_item(ID_ANALOGOUS, "&Analogous (hue ± 30)", "")
-		.append_item(ID_TRIADIC, "&Triadic (hue ± 120)", "")
-		.append_item(ID_TETRADIC, "T&etradic", "")
-		.append_separator()
-		.append_item(ID_SHADES, "Add 4 S&hades (lightness down)", "")
-		.append_item(ID_TINTS, "Add 4 &Tints (lightness up)", "")
-		.append_item(ID_TONES, "Add 4 Tone&s (chroma down)", "")
-		.append_separator()
-		.append_item(ID_REMOVE_COLOR, "&Remove Selected Color", "")
-		.build();
-	let design = Menu::builder()
-		.append_item(ID_CANVAS_SIZE, "Canvas &Size…", "")
-		.append_item(ID_ADD_RECT, "Add &Rectangle…", "")
-		.append_item(ID_ADD_ELLIPSE, "Add &Ellipse…", "")
-		.append_item(ID_ADD_STROKE, "Add Stro&ke…", "")
-		.append_item(ID_ADD_TEXT, "Add &Text…", "")
-		.append_item(ID_ADD_IMAGE, "Add &Image…", "")
-		.append_item(ID_ADD_SYMBOL, "Add S&ymbol…", "")
-		.append_item(ID_SET_BACKGROUND, "Set &Background to Selected Color", "")
-		.append_separator()
-		.append_item(ID_MOVE_SHAPE, "&Move Selected Shape…", "")
-		.append_item(ID_ROTATE_SHAPE, "R&otate Selected Shape…", "")
-		.append_item(ID_RESIZE_SHAPE, "Resi&ze Selected Shape…", "")
-		.append_item(ID_RECOLOR_SHAPE, "Set Selected Shape to Palette &Color", "")
-		.append_item(ID_REMOVE_SHAPE, "Remove Selected Sha&pe", "")
-		.append_separator()
-		.append_item(ID_ELEMENTS, "E&lements…", "")
-		.append_item(ID_LAYERS, "&Layers…", "")
-		.append_item(ID_ANIMATION, "Anim&ation…", "")
-		.append_item(ID_DESCRIBE_AREA, "&Describe Area…", "")
-		.append_separator()
-		.append_item(ID_SAVE_BRUSH, "Save Current Br&ush…", "")
-		.append_item(ID_BRUSHES, "Brush Li&brary…", "")
-		.build();
-	let view = Menu::builder()
-		.append_check_item(ID_FORMAT_HEX, "Color Values as &Hex", "")
-		.append_check_item(ID_FORMAT_RGB, "Color Values as &RGB", "")
-		.append_check_item(ID_FORMAT_HSL, "Color Values as HS&L", "")
-		.append_check_item(ID_FORMAT_HSV, "Color Values as HS&V", "")
-		.build();
-	let help = Menu::builder()
-		.append_item(ID_DICTIONARY, "&Dictionary…", "")
-		.append_item(ID_HELP_FILE, "&Help and Worked Examples…", "")
-		.append_check_item(ID_SOUND_CUES, "&Sound Cues", "")
-		.append_separator()
-		.append_item(ID_ABOUT, "&About Blind Designer", "")
-		.build();
+	// Menus are grouped by the job being done (Elshara's feedback):
+	// File carries Import and Export submenus instead of two dozen
+	// flat items; the old Palette menu is now Color, with Schemes
+	// and Variations submenus; Design groups its Add and Arrange
+	// commands. Every item's help string says in plain language what
+	// it does — the status line shows it while the item is rested on.
+	let import = Menu::builder().build();
+	import.append(ID_OPEN_IMAGE, "&Open Image…\tCtrl+O", "Open an image: its colors replace the palette and its largest color becomes the background.", ItemKind::Normal);
+	import.append(ID_EXTRACT_IMAGE, "&Extract Colors from Image…", "Add an image's colors to the palette, leaving the design untouched.", ItemKind::Normal);
+	import.append(ID_IMPORT_CSS, "&CSS Colors…", "Add every color found in a CSS file to the palette.", ItemKind::Normal);
+	import.append(ID_IMPORT_HTML, "&HTML Design…", "Turn a simple HTML page (inline styles) into a design.", ItemKind::Normal);
+	import.append(ID_COMPARE_IMAGES, "Compare I&mages…", "Compare two images: their sizes, shared colors, which is brighter, which is blurrier.", ItemKind::Normal);
+	import.append(ID_TACTILE_GRID, "Describe Image as &Tactile Grid…", "Describe any image as a grid of shades, in braille patterns and in words.", ItemKind::Normal);
+
+	let export = Menu::builder().build();
+	export.append(ID_EXPORT_PNG, "&PNG…\tCtrl+E", "Save the design as a PNG picture.", ItemKind::Normal);
+	export.append(ID_EXPORT_CAPTIONS, "&Captions…", "Save a text sheet describing every shape in words.", ItemKind::Normal);
+	export.append(ID_EXPORT_CSS, "C&SS…", "Save the palette as CSS variables, ready for a web page.", ItemKind::Normal);
+	export.append(ID_EXPORT_SUMMARY, "&Summary (recreation file)…", "Save the step-by-step log that recreates this design exactly.", ItemKind::Normal);
+	export.append(ID_EXPORT_HTML, "HT&ML Page…", "Save the design as a standalone web page whose shapes carry their captions as accessible names.", ItemKind::Normal);
+	export.append(ID_EXPORT_GIF, "Animated &GIF…", "Save the animation as a looping GIF; with no frames, the design as one still picture.", ItemKind::Normal);
+	export.append(ID_EXPORT_ANIM_HTML, "Animated HTML…", "Save the animation as a web page that steps through the frames.", ItemKind::Normal);
+	export.append(ID_EXPORT_ANIM_DESC, "Animation &Description…", "Save the film as words: every frame, its duration, and what changed.", ItemKind::Normal);
+	export.append(ID_EXPORT_TACTILE_SVG, "&Raised-Line SVG…", "Save the design as outlines for swell paper or an embosser, one line style per layer.", ItemKind::Normal);
+	export.append(ID_EXPORT_TACTILE_SHEET, "Tactile &Sheet…", "Save the design as a text walk, element by element in reading order, with braille labels.", ItemKind::Normal);
+	export.append(ID_EXPORT_BRAILLE, "&Braille Labels…", "Save the elements' captions as Grade 1 braille labels.", ItemKind::Normal);
+
+	let file = Menu::builder().build();
+	file.append(ID_OPEN_DESIGN, "Open &Design…", "Open a saved design file, replacing the current design.", ItemKind::Normal);
+	file.append(ID_SAVE_DESIGN, "&Save Design…", "Save the whole design — canvas, layers, palette and log — to a file.", ItemKind::Normal);
+	file.append(ID_TEMPLATES, "New from &Template…", "Start a new design from a built-in layout: birthday card, house, face or chart.", ItemKind::Normal);
+	file.append_separator();
+	file.append_submenu(import, "&Import", "Bring images, colors and designs in.");
+	file.append_submenu(export, "&Export", "Write the design out: pictures, pages, text and touch.");
+	file.append_separator();
+	file.append(ID_EXIT, "E&xit", "Close Blind Designer.", ItemKind::Normal);
+
+	let schemes = Menu::builder().build();
+	schemes.append(ID_COMPLEMENTARY, "&Complementary (hue + 180)", "Add the color opposite the selected one on the hue circle.", ItemKind::Normal);
+	schemes.append(ID_SPLIT, "&Split Complementary (hue ± 150)", "Add the two colors 150 degrees either side of the selected one.", ItemKind::Normal);
+	schemes.append(ID_ANALOGOUS, "&Analogous (hue ± 30)", "Add the two neighboring colors, 30 degrees either side.", ItemKind::Normal);
+	schemes.append(ID_TRIADIC, "&Triadic (hue ± 120)", "Add the two colors a third of the circle away, either side.", ItemKind::Normal);
+	schemes.append(ID_TETRADIC, "T&etradic", "Add the three colors that complete a rectangle on the hue circle.", ItemKind::Normal);
+
+	let variations = Menu::builder().build();
+	variations.append(ID_SHADES, "Add 4 S&hades (lightness down)", "Add four darker versions of the selected color.", ItemKind::Normal);
+	variations.append(ID_TINTS, "Add 4 &Tints (lightness up)", "Add four lighter versions of the selected color.", ItemKind::Normal);
+	variations.append(ID_TONES, "Add 4 Tone&s (chroma down)", "Add four softer, less saturated versions of the selected color.", ItemKind::Normal);
+
+	let color = Menu::builder().build();
+	color.append_submenu(schemes, "&Schemes", "New colors computed from the selected color.");
+	color.append_submenu(variations, "&Shades, Tints and Tones", "Darker, lighter and softer versions of the selected color.");
+	color.append_separator();
+	color.append(ID_LOAD_STARTER, "&Load Starter Colors", "Add the starter colors to the palette. A new palette starts empty; these join only when you ask.", ItemKind::Normal);
+	color.append(ID_REMOVE_COLOR, "&Remove Selected Color", "Take the selected color out of the palette.", ItemKind::Normal);
+	color.append_separator();
+	color.append(ID_SET_BACKGROUND, "Set &Background to Selected Color", "Make the selected palette color the design's background.", ItemKind::Normal);
+
+	let add = Menu::builder().build();
+	add.append(ID_ADD_RECT, "&Rectangle…", "Place a rectangle, by numbers or in plain words.", ItemKind::Normal);
+	add.append(ID_ADD_ELLIPSE, "&Ellipse…", "Place an ellipse; equal width and height make a circle.", ItemKind::Normal);
+	add.append(ID_ADD_STROKE, "Stro&ke…", "Draw a line through points you list, with the current brush.", ItemKind::Normal);
+	add.append(ID_ADD_TEXT, "&Text…", "Place words in the design, in a named font at a chosen size.", ItemKind::Normal);
+	add.append(ID_ADD_IMAGE, "&Image…", "Place an image file in the design, scaled into a box you give it.", ItemKind::Normal);
+	add.append(ID_ADD_SYMBOL, "S&ymbol…", "Stamp a ready-made symbol: star, heart, arrow, check, cross, sun or moon.", ItemKind::Normal);
+
+	let arrange = Menu::builder().build();
+	arrange.append(ID_MOVE_SHAPE, "&Move…", "Move the selected element, by numbers or in plain words.", ItemKind::Normal);
+	arrange.append(ID_ROTATE_SHAPE, "R&otate…", "Turn the selected element by an angle in degrees.", ItemKind::Normal);
+	arrange.append(ID_RESIZE_SHAPE, "Resi&ze…", "Change the selected element's size, by numbers or in plain words.", ItemKind::Normal);
+	arrange.append(ID_RECOLOR_SHAPE, "Set to Palette &Color", "Give the selected element the selected palette color.", ItemKind::Normal);
+	arrange.append(ID_REMOVE_SHAPE, "Remove Sha&pe", "Delete the selected element from the design.", ItemKind::Normal);
+
+	let design = Menu::builder().build();
+	design.append(ID_CANVAS_SIZE, "Canvas &Size…", "Change the canvas width and height in pixels.", ItemKind::Normal);
+	design.append_separator();
+	design.append_submenu(add, "&Add", "Add a new element to the design.");
+	design.append_submenu(arrange, "A&rrange Selected Shape", "Move, turn, resize, recolor or remove the selected element.");
+	design.append_separator();
+	design.append(ID_ELEMENTS, "E&lements…", "Every element in plain language, with rename, describe, move, resize, recolor and delete.", ItemKind::Normal);
+	design.append(ID_LAYERS, "&Layers…", "Add, rename, reorder, show or hide layers, and choose where new shapes land.", ItemKind::Normal);
+	design.append(ID_ANIMATION, "Anim&ation…", "Build a film from frames of the canvas, each with its own duration.", ItemKind::Normal);
+	design.append(ID_DESCRIBE_AREA, "&Describe Area…", "Hear only the elements inside one part of the canvas.", ItemKind::Normal);
+	design.append(ID_STATS, "&Project Statistics…", "How many layers, elements, palette colors and animation frames this project has.", ItemKind::Normal);
+	design.append_separator();
+	design.append(ID_SAVE_BRUSH, "Save Current Br&ush…", "Keep the current brush — width, color, pattern — in the brush library under a name.", ItemKind::Normal);
+	design.append(ID_BRUSHES, "Brush Li&brary…", "The saved brushes; apply one to make it current for new strokes.", ItemKind::Normal);
+
+	let view = Menu::builder().build();
+	view.append(ID_FORMAT_HEX, "Color Values as &Hex", "Show and speak color values as hex codes, like #3A7CA5.", ItemKind::Check);
+	view.append(ID_FORMAT_RGB, "Color Values as &RGB", "Show and speak color values as red, green and blue numbers, 0 to 255.", ItemKind::Check);
+	view.append(ID_FORMAT_HSL, "Color Values as HS&L", "Show and speak color values as hue, saturation and lightness.", ItemKind::Check);
+	view.append(ID_FORMAT_HSV, "Color Values as HS&V", "Show and speak color values as hue, saturation and value.", ItemKind::Check);
+
+	let help = Menu::builder().build();
+	help.append(ID_DICTIONARY, "&Dictionary…", "Plain-language definitions of the color and design terms the app uses.", ItemKind::Normal);
+	help.append(ID_HELP_FILE, "&Help and Worked Examples…", "How the app works, what every setting changes, and step-by-step examples.", ItemKind::Normal);
+	help.append(ID_SOUND_CUES, "&Sound Cues", "Play a tone for each drawing change: pitch says height, stereo says left or right, length says size.", ItemKind::Check);
+	help.append_separator();
+	help.append(ID_ABOUT, "&About Blind Designer", "What Blind Designer is.", ItemKind::Normal);
+
 	let bar = MenuBar::builder()
 		.append(file, "&File")
-		.append(palette, "&Palette")
+		.append(color, "&Color")
 		.append(design, "&Design")
 		.append(view, "&View")
 		.append(help, "&Help")
@@ -2531,12 +2649,48 @@ fn main() {
 	let _ = wxdragon::main(|_| {
 		let frame = Frame::builder()
 			.with_title("Blind Designer")
-			.with_size(Size::new(760, 640))
+			.with_size(Size::new(800, 700))
 			.build();
 		let panel = Panel::builder(&frame).build();
 
-		let palette_label = StaticText::builder(&panel).with_label("Palette").build();
-		let palette_list = QuietList::new(&panel, "Palette");
+		// The project's lists live in a tabbed notebook in the main
+		// window (Elshara's feedback): Palette, Elements and Layers
+		// are tabs of one control, reachable by Tab and Ctrl+Tab,
+		// instead of living only inside dialogs. Each page is a
+		// panel holding the list's label first — so screen readers
+		// find it — then the list itself, named the same as its page.
+		// The lists show only what the project actually contains:
+		// a new project starts with an empty palette, no elements
+		// and its one real layer.
+		let notebook = Notebook::builder(&panel).build();
+		let palette_page = Panel::builder(&notebook).build();
+		let palette_label = StaticText::builder(&palette_page).with_label("Palette").build();
+		let palette_list = QuietList::new(&palette_page, "Palette");
+		let palette_page_sizer = BoxSizer::builder(Orientation::Vertical).build();
+		palette_page_sizer
+			.add(&palette_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+		palette_page_sizer.add(&palette_list, 1, SizerFlag::Expand | SizerFlag::All, 5);
+		palette_page.set_sizer(palette_page_sizer, true);
+		let elements_page = Panel::builder(&notebook).build();
+		let elements_label = StaticText::builder(&elements_page).with_label("Elements").build();
+		let elements_list = QuietList::new(&elements_page, "Elements");
+		let elements_page_sizer = BoxSizer::builder(Orientation::Vertical).build();
+		elements_page_sizer
+			.add(&elements_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+		elements_page_sizer.add(&elements_list, 1, SizerFlag::Expand | SizerFlag::All, 5);
+		elements_page.set_sizer(elements_page_sizer, true);
+		let layers_page = Panel::builder(&notebook).build();
+		let layers_label = StaticText::builder(&layers_page).with_label("Layers").build();
+		let layers_list = QuietList::new(&layers_page, "Layers");
+		let layers_page_sizer = BoxSizer::builder(Orientation::Vertical).build();
+		layers_page_sizer
+			.add(&layers_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+		layers_page_sizer.add(&layers_list, 1, SizerFlag::Expand | SizerFlag::All, 5);
+		layers_page.set_sizer(layers_page_sizer, true);
+		notebook.add_page(&palette_page, "Palette", true, None);
+		notebook.add_page(&elements_page, "Elements", false, None);
+		notebook.add_page(&layers_page, "Layers", false, None);
+
 		let readout_label = StaticText::builder(&panel).with_label("Selected color").build();
 		let readout = StaticText::builder(&panel)
 			.with_label("No color selected yet. Open an image, or add a color by hex.")
@@ -2561,12 +2715,11 @@ fn main() {
 		h_spin.set_digits(0);
 		let apply_lch = Button::builder(&panel).with_label("Apply L C H").build();
 
-		let shapes_label = StaticText::builder(&panel).with_label("Shapes").build();
-		let shapes_list = QuietList::new(&panel, "Shapes");
+		let stats_label = StaticText::builder(&panel).with_label("Project statistics").build();
+		let stats_text = StaticText::builder(&panel).build();
 
 		let sizer = BoxSizer::builder(Orientation::Vertical).build();
-		sizer.add(&palette_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
-		sizer.add(&palette_list, 1, SizerFlag::Expand | SizerFlag::All, 5);
+		sizer.add(&notebook, 1, SizerFlag::Expand | SizerFlag::All, 5);
 		sizer.add(&readout_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
 		sizer.add(&readout, 0, SizerFlag::Expand | SizerFlag::All, 5);
 		let editor = BoxSizer::builder(Orientation::Horizontal).build();
@@ -2583,8 +2736,8 @@ fn main() {
 		spins.add(&h_spin, 1, SizerFlag::All, 5);
 		spins.add(&apply_lch, 0, SizerFlag::All, 5);
 		sizer.add_sizer(&spins, 0, SizerFlag::Expand, 0);
-		sizer.add(&shapes_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
-		sizer.add(&shapes_list, 1, SizerFlag::Expand | SizerFlag::All, 5);
+		sizer.add(&stats_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+		sizer.add(&stats_text, 0, SizerFlag::Expand | SizerFlag::All, 5);
 		panel.set_sizer(sizer, true);
 
 		// wxID_ANY (-1): "assign an ID for me". This call used to pass -2
@@ -2597,7 +2750,11 @@ fn main() {
 
 		let start = Srgb::new(58, 124, 165);
 		let shared: Shared = Rc::new(RefCell::new(State {
-			palette: vec![PaletteColor::starter(start)],
+			// A fresh project starts with an EMPTY palette: the list
+			// shows only colors the project actually gains. The
+			// starter colors arrive through Color, Load Starter
+			// Colors, when the user asks for them.
+			palette: Vec::new(),
 			drawing: Drawing::new(800, 600, Srgb::WHITE),
 			layer: 0,
 			sound_cues: true,
@@ -2608,7 +2765,9 @@ fn main() {
 		let win = Rc::new(Win {
 			frame,
 			palette_list,
-			shapes_list,
+			elements_list,
+			layers_list,
+			stats_text,
 			readout,
 			hex_field,
 			l_spin,
@@ -2619,8 +2778,6 @@ fn main() {
 		{
 			let state = shared.borrow();
 			refresh_lists(&win, &state);
-			win.palette_list.select(Some(&0));
-			select_color(&win, &state, start);
 		}
 
 		{
@@ -2630,6 +2787,38 @@ fn main() {
 				if let Some(c) = selected_color(&w, &state) {
 					select_color(&w, &state, c);
 				}
+				refresh_menu_states(&w, &state);
+			});
+		}
+		{
+			let (w, s) = (win.clone(), shared.clone());
+			win.elements_list.on_selection_changed(move || {
+				let state = s.borrow();
+				refresh_menu_states(&w, &state);
+			});
+		}
+		{
+			let (w, s) = (win.clone(), shared.clone());
+			win.layers_list.on_selection_changed(move || {
+				// Selecting a layer in the main window makes it the
+				// current layer: where new shapes land. (Renaming,
+				// removing and hiding stay in Design, Layers.)
+				let Some(i) = w.layers_list.selected() else { return };
+				let name = {
+					let Ok(mut state) = s.try_borrow_mut() else { return };
+					if i >= state.drawing.layers.len() || state.layer == i {
+						return;
+					}
+					state.layer = i;
+					state.drawing.layers[i].name.clone()
+				};
+				let state = s.borrow();
+				refresh_lists(&w, &state);
+				drop(state);
+				w.frame.set_status_text(
+					&format!("New shapes now land on layer \"{name}\"."),
+					0,
+				);
 			});
 		}
 		{

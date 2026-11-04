@@ -31,6 +31,111 @@ pub struct Project {
 	pub palette: Vec<PaletteColor>,
 }
 
+/// What a project actually contains, counted: canvas size, layers,
+/// elements by kind, palette colors, animation frames. The main
+/// window keeps the one-line form current; the Project Statistics
+/// readout speaks the full form. Counts are only ever what is really
+/// in the drawing — an empty project reports zeros, never defaults.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ProjectStats {
+	pub canvas_width: u32,
+	pub canvas_height: u32,
+	pub layers: usize,
+	pub elements: usize,
+	pub rectangles: usize,
+	pub ellipses: usize,
+	pub strokes: usize,
+	pub texts: usize,
+	pub images: usize,
+	pub colors: usize,
+	pub frames: usize,
+}
+
+fn counted(n: usize, one: &str, many: &str) -> String {
+	format!("{n} {}", if n == 1 { one } else { many })
+}
+
+impl ProjectStats {
+	/// Count a drawing and its palette.
+	pub fn gather(drawing: &Drawing, colors: usize) -> ProjectStats {
+		let mut stats = ProjectStats {
+			canvas_width: drawing.width,
+			canvas_height: drawing.height,
+			layers: drawing.layers.len(),
+			colors,
+			frames: drawing.frames.len(),
+			..ProjectStats::default()
+		};
+		for layer in &drawing.layers {
+			for shape in &layer.shapes {
+				stats.elements += 1;
+				match shape.kind {
+					ShapeKind::Rectangle => stats.rectangles += 1,
+					ShapeKind::Ellipse => stats.ellipses += 1,
+					ShapeKind::Stroke => stats.strokes += 1,
+					ShapeKind::Text => stats.texts += 1,
+					ShapeKind::Image => stats.images += 1,
+				}
+			}
+		}
+		stats
+	}
+
+	/// The element breakdown in words, kinds with none left out:
+	/// "3 rectangles, 1 ellipse, 2 strokes, 1 text element,
+	/// 0 image elements" — or "no elements" when the canvas is bare.
+	fn kinds_text(&self) -> String {
+		if self.elements == 0 {
+			return "no elements".to_string();
+		}
+		[
+			counted(self.rectangles, "rectangle", "rectangles"),
+			counted(self.ellipses, "ellipse", "ellipses"),
+			counted(self.strokes, "stroke", "strokes"),
+			counted(self.texts, "text element", "text elements"),
+			counted(self.images, "image element", "image elements"),
+		]
+		.join(", ")
+	}
+
+	/// One line for the main window's statistics readout.
+	pub fn one_line(&self) -> String {
+		let frames = if self.frames == 0 {
+			"no animation frames".to_string()
+		} else {
+			counted(self.frames, "animation frame", "animation frames")
+		};
+		format!(
+			"Project: {}, {}, {}, {}, canvas {} by {}",
+			counted(self.layers, "layer", "layers"),
+			counted(self.elements, "element", "elements"),
+			counted(self.colors, "palette color", "palette colors"),
+			frames,
+			self.canvas_width,
+			self.canvas_height,
+		)
+	}
+
+	/// The full readout: every count on its own line, in plain words.
+	pub fn report(&self) -> String {
+		format!(
+			"Project statistics\n\
+			 Canvas: {} by {} pixels\n\
+			 Layers: {}\n\
+			 Elements: {} ({})\n\
+			 Palette colors: {}\n\
+			 Animation frames: {}",
+			self.canvas_width,
+			self.canvas_height,
+			self.layers,
+			self.elements,
+			self.kinds_text(),
+			self.colors,
+			self.frames,
+		)
+	}
+}
+
 /// A string as a quoted, escaped token.
 pub(crate) fn quote(s: &str) -> String {
 	let mut out = String::from("\"");
@@ -608,6 +713,48 @@ mod tests {
 	use super::*;
 	use crate::design::ShapeKind;
 	use crate::ColorFormat;
+
+	#[test]
+	fn stats_of_a_fresh_project_are_all_real_zeros() {
+		let d = Drawing::new(800, 600, Srgb::WHITE);
+		let stats = ProjectStats::gather(&d, 0);
+		assert_eq!(stats.layers, 1);
+		assert_eq!(stats.elements, 0);
+		assert_eq!(stats.colors, 0);
+		assert_eq!(stats.frames, 0);
+		assert_eq!(
+			stats.one_line(),
+			"Project: 1 layer, 0 elements, 0 palette colors, no animation frames, canvas 800 by 600"
+		);
+		assert!(stats.report().contains("Elements: 0 (no elements)"), "{}", stats.report());
+	}
+
+	#[test]
+	fn stats_count_every_element_kind_and_frames() {
+		let mut d = Drawing::new(640, 480, Srgb::WHITE);
+		d.add_shape(0, Shape::new(ShapeKind::Rectangle, 0, 0, 10, 10, Srgb::BLACK));
+		d.add_shape(0, Shape::new(ShapeKind::Rectangle, 20, 0, 10, 10, Srgb::BLACK));
+		d.add_shape(0, Shape::new(ShapeKind::Ellipse, 40, 0, 10, 10, Srgb::BLACK));
+		d.add_shape(0, Shape::stroke(vec![(0, 0), (5, 5)], 3, Srgb::BLACK));
+		d.add_shape(0, Shape::text("hi", "Arial", 24, 0, 20, 30, 30, Srgb::BLACK));
+		d.add_shape(0, Shape::image("a.png", 0, 60, 30, 30, Srgb::BLACK));
+		d.add_frame();
+		let stats = ProjectStats::gather(&d, 4);
+		assert_eq!(stats.elements, 6);
+		assert_eq!(stats.rectangles, 2);
+		assert_eq!(stats.ellipses, 1);
+		assert_eq!(stats.strokes, 1);
+		assert_eq!(stats.texts, 1);
+		assert_eq!(stats.images, 1);
+		assert_eq!(stats.frames, 1);
+		assert_eq!(stats.colors, 4);
+		let line = stats.one_line();
+		assert!(line.contains("6 elements"), "{line}");
+		assert!(line.contains("1 animation frame"), "{line}");
+		assert!(line.contains("canvas 640 by 480"), "{line}");
+		let report = stats.report();
+		assert!(report.contains("2 rectangles, 1 ellipse, 1 stroke, 1 text element, 1 image element"), "{report}");
+	}
 
 	/// A drawing that exercises every moving part: two layers (one
 	/// hidden, one renamed), a captioned rotated rectangle, a stroke

@@ -6,6 +6,19 @@ workflow.
 
 ## Unreleased
 
+- Elshara's feedback wave: lists now show only what the project
+  actually contains — a new project starts with an empty palette
+  (the starter colors arrive via Color, Load Starter Colors), and
+  the Palette, Elements and Layers lists live in a tabbed notebook
+  in the main window. Menus regrouped by task: File gains Import
+  and Export submenus, Palette becomes Color (Schemes and Shades,
+  Tints and Tones submenus), Design gains Add and Arrange Selected
+  Shape submenus, and menu items and dialog buttons grey out when
+  they need a selection that does not exist yet. A project
+  statistics line stays current in the main window, with the full
+  count under Design, Project Statistics. Every menu item now
+  carries a plain-language help line, and the help file documents
+  what every setting changes.
 - Tactile output (issue #2): File, Export Raised-Line SVG writes the
   design as stroked outlines with a different line style per layer
   and text elements as braille labels; File, Export Tactile Sheet

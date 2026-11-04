@@ -41,6 +41,14 @@ impl Provenance {
 	}
 }
 
+/// The starter colors, offered as an explicit action (Color, Load
+/// Starter Colors) rather than pre-loaded: a fresh project's palette
+/// is empty and lists only colors the project actually gained, so
+/// the starter set joins it only when the user asks for it.
+pub fn starter_palette() -> Vec<PaletteColor> {
+	vec![PaletteColor::starter(Srgb::new(58, 124, 165))]
+}
+
 /// One palette color: the color, the share of the source image it
 /// covers when it was extracted from one, and its provenance.
 #[derive(Debug, Clone, PartialEq)]
@@ -108,6 +116,15 @@ mod tests {
 		assert!(gen.contains("generated as complementary of #3A7CA5"), "{gen}");
 		let imp = PaletteColor::imported(c, "custom property --brand-1").spoken(ColorFormat::Hex);
 		assert!(imp.contains("imported from custom property --brand-1"), "{imp}");
+	}
+
+	#[test]
+	fn starter_palette_is_the_one_starter_blue() {
+		let starter = starter_palette();
+		assert_eq!(starter.len(), 1);
+		assert_eq!(starter[0].color, Srgb::new(58, 124, 165));
+		assert_eq!(starter[0].provenance, Provenance::Starter);
+		assert!(starter[0].spoken(ColorFormat::Hex).contains("starts with"));
 	}
 
 	#[test]

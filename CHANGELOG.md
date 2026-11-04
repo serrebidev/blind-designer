@@ -4,7 +4,7 @@ Readable release history for Blind Designer (renamed from Transversion at 0.2.0)
 section is its GitHub release note, taken from this file by the release
 workflow.
 
-## Unreleased
+## 0.12.0
 
 - Interface wave 2 (Elshara's hands-on requests): elements can
   be locked (Design, Lock/Unlock Selected) — bulk layer and

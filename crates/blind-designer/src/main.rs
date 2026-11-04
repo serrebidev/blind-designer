@@ -36,6 +36,7 @@ use chroma_core::formats::{
 	text_readability, ChannelSet,
 };
 use chroma_core::inspect::{inspect_color, inspect_layer, inspect_shape};
+use chroma_core::variables;
 use chroma_core::search::{search_catalog, CatalogHit};
 use chroma_core::sound::{cue_at, cue_for_shape, tone_wav_at, Cue};
 use chroma_core::symbols;
@@ -113,6 +114,8 @@ const ID_SETUP_WIZARD: Id = 328;
 const ID_ELEMENT_WIZARD: Id = 329;
 const ID_RECOGNIZABILITY: Id = 330;
 const ID_COLOR_TREATMENT: Id = 331;
+const ID_REPLACEMENT_VARIABLES: Id = 332;
+const ID_DRAW_POINTER: Id = 333;
 const ID_ABOUT: Id = 401;
 const ID_DICTIONARY: Id = 402;
 const ID_HELP_FILE: Id = 403;
@@ -123,6 +126,7 @@ const ID_FORMAT_HSL: Id = 503;
 const ID_FORMAT_HSV: Id = 504;
 const ID_ANNOUNCE_SLIDERS: Id = 505;
 const ID_LISTS_SIDE_BY_SIDE: Id = 516;
+const ID_FOCUS_MODE: Id = 517;
 const ID_FORMAT_CMYK: Id = 506;
 const ID_FORMAT_XYZ: Id = 507;
 const ID_FORMAT_XYY: Id = 508;
@@ -233,8 +237,11 @@ const MENU_IDS: &[Id] = &[
 	ID_ELEMENT_WIZARD,
 	ID_RECOGNIZABILITY,
 	ID_COLOR_TREATMENT,
+	ID_REPLACEMENT_VARIABLES,
+	ID_DRAW_POINTER,
 	ID_ANNOUNCE_SLIDERS,
 	ID_LISTS_SIDE_BY_SIDE,
+	ID_FOCUS_MODE,
 	ID_ABOUT,
 	ID_DICTIONARY,
 	ID_HELP_FILE,
@@ -343,6 +350,9 @@ struct State {
 	/// like the other View toggles: nothing else in the app
 	/// persists view state either.
 	lists_side_by_side: bool,
+	/// Whether the Focus window is open (View menu toggle).
+	/// Session-only, like the other View toggles.
+	focus_mode: bool,
 	/// The project's stated goal, when the setup wizard has
 	/// given it one. Saved in the design file.
 	goal: Option<ProjectGoal>,
@@ -441,6 +451,13 @@ struct Win {
 	/// True while code (not the user) is setting slider values, so
 	/// the change handler stays out of refreshes.
 	slider_refreshing: std::cell::Cell<bool>,
+	/// The Focus window (View, Focus Mode) and its two texts,
+	/// while it is open. The window is non-modal and shows only
+	/// the focus line and the built / not-yet body, refreshed by
+	/// `refresh_lists` like everything else on the main window.
+	focus_frame: RefCell<Option<Frame>>,
+	focus_line: RefCell<Option<StaticText>>,
+	focus_body: RefCell<Option<TextCtrl>>,
 }
 
 type Shared = Rc<RefCell<State>>;
@@ -577,6 +594,7 @@ fn refresh_lists(win: &Win, state: &State) {
 	win.stats_text.set_label(&stats_line(state));
 	refresh_menu_states(win, state);
 	refresh_slider_values(win, state);
+	refresh_focus_window(win, state);
 }
 
 /// Grey the menu actions that cannot do anything right now, so the
@@ -4946,6 +4964,498 @@ fn extract_image_dialog(win: &Win, shared: &Shared, set_background: bool) {
 	}
 }
 
+/// The Replacement Variables dialog's "save a substituted copy"
+/// result code: a modal code, not a window ID — the compile-time
+/// guard covers window IDs, and this value only ever travels
+/// from a button to `show_modal`'s caller.
+const MODAL_SAVE_COPY: i32 = 4242;
+
+/// Design, Replacement Variables: one value field per {name}
+/// token the design uses, then the choice of where the
+/// substitution lands — this project, or a copy saved as a new
+/// design file (the template workflow: design once with tokens,
+/// print many finished copies). An empty field means "no value
+/// given": the token stays in the words, and the report names
+/// every token left unfilled, either way.
+fn replacement_variables_dialog(win: &Rc<Win>, shared: &Shared) {
+	let frame = win.frame;
+	let project = current_project(&shared.borrow());
+	let names = variables::scan(&project);
+	if names.is_empty() {
+		frame.set_status_text(
+			"This design uses no replacement variables. Write a token like {name} in a text element or a caption, and it will be fillable here.",
+			0,
+		);
+		return;
+	}
+	let dialog = Dialog::builder(&frame, "Replacement Variables").build();
+	let sizer = BoxSizer::builder(Orientation::Vertical).build();
+	let intro = StaticText::builder(&dialog)
+		.with_label("Give each variable a value. Leave a field empty to leave that token as it is.")
+		.build();
+	sizer.add(&intro, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	let mut fields = Vec::new();
+	for name in &names {
+		let label = StaticText::builder(&dialog)
+			.with_label(&format!("Value for {{{name}}}"))
+			.build();
+		sizer.add(&label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+		let field = TextCtrl::builder(&dialog).build();
+		field.set_name(&format!("Value for {name}"));
+		sizer.add(&field, 0, SizerFlag::Expand | SizerFlag::All, 5);
+		fields.push(field);
+	}
+	let here = Button::builder(&dialog).with_label("Substitute in This Project").build();
+	let copy = Button::builder(&dialog).with_label("Substitute in a Copy and Save As…").build();
+	let cancel = Button::builder(&dialog).with_label("Cancel").build();
+	let buttons = BoxSizer::builder(Orientation::Horizontal).build();
+	buttons.add(&here, 0, SizerFlag::All, 5);
+	buttons.add(&copy, 0, SizerFlag::All, 5);
+	buttons.add(&cancel, 0, SizerFlag::All, 5);
+	sizer.add_sizer(&buttons, 0, SizerFlag::All, 5);
+	dialog.set_sizer(sizer, true);
+	{
+		let d = dialog.clone();
+		here.on_click(move |_| d.end_modal(ID_OK));
+	}
+	{
+		let d = dialog.clone();
+		copy.on_click(move |_| d.end_modal(MODAL_SAVE_COPY));
+	}
+	{
+		let d = dialog.clone();
+		cancel.on_click(move |_| d.end_modal(ID_CANCEL));
+	}
+	let code = dialog.show_modal();
+	if code == ID_CANCEL {
+		return;
+	}
+	// Empty fields are "no value given", so they never reach
+	// the values list: their tokens stay, and are reported.
+	let values: Vec<(String, String)> = names
+		.iter()
+		.zip(fields.iter())
+		.map(|(name, field)| (name.clone(), field.get_value()))
+		.filter(|(_, value)| !value.is_empty())
+		.collect();
+	if code == ID_OK {
+		let mut state = shared.borrow_mut();
+		let report = state.drawing.substitute_variables(&values);
+		if report.replaced == 0 {
+			frame.set_status_text(
+				"Nothing was substituted: no value matched a token in this design.",
+				0,
+			);
+			return;
+		}
+		refresh_lists(win, &state);
+		announce(win, &state);
+		if !report.unknown.is_empty() {
+			drop(state);
+			report_dialog(
+				win,
+				"Replacement Variables",
+				"Substitution done, with tokens left unfilled",
+				&format!(
+					"{} values substituted in {} elements.\nStill in the words, unfilled: {}.",
+					report.replaced,
+					report.affected,
+					report
+						.unknown
+						.iter()
+						.map(|n| format!("{{{n}}}"))
+						.collect::<Vec<_>>()
+						.join(", ")
+				),
+			);
+		}
+		return;
+	}
+	// The copy: the current project is untouched; the copy —
+	// substitution in its log, like any other edit — is what
+	// gets saved.
+	let (copy_project, report) = variables::substitute(&project, &values);
+	if report.replaced == 0 {
+		frame.set_status_text(
+			"Nothing was substituted, so no copy was saved: no value matched a token in this design.",
+			0,
+		);
+		return;
+	}
+	if let Some(path) = file_dialog(&frame, "Save substituted copy", "Blind Designer design (*.bdd)|*.bdd", true) {
+		match std::fs::write(&path, copy_project.to_text()) {
+			Ok(()) => {
+				let mut note = format!(
+					"Saved a substituted copy to {path}: {} values substituted in {} elements. This project is unchanged.",
+					report.replaced, report.affected
+				);
+				if !report.unknown.is_empty() {
+					note.push_str(&format!(
+						" Still unfilled in the copy: {}.",
+						report
+							.unknown
+							.iter()
+							.map(|n| format!("{{{n}}}"))
+							.collect::<Vec<_>>()
+							.join(", ")
+					));
+				}
+				frame.set_status_text(&note, 0);
+			}
+			Err(e) => frame.set_status_text(&format!("Save failed: {e}"), 0),
+		}
+	}
+}
+
+/// The Focus window's two texts: the focus line (the selected
+/// element's own row, or the whole project), and the body —
+/// the statistics, then the goal report's criterion lines, so
+/// what is built and what is not built yet read in one place.
+fn focus_texts(win: &Win, state: &State) -> (String, String) {
+	let focus = win
+		.elements_list
+		.borrow()
+		.selected()
+		.and_then(|flat| {
+			element_rows(state)
+				.into_iter()
+				.find(|(key, _)| *key == flat)
+				.map(|(_, row)| row)
+		})
+		.map(|row| format!("Focus: {row}"))
+		.unwrap_or_else(|| "Focus: whole project".to_string());
+	let mut body = ProjectStats::gather(&state.drawing, state.palette.len()).report();
+	match &state.goal {
+		Some(goal) => {
+			if let Some(report) = goal_report(&current_project(state)) {
+				body.push_str("\n\nAgainst your goal — what is built, and what is not built yet:\n");
+				body.push_str(&report.full_text(goal));
+			}
+		}
+		None => {
+			body.push_str(
+				"\n\nNo goal stated for this project: File, New with Wizard or Design, Setup Wizard states one. Without a goal there is nothing to measure against — what you have built is the statistics above.",
+			);
+		}
+	}
+	(focus, body)
+}
+
+/// Keep the Focus window's texts current. Called from
+/// `refresh_lists`, so the window follows every edit, like the
+/// main window's own statistics line. A no-op while it is shut.
+fn refresh_focus_window(win: &Win, state: &State) {
+	if win.focus_frame.borrow().is_none() {
+		return;
+	}
+	let (focus, body) = focus_texts(win, state);
+	if let Some(line) = win.focus_line.borrow().as_ref() {
+		line.set_label(&focus);
+	}
+	if let Some(text) = win.focus_body.borrow().as_ref() {
+		text.set_value(&body);
+	}
+}
+
+/// View, Focus Mode, both directions. Elshara's distraction-
+/// free ask: a window with ONLY the focus, the statistics and
+/// the goal's built / not-yet lines. It is its own top-level
+/// window rather than a rebuilt main window for a concrete
+/// reason: the Sliders tab and the list pages are owned by the
+/// notebook and rebuilt in place there (a wx widget's parent
+/// is fixed at birth — the same fact `rebuild_list_pages`
+/// documents), so collapsing the notebook to a single focus
+/// page would mean destroying and recreating the sliders and
+/// both lists on every toggle, slider runs included. A
+/// separate window shows the same information and touches
+/// nothing. Non-modal, so it never traps anyone.
+fn set_focus_mode(win: &Rc<Win>, shared: &Shared, on: bool) {
+	{
+		let mut state = shared.borrow_mut();
+		state.focus_mode = on;
+	}
+	if let Some(bar) = win.frame.get_menu_bar() {
+		bar.check_item(ID_FOCUS_MODE, on);
+	}
+	if !on {
+		// The close handler below does the cleanup (state,
+		// menu check, handles) for both paths — the menu and
+		// the window's own close box.
+		let frame = *win.focus_frame.borrow();
+		if let Some(frame) = frame {
+			frame.close(false);
+		}
+		return;
+	}
+	if win.focus_frame.borrow().is_none() {
+		let frame = Frame::builder()
+			.with_title("Focus — Blind Designer")
+			.with_size(Size::new(640, 480))
+			.build();
+		let panel = Panel::builder(&frame).build();
+		let sizer = BoxSizer::builder(Orientation::Vertical).build();
+		let line = StaticText::builder(&panel).with_label("Focus: whole project").build();
+		line.set_name("Current focus");
+		sizer.add(&line, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+		let body = TextCtrl::builder(&panel)
+			.with_style(TextCtrlStyle::MultiLine | TextCtrlStyle::ReadOnly)
+			.build();
+		body.set_name("What you have built, and what is not built yet");
+		sizer.add(&body, 1, SizerFlag::Expand | SizerFlag::All, 5);
+		let close = Button::builder(&panel).with_label("Close Focus Window").build();
+		sizer.add(&close, 0, SizerFlag::All, 5);
+		panel.set_sizer(sizer, true);
+		{
+			let f = frame.clone();
+			close.on_click(move |_| f.close(false));
+		}
+		{
+			let (w, s) = (win.clone(), shared.clone());
+			frame.on_close(move |_| {
+				*w.focus_frame.borrow_mut() = None;
+				*w.focus_line.borrow_mut() = None;
+				*w.focus_body.borrow_mut() = None;
+				s.borrow_mut().focus_mode = false;
+				if let Some(bar) = w.frame.get_menu_bar() {
+					bar.check_item(ID_FOCUS_MODE, false);
+				}
+			});
+		}
+		*win.focus_frame.borrow_mut() = Some(frame);
+		*win.focus_line.borrow_mut() = Some(line);
+		*win.focus_body.borrow_mut() = Some(body);
+	}
+	let state = shared.borrow();
+	refresh_focus_window(win, &state);
+	if let Some(frame) = win.focus_frame.borrow().as_ref() {
+		frame.show(true);
+	}
+}
+
+/// One pointer-drawing session: the raw path as travelled, in
+/// canvas coordinates, and the brush the stroke is being drawn
+/// with (which becomes the current brush on Finish, as with
+/// Add Stroke by typed points).
+struct DrawSession {
+	raw: Vec<(i32, i32)>,
+	held: bool,
+	width: u32,
+	color: Srgb,
+	/// Where the session's color sits in the palette, when it
+	/// came from there — C cycles from that seat.
+	color_pos: Option<usize>,
+	scale: f64,
+	canvas_w: u32,
+	canvas_h: u32,
+}
+
+/// Design, Draw with Pointer: press and drag on the surface —
+/// mouse, or touch, which Windows delivers as mouse events —
+/// and the path becomes ONE stroke in the current brush on
+/// Finish. Lifting and pressing again continues the same
+/// stroke from there (a straight join), as a stroke typed as
+/// points would. While the window is open, keys 1 to 9 set the
+/// brush width and C cycles the brush color through the
+/// palette; the status line in the window says every change
+/// in words, and how many points the stroke will keep.
+fn draw_pointer_dialog(win: &Rc<Win>, shared: &Shared) {
+	let frame = win.frame;
+	let (canvas_w, canvas_h, brush) = {
+		let state = shared.borrow();
+		(state.drawing.width, state.drawing.height, state.brush.clone())
+	};
+	// The surface never upscales; a canvas bigger than the fit
+	// box scales down, and positions divide back by the scale.
+	let scale = (880.0 / canvas_w as f64).min(620.0 / canvas_h as f64).min(1.0);
+	let session = Rc::new(RefCell::new(DrawSession {
+		raw: Vec::new(),
+		held: false,
+		width: brush.width,
+		color: brush.color,
+		color_pos: None,
+		scale,
+		canvas_w,
+		canvas_h,
+	}));
+	let dialog = Dialog::builder(&frame, "Draw with Pointer").build();
+	let sizer = BoxSizer::builder(Orientation::Vertical).build();
+	let intro = StaticText::builder(&dialog)
+		.with_label("Press and drag to draw one stroke. Keys: 1 to 9 set the brush width, C cycles the brush colour, Escape cancels.")
+		.build();
+	sizer.add(&intro, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	let surface = Panel::builder(&dialog)
+		.with_size(Size::new(
+			((canvas_w as f64 * scale).round() as i32).max(50),
+			((canvas_h as f64 * scale).round() as i32).max(50),
+		))
+		.build();
+	surface.set_name(&format!(
+		"Drawing surface: the {canvas_w} by {canvas_h} canvas"
+	));
+	sizer.add(&surface, 0, SizerFlag::All, 5);
+	let status = StaticText::builder(&dialog)
+		.with_label(&format!(
+			"Brush width {} pixels. Colour {}. No points yet.",
+			brush.width,
+			describe_in(brush.color, shared.borrow().color_format)
+		))
+		.build();
+	status.set_name("Draw status");
+	sizer.add(&status, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	let finish = Button::builder(&dialog).with_label("Finish").build();
+	let cancel = Button::builder(&dialog).with_label("Cancel").build();
+	let buttons = BoxSizer::builder(Orientation::Horizontal).build();
+	buttons.add(&finish, 0, SizerFlag::All, 5);
+	buttons.add(&cancel, 0, SizerFlag::All, 5);
+	sizer.add_sizer(&buttons, 0, SizerFlag::All, 5);
+	dialog.set_sizer(sizer, true);
+
+	// The session's status line, in words: width, color, and
+	// how many points the stroke will keep after sampling.
+	let say = |session: &DrawSession, format: ColorFormat| {
+		let kept = chroma_core::design::sample_points(&session.raw, 4).len();
+		format!(
+			"Brush width {} pixels. Colour {}. {}",
+			session.width,
+			describe_in(session.color, format),
+			if kept == 0 {
+				"No points yet.".to_string()
+			} else {
+				format!("{kept} points so far.")
+			}
+		)
+	};
+	let to_canvas = |session: &DrawSession, p: Point| {
+		let x = (p.x as f64 / session.scale).round() as i32;
+		let y = (p.y as f64 / session.scale).round() as i32;
+		(
+			x.clamp(0, session.canvas_w as i32 - 1),
+			y.clamp(0, session.canvas_h as i32 - 1),
+		)
+	};
+	{
+		let (session, status, shared2) = (session.clone(), status.clone(), shared.clone());
+		surface.on_mouse_left_down(move |data| {
+			let WindowEventData::MouseButton(e) = data else { return };
+			let Some(p) = e.get_position() else { return };
+			let mut s = session.borrow_mut();
+			s.held = true;
+			let pt = to_canvas(&s, p);
+			if s.raw.last() != Some(&pt) {
+				s.raw.push(pt);
+			}
+			drop(s);
+			let s = session.borrow();
+			let format = shared2.borrow().color_format;
+			status.set_label(&say(&s, format));
+		});
+	}
+	{
+		let (session, status, shared2) = (session.clone(), status.clone(), shared.clone());
+		surface.on_mouse_motion(move |data| {
+			let WindowEventData::MouseMotion(e) = data else { return };
+			let Some(p) = e.get_position() else { return };
+			let mut s = session.borrow_mut();
+			if !s.held {
+				return;
+			}
+			let pt = to_canvas(&s, p);
+			if s.raw.last() != Some(&pt) {
+				s.raw.push(pt);
+			}
+			drop(s);
+			let s = session.borrow();
+			let format = shared2.borrow().color_format;
+			status.set_label(&say(&s, format));
+		});
+	}
+	{
+		let session = session.clone();
+		surface.on_mouse_left_up(move |_| {
+			session.borrow_mut().held = false;
+		});
+	}
+	{
+		let (session, status, shared2, d) =
+			(session.clone(), status.clone(), shared.clone(), dialog.clone());
+		surface.on_key_down(move |data| {
+			let WindowEventData::Keyboard(kb) = &data else {
+				data.skip(true);
+				return;
+			};
+			let Some(code) = kb.get_key_code() else {
+				data.skip(true);
+				return;
+			};
+			if code == WXK_ESCAPE {
+				d.end_modal(ID_CANCEL);
+				return;
+			}
+			let mut s = session.borrow_mut();
+			if (b'1' as i32..=b'9' as i32).contains(&code) {
+				let def = slider_by_id("brush-width").expect("the brush-width slider exists");
+				s.width = (code - b'0' as i32).clamp(def.min, def.max) as u32;
+			} else if code == b'C' as i32 {
+				let state = shared2.borrow();
+				if state.palette.is_empty() {
+					drop(s);
+					status.set_label(
+						"No palette colours to cycle: the palette is empty. The brush colour is unchanged.",
+					);
+					return;
+				}
+				let next = match s.color_pos {
+					Some(i) => (i + 1) % state.palette.len(),
+					None => 0,
+				};
+				s.color_pos = Some(next);
+				s.color = state.palette[next].color;
+				drop(state);
+			} else {
+				data.skip(true);
+				return;
+			}
+			let format = shared2.borrow().color_format;
+			status.set_label(&say(&s, format));
+		});
+	}
+	{
+		let (session, status, d) = (session.clone(), status.clone(), dialog.clone());
+		finish.on_click(move |_| {
+			if chroma_core::design::sample_points(&session.borrow().raw, 4).len() < 2 {
+				status.set_label("Nothing to finish yet: press and drag on the surface to draw the stroke first.");
+				return;
+			}
+			d.end_modal(ID_OK);
+		});
+	}
+	{
+		let d = dialog.clone();
+		cancel.on_click(move |_| d.end_modal(ID_CANCEL));
+	}
+	// The surface is the point of this window: focus starts
+	// there, so the keys work without a first click. The
+	// buttons stay one Tab away.
+	surface.set_focus();
+	if dialog.show_modal() != ID_OK {
+		return;
+	}
+	let s = session.borrow();
+	let mut state = shared.borrow_mut();
+	let brush_name = state.brush.name.clone();
+	let pattern = state.brush.pattern.clone();
+	state.brush = Brush::new(&brush_name, s.width, s.color, &pattern);
+	let layer = state.layer;
+	let mut shape = Shape::stroke_from_points(&s.raw, 4, s.width, s.color);
+	shape.pattern = pattern;
+	shape.opacity = state.current_opacity;
+	let index = state.drawing.add_shape(layer, shape);
+	refresh_lists(win, &state);
+	if let Some(index) = index {
+		speak_added(win, &state, layer, index);
+	}
+}
+
 fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 	let frame = win.frame;
 	match id {
@@ -4987,6 +5497,20 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 		ID_EXPORT_WIZARD => export_wizard(win, shared),
 		ID_RECOGNIZABILITY => recognizability_dialog(win, shared),
 		ID_COLOR_TREATMENT => color_treatment_dialog(win, shared),
+		ID_REPLACEMENT_VARIABLES => replacement_variables_dialog(win, shared),
+		ID_DRAW_POINTER => draw_pointer_dialog(win, shared),
+		ID_FOCUS_MODE => {
+			let on = !shared.borrow().focus_mode;
+			set_focus_mode(win, shared, on);
+			frame.set_status_text(
+				if on {
+					"Focus mode on: the Focus window shows the current focus, the statistics, and what is built and not built yet."
+				} else {
+					"Focus mode off: the Focus window is closed."
+				},
+				0,
+			);
+		}
 		ID_ANNOUNCE_SLIDERS => {
 			let mut state = shared.borrow_mut();
 			state.announce_sliders = !state.announce_sliders;
@@ -6239,6 +6763,8 @@ fn build_menus(frame: &Frame) {
 	design.append(ID_PROJECT_OPTIONS, "Project &Options…", "Choose which sliders this project pins to its Sliders tab, what the color adjustments act on, how far Page Up and Page Down jump, grayscale start, and load the starter colors or the gray ramp.", ItemKind::Normal);
 	design.append(ID_SETUP_WIZARD, "Setup &Wizard…", "State (or restate) this project's goal through the wizard: what you want to create or build, and its focus questions — any answer may be left with no fixed answer.", ItemKind::Normal);
 	design.append(ID_COLOR_TREATMENT, "Apply Colour &Treatment…", "Grayscale start's second half: give the grayscale shapes of one layer, or of a whole depth, the palette colours in paint order. Locked shapes stay grayscale.", ItemKind::Normal);
+	design.append(ID_REPLACEMENT_VARIABLES, "Replacement &Variables…", "Fill in the {name} tokens written in text elements and captions: give each a value, then substitute in this project or in a saved copy.", ItemKind::Normal);
+	design.append(ID_DRAW_POINTER, "Draw with &Pointer…", "Draw one stroke with the mouse or touch: press and drag on the surface, release, Finish. Keys 1 to 9 set the brush width while you draw; C cycles the brush colour.", ItemKind::Normal);
 	design.append_separator();
 	design.append(ID_SAVE_BRUSH, "Save Current Br&ush…", "Keep the current brush — width, color, pattern — in the brush library under a name.", ItemKind::Normal);
 	design.append(ID_BRUSHES, "Brush Li&brary…", "The saved brushes; apply one to make it current for new strokes.", ItemKind::Normal);
@@ -6261,6 +6787,7 @@ fn build_menus(frame: &Frame) {
 	view.append_separator();
 	view.append(ID_ANNOUNCE_SLIDERS, "&Announce Slider Changes", "Moving a slider says what changed and that everything else stayed the same. Off: only the slider's name and new value are said.", ItemKind::Check);
 	view.append(ID_LISTS_SIDE_BY_SIDE, "Lists &Side by Side", "Show the Palette and Elements lists side by side on one Lists page instead of on separate tabs. This session only.", ItemKind::Check);
+	view.append(ID_FOCUS_MODE, "&Focus Mode", "Open the Focus window: only the current focus, the statistics, and what you have built against your goal — and what is not built yet. This session only.", ItemKind::Check);
 
 	let help = Menu::builder().build();
 	help.append(ID_DICTIONARY, "&Dictionary…", "Plain-language definitions of the color and design terms the app uses.", ItemKind::Normal);
@@ -6396,6 +6923,7 @@ fn main() {
 			scale_base: None,
 			channel_run: None,
 			lists_side_by_side: false,
+			focus_mode: false,
 			// A new project has no goal yet (the setup wizard
 			// states one), and starts in grayscale: form first,
 			// colour treatment later.
@@ -6421,6 +6949,9 @@ fn main() {
 			channel_note: RefCell::new(None),
 			slider_target_choice: RefCell::new(None),
 			slider_refreshing: std::cell::Cell::new(false),
+			focus_frame: RefCell::new(None),
+			focus_line: RefCell::new(None),
+			focus_body: RefCell::new(None),
 		});
 
 		build_sliders_tab(&win, &shared);

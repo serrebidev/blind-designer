@@ -166,6 +166,7 @@ pub enum Event {
 	ShapeLocked { layer: String, index: usize, locked: bool },
 	SceneInserted { name: String, count: usize },
 	ColorTreated { scope: String, count: usize, locked: usize },
+	VariablesSubstituted { count: usize },
 	FrameAdded { index: usize, duration_ms: u32 },
 	FrameDuplicated { index: usize },
 	FrameRemoved { index: usize },
@@ -381,6 +382,9 @@ impl Event {
 					)
 				}
 			}
+			Event::VariablesSubstituted { count } => format!(
+				"Fill in the replacement variables: {count} values substituted."
+			),
 			Event::FrameLoaded { index } => format!(
 				"Load animation frame {} onto the canvas for editing.",
 				index + 1

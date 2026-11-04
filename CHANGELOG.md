@@ -4,6 +4,26 @@ Readable release history for Blind Designer (renamed from Transversion at 0.2.0)
 section is its GitHub release note, taken from this file by the release
 workflow.
 
+## Unreleased
+
+- Workflow wave B — replacement variables, focus mode,
+  pointer drawing. Design, Replacement Variables: text
+  elements and captions may carry {name} tokens (lowercase
+  letters, digits, hyphens); the dialog offers one value
+  field per token in the design and substitutes either in
+  this project (one logged step; animation frames included)
+  or in a copy saved as a new design file, the template
+  staying untouched — tokens given no value stay as written
+  and are named in the report either way. View, Focus Mode:
+  a small non-modal window showing only the current focus,
+  the statistics, and the goal report's built / not-yet
+  lines, kept current as you work. Design, Draw with
+  Pointer: press and drag (mouse, or touch delivered as
+  mouse events) on a canvas-sized surface and the thinned
+  path becomes one stroke in the current brush; keys 1 to 9
+  set the brush width live, C cycles the brush colour
+  through the palette, Escape cancels.
+
 ## 0.13.0
 
 - Workflow wave A — the wizard frame and project goals

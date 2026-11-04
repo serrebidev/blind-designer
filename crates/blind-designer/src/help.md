@@ -248,6 +248,86 @@ layout are a starting expectation you edit freely, and the
 wizard seeds above say in the wizard itself what they place
 and why.
 
+REPLACEMENT VARIABLES
+
+A design can be a template. Write a token — {name}, {date},
+{occasion} — in a text element, or in any element's caption,
+and design around it. When the words are needed for real,
+Design, Replacement Variables offers one field per token the
+design uses, and fills them in.
+
+A token is a name in braces: lowercase letters, digits and
+hyphens only. {Name} with a capital is ordinary text, not a
+token; so is a brace that never closes. There are no escapes:
+{{name}} reads as a "{" before and a "}" after the token
+{name}. Substitution is a single pass — a value that itself
+contains a token is written as it is, never filled in twice.
+
+Two ways to substitute:
+
+- In this project: the tokens become the values, here. The
+  whole substitution is one step in the design's log.
+- In a copy: the current project stays a template, untouched,
+  and a finished copy is saved as a new design file — design
+  once, print many. The copy's log records the substitution,
+  like any other edit.
+
+Leaving a field empty means "no value given": that token
+stays in the words exactly as written, and afterwards you
+are told which tokens are still unfilled, either way.
+Animation frames are part of the design, so their words are
+substituted too — a design whose film still said {name}
+after its canvas was filled in would be two different
+designs in one file.
+
+FOCUS MODE
+
+View, Focus Mode opens the Focus window: a small window that
+shows only three things — the current focus (the selected
+element, or the whole project), the project's statistics,
+and, when the project has a goal, the goal report's lines:
+what you have built, and what is not built yet, with the
+suggested improvements. Nothing else competes for your
+attention. It stays current as you work, and it is not
+modal: the main window is still there when you want it.
+Turning Focus Mode off, closing the window, or its Close
+button all do the same thing. If the project has no goal,
+the window says so and shows the statistics alone — there
+is nothing to measure against until the setup wizard states
+one. Focus Mode is a view, so it is this session only, like
+the other View toggles.
+
+DRAWING WITH THE POINTER
+
+Everything in the main window is driven by words and numbers
+— but a design can also be drawn by hand. Design, Draw with
+Pointer opens a surface the size of the canvas (scaled down
+to fit when the canvas is large; positions divide back by
+the same scale). Press and drag with the mouse — or with
+touch, which Windows delivers as mouse events — and the path
+you travel becomes ONE stroke in the current brush when you
+choose Finish. Lift and press again to continue the same
+stroke from there, with a straight join, exactly as a stroke
+typed as a list of points would join them. The path is
+thinned as it becomes a stroke: the first point, every point
+at least 4 pixels from the last kept one, and the point
+where you last lifted — a smooth stroke, not a thousand
+points.
+
+While the window is open:
+
+- Keys 1 to 9 set the brush width, live.
+- C cycles the brush color through the palette.
+- Escape cancels: nothing is added.
+- The window's status line says, in words, the brush width,
+  the brush color, and how many points the stroke will keep
+  so far.
+
+The width and color you finish with become the current
+brush, as with Add Stroke by typed points — which remains
+the way to draw when exact coordinates matter more than a
+hand's path.
+
 THE SLIDERS TAB
 
 Instead of a dialog for every setting, the settings you keep

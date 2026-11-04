@@ -21,6 +21,14 @@
 //! with the word "locked", after the corner when it has one; an
 //! unlocked shape writes nothing, for the same reason.
 //!
+//! Two project-level sections follow the same rule — present
+//! only when they carry something: the sliders section gains a
+//! "slider-grayscale-start" line when the project starts in
+//! grayscale, and a project with a stated goal (see
+//! `crate::goals`) ends with a "goal" section holding its kind
+//! and one line per focus answer, an open answer written as a
+//! dash. A project with neither writes neither, byte for byte.
+//!
 //! The format is hand-rolled line-oriented text in the recreation
 //! file's spirit (serde is not a workspace dependency, and one design
 //! per file needs no more than this): one record per line, space-
@@ -33,6 +41,7 @@
 use crate::animation::Frame;
 use crate::design::{Shape, ShapeKind};
 use crate::drawing::{DepthRole, Drawing, Event, Layer};
+use crate::goals::{GoalKind, ProjectGoal};
 use crate::palette::{PaletteColor, Provenance};
 use crate::sliders::AdjustTarget;
 use crate::Srgb;
@@ -52,6 +61,17 @@ pub struct Project {
 	/// The Page Up/Down jump on the Sliders tab, as a percent of
 	/// each slider's range. Ten when the file does not say.
 	pub page_jump_percent: u8,
+	/// The project's stated goal, when the setup wizard has
+	/// given it one (see `crate::goals`). Files written before
+	/// goals existed have none, and a project without a goal is
+	/// measured against nothing.
+	pub goal: Option<ProjectGoal>,
+	/// Grayscale start: the project is being built in grayscale
+	/// first, colour treatment to come per part, layer or depth.
+	/// New projects start this way; files that do not say are
+	/// projects that already had their colours, so they load
+	/// with it off.
+	pub grayscale_start: bool,
 }
 
 /// The page-jump percent a project starts with, and the value a
@@ -588,6 +608,9 @@ fn event_line(e: &Event) -> String {
 		Event::SceneInserted { name, count } => {
 			format!("event scene-inserted {} {count}", quote(name))
 		}
+		Event::ColorTreated { scope, count, locked } => {
+			format!("event color-treated {} {count} {locked}", quote(scope))
+		}
 		Event::FrameAdded { index, duration_ms } => {
 			format!("event frame-added {index} {duration_ms}")
 		}
@@ -738,6 +761,11 @@ fn parse_event(toks: &[String]) -> Result<Event, String> {
 			name: name(2)?,
 			count: num(toks, 3, "element count")?,
 		}),
+		Some("color-treated") => Ok(Event::ColorTreated {
+			scope: name(2)?,
+			count: num(toks, 3, "treated count")?,
+			locked: num(toks, 4, "locked count")?,
+		}),
 		Some("frame-added") => Ok(Event::FrameAdded {
 			index: num(toks, 2, "frame index")?,
 			duration_ms: num(toks, 3, "frame duration")?,
@@ -857,11 +885,12 @@ impl Project {
 		// The sliders section likewise appears only when the
 		// project has slider settings of its own (pinned sliders,
 		// a non-default adjustment target, a non-default page
-		// jump), so a project that never chose any keeps the
-		// exact file shape it had before.
+		// jump, grayscale start on), so a project that never
+		// chose any keeps the exact file shape it had before.
 		if !self.pinned_sliders.is_empty()
 			|| self.slider_target != AdjustTarget::BaseColor
 			|| self.page_jump_percent != DEFAULT_PAGE_JUMP_PERCENT
+			|| self.grayscale_start
 		{
 			out.push_str(&format!("sliders {}\n", self.pinned_sliders.len()));
 			for id in &self.pinned_sliders {
@@ -872,6 +901,23 @@ impl Project {
 			}
 			if self.page_jump_percent != DEFAULT_PAGE_JUMP_PERCENT {
 				out.push_str(&format!("slider-page-jump {}\n", self.page_jump_percent));
+			}
+			if self.grayscale_start {
+				out.push_str("slider-grayscale-start\n");
+			}
+		}
+		// The goal section, likewise only when the project has
+		// a stated goal: its kind, then one line per answer —
+		// the question, and the answer or a dash for "no fixed
+		// answer".
+		if let Some(goal) = &self.goal {
+			out.push_str(&format!("goal {} {}\n", goal.kind.id(), goal.answers.len()));
+			for (question, answer) in &goal.answers {
+				let answer = match answer {
+					Some(a) => quote(a),
+					None => "-".to_string(),
+				};
+				out.push_str(&format!("goal-answer {} {}\n", quote(question), answer));
 			}
 		}
 		out.push_str("end\n");
@@ -962,6 +1008,8 @@ impl Project {
 		let mut pinned_sliders: Vec<String> = Vec::new();
 		let mut slider_target = AdjustTarget::BaseColor;
 		let mut page_jump_percent = DEFAULT_PAGE_JUMP_PERCENT;
+		let mut grayscale_start = false;
+		let mut goal: Option<ProjectGoal> = None;
 		loop {
 			let section = all
 				.get(pos.get())
@@ -1017,6 +1065,32 @@ impl Project {
 						let toks = next("the slider page jump")?;
 						page_jump_percent = num(&toks, 1, "page jump percent")?;
 					}
+					if peek_is("slider-grayscale-start") {
+						next("the grayscale start line")?;
+						grayscale_start = true;
+					}
+				}
+				Some("goal") => {
+					let head = next("the project goal")?;
+					let kind_id = head.get(1).ok_or("missing goal kind")?;
+					let kind = GoalKind::from_id(kind_id)
+						.ok_or_else(|| format!("unknown goal kind: {kind_id}"))?;
+					let count: usize = num(&head, 2, "goal answer count")?;
+					let mut answers = Vec::with_capacity(count);
+					for _ in 0..count {
+						let toks = next("a goal answer")?;
+						if toks.first().map(String::as_str) != Some("goal-answer") {
+							return Err("missing goal answer line".to_string());
+						}
+						let question =
+							toks.get(1).ok_or("missing goal question")?.clone();
+						let answer = match toks.get(2).map(String::as_str) {
+							Some("-") | None => None,
+							Some(a) => Some(a.to_string()),
+						};
+						answers.push((question, answer));
+					}
+					goal = Some(ProjectGoal { kind, answers });
 				}
 				_ => break,
 			}
@@ -1031,6 +1105,8 @@ impl Project {
 			pinned_sliders,
 			slider_target,
 			page_jump_percent,
+			goal,
+			grayscale_start,
 		})
 	}
 }
@@ -1118,6 +1194,8 @@ mod tests {
 			pinned_sliders: Vec::new(),
 			slider_target: AdjustTarget::BaseColor,
 			page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT,
+			goal: None,
+			grayscale_start: false,
 		}
 	}
 
@@ -1159,6 +1237,8 @@ mod tests {
 			pinned_sliders: Vec::new(),
 			slider_target: AdjustTarget::BaseColor,
 			page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT,
+			goal: None,
+			grayscale_start: false,
 		};
 		let back = Project::from_text(&project.to_text()).unwrap();
 		assert_eq!(back.to_text(), project.to_text());
@@ -1174,7 +1254,7 @@ mod tests {
 		let mut dashed = Shape::stroke(vec![(1, 1), (90, 90)], 5, Srgb::new(0, 0, 255));
 		dashed.pattern = "dashed".to_string();
 		d.add_shape(0, dashed);
-		let project = Project { drawing: d, palette: Vec::new(), pinned_sliders: Vec::new(), slider_target: AdjustTarget::BaseColor, page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT };
+		let project = Project { drawing: d, palette: Vec::new(), pinned_sliders: Vec::new(), slider_target: AdjustTarget::BaseColor, page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT, goal: None, grayscale_start: false };
 		let text = project.to_text();
 		let back = Project::from_text(&text).expect("the new kinds read back");
 		assert_eq!(back.to_text(), text);
@@ -1225,7 +1305,7 @@ end
 		d.set_background(Srgb::BLACK);
 		d.add_layer("Back");
 		d.add_frame();
-		let project = Project { drawing: d, palette: Vec::new(), pinned_sliders: Vec::new(), slider_target: AdjustTarget::BaseColor, page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT };
+		let project = Project { drawing: d, palette: Vec::new(), pinned_sliders: Vec::new(), slider_target: AdjustTarget::BaseColor, page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT, goal: None, grayscale_start: false };
 		let text = project.to_text();
 		assert!(text.contains("frames 2\n"), "{text}");
 		let back = Project::from_text(&text).expect("a project with frames reads back");
@@ -1302,6 +1382,61 @@ end
 	}
 
 	#[test]
+	fn goal_and_grayscale_start_round_trip() {
+		use crate::goals::{GoalKind, ProjectGoal};
+		let mut goal = ProjectGoal::new(GoalKind::Writing);
+		goal.answers[0].1 = Some("A sign or label".to_string());
+		let mut project = rich_project();
+		project.goal = Some(goal);
+		project.grayscale_start = true;
+		let text = project.to_text();
+		assert!(text.contains("goal writing 2\n"), "{text}");
+		assert!(
+			text.contains("goal-answer \"What will the writing be?\" \"A sign or label\"\n"),
+			"{text}"
+		);
+		assert!(text.contains("goal-answer \"How will it be read?\" -\n"), "{text}");
+		assert!(text.contains("slider-grayscale-start\n"), "{text}");
+		let back = Project::from_text(&text).unwrap();
+		assert_eq!(back.to_text(), text, "byte for byte");
+		assert_eq!(back.goal, project.goal);
+		assert!(back.grayscale_start);
+		// A project with neither writes neither section.
+		let plain = rich_project();
+		let text = plain.to_text();
+		assert!(!text.contains("goal-answer"), "{text}");
+		assert!(!text.contains("grayscale"), "{text}");
+		let back = Project::from_text(&text).unwrap();
+		assert!(back.goal.is_none());
+		assert!(!back.grayscale_start);
+	}
+
+	#[test]
+	fn color_treated_events_round_trip() {
+		use crate::drawing::TreatmentScope;
+		let mut d = Drawing::new(100, 100, Srgb::WHITE);
+		d.add_shape(
+			0,
+			Shape::new(ShapeKind::Rectangle, 0, 0, 10, 10, Srgb::new(80, 80, 80)),
+		);
+		d.apply_color_treatment(TreatmentScope::Layer(0), &[Srgb::new(200, 0, 0)]);
+		let project = Project {
+			drawing: d,
+			palette: Vec::new(),
+			pinned_sliders: Vec::new(),
+			slider_target: AdjustTarget::BaseColor,
+			page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT,
+			goal: None,
+			grayscale_start: false,
+		};
+		let text = project.to_text();
+		assert!(text.contains("event color-treated \"layer \\\"Layer 1\\\"\" 1 0\n"), "{text}");
+		let back = Project::from_text(&text).unwrap();
+		assert_eq!(back.to_text(), text);
+		assert_eq!(back.drawing.summary(), project.drawing.summary());
+	}
+
+	#[test]
 	fn files_written_before_sliders_load_with_no_pins() {
 		// Elshara: a project starts from scratch — a file with no
 		// sliders section loads with an EMPTY pin set.
@@ -1336,7 +1471,7 @@ end
 		veil.opacity = 25;
 		d.add_shape(0, veil);
 		d.add_shape(0, Shape::new(ShapeKind::Ellipse, 5, 5, 20, 20, Srgb::WHITE));
-		let project = Project { drawing: d, palette: Vec::new(), pinned_sliders: Vec::new(), slider_target: AdjustTarget::BaseColor, page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT };
+		let project = Project { drawing: d, palette: Vec::new(), pinned_sliders: Vec::new(), slider_target: AdjustTarget::BaseColor, page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT, goal: None, grayscale_start: false };
 		let text = project.to_text();
 		// The translucent shapes carry their percent last; the
 		// fully opaque ellipse's line is exactly the old shape.
@@ -1373,7 +1508,7 @@ end
 		d.set_shape_locked(0, 2, true);
 		// An unlocked shape: nothing extra, byte-identical.
 		d.add_shape(0, Shape::new(ShapeKind::Ellipse, 5, 5, 20, 20, Srgb::WHITE));
-		let project = Project { drawing: d, palette: Vec::new(), pinned_sliders: Vec::new(), slider_target: AdjustTarget::BaseColor, page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT };
+		let project = Project { drawing: d, palette: Vec::new(), pinned_sliders: Vec::new(), slider_target: AdjustTarget::BaseColor, page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT, goal: None, grayscale_start: false };
 		let text = project.to_text();
 		assert!(text.contains("shape rectangle 10 10 50 50 #000000 0.0 3 - - locked\n"), "{text}");
 		assert!(text.contains("shape rectangle 100 10 50 50 #000000 0.0 3 - - 40 r30 locked\n"), "{text}");
@@ -1403,7 +1538,7 @@ end
 		let near = d.add_layer("Near");
 		d.set_layer_depth(near, DepthRole::Foreground);
 		d.add_layer("Plain");
-		let project = Project { drawing: d, palette: Vec::new(), pinned_sliders: Vec::new(), slider_target: AdjustTarget::BaseColor, page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT };
+		let project = Project { drawing: d, palette: Vec::new(), pinned_sliders: Vec::new(), slider_target: AdjustTarget::BaseColor, page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT, goal: None, grayscale_start: false };
 		let text = project.to_text();
 		// Role-carrying layers name the role last; the unassigned
 		// layer's line is exactly the old shape.
@@ -1456,7 +1591,7 @@ end
 		d.add_shape(0, ghost_round);
 		d.add_shape(0, Shape::new(ShapeKind::Rectangle, 130, 10, 50, 50, Srgb::BLACK));
 		d.set_shape_corner(0, 0, 30);
-		let project = Project { drawing: d, palette: Vec::new(), pinned_sliders: Vec::new(), slider_target: AdjustTarget::BaseColor, page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT };
+		let project = Project { drawing: d, palette: Vec::new(), pinned_sliders: Vec::new(), slider_target: AdjustTarget::BaseColor, page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT, goal: None, grayscale_start: false };
 		let text = project.to_text();
 		// A fully opaque rounded rectangle writes its opacity so
 		// the corner can follow it; the sharp rectangle's line is
@@ -1490,7 +1625,7 @@ end
 			),
 			crate::drawing::BulkOutcome { changed: 1, locked: 0 }
 		);
-		let project = Project { drawing: d, palette: Vec::new(), pinned_sliders: Vec::new(), slider_target: AdjustTarget::BaseColor, page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT };
+		let project = Project { drawing: d, palette: Vec::new(), pinned_sliders: Vec::new(), slider_target: AdjustTarget::BaseColor, page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT, goal: None, grayscale_start: false };
 		let text = project.to_text();
 		assert!(text.contains("event depth-adjusted midground 1"), "{text}");
 		let back = Project::from_text(&text).expect("depth events read back");
@@ -1504,13 +1639,13 @@ end
 		let mut scene = Drawing::new(300, 200, Srgb::WHITE);
 		scene.add_shape(0, Shape::new(ShapeKind::Rectangle, 0, 150, 300, 50, Srgb::new(30, 60, 120)));
 		scene.add_shape(0, Shape::new(ShapeKind::Ellipse, 240, 20, 40, 40, Srgb::new(255, 205, 0)));
-		let scene_project = Project { drawing: scene, palette: Vec::new(), pinned_sliders: Vec::new(), slider_target: AdjustTarget::BaseColor, page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT };
+		let scene_project = Project { drawing: scene, palette: Vec::new(), pinned_sliders: Vec::new(), slider_target: AdjustTarget::BaseColor, page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT, goal: None, grayscale_start: false };
 		let scene_text = scene_project.to_text();
 		// Later: open the scene file and insert it into a design.
 		let loaded = Project::from_text(&scene_text).expect("a scene file reads back");
 		let mut d = Drawing::new(800, 600, Srgb::WHITE);
 		assert_eq!(d.insert_scene(0, &loaded.drawing, "Harbour"), 2);
-		let project = Project { drawing: d, palette: Vec::new(), pinned_sliders: Vec::new(), slider_target: AdjustTarget::BaseColor, page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT };
+		let project = Project { drawing: d, palette: Vec::new(), pinned_sliders: Vec::new(), slider_target: AdjustTarget::BaseColor, page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT, goal: None, grayscale_start: false };
 		let text = project.to_text();
 		assert!(text.contains("event scene-inserted \"Harbour\" 2\n"), "{text}");
 		let back = Project::from_text(&text).expect("a design holding a scene reads back");
@@ -1533,7 +1668,7 @@ end
 		);
 		let bases: Vec<Srgb> = d.layers[0].shapes.iter().map(|s| s.fill).collect();
 		d.adjust_layer_colors(0, &bases, crate::sliders::ColorAdjust { warmth: 15, ..Default::default() });
-		let project = Project { drawing: d, palette: Vec::new(), pinned_sliders: Vec::new(), slider_target: AdjustTarget::BaseColor, page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT };
+		let project = Project { drawing: d, palette: Vec::new(), pinned_sliders: Vec::new(), slider_target: AdjustTarget::BaseColor, page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT, goal: None, grayscale_start: false };
 		let text = project.to_text();
 		assert!(text.contains("event shape-opacity"), "{text}");
 		assert!(text.contains("event shape-adjusted"), "{text}");

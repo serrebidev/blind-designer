@@ -49,6 +49,19 @@ pub fn starter_palette() -> Vec<PaletteColor> {
 	vec![PaletteColor::starter(Srgb::new(58, 124, 165))]
 }
 
+/// The grayscale start ramp: eight greys from near-black to
+/// near-white, the colours a grayscale-start project works with
+/// while its shapes are still uncoloured — form first, colour
+/// treatment later (see `crate::goals` and the help's GRAYSCALE
+/// START section). They join the palette only when asked for,
+/// like the starter colours.
+pub fn gray_ramp() -> Vec<PaletteColor> {
+	[17u8, 51, 85, 119, 153, 187, 221, 238]
+		.iter()
+		.map(|v| PaletteColor::generated(Srgb::new(*v, *v, *v), "the grayscale start ramp"))
+		.collect()
+}
+
 /// One palette color: the color, the share of the source image it
 /// covers when it was extracted from one, and its provenance.
 #[derive(Debug, Clone, PartialEq)]

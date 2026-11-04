@@ -18,9 +18,12 @@ use std::rc::Rc;
 use chroma_core::brushes::{Brush, BrushLibrary, PATTERNS};
 use chroma_core::design::{css_for_colors, Shape, ShapeKind};
 use chroma_core::dictionary;
-use chroma_core::drawing::{DepthRole, Drawing, Event};
+use chroma_core::drawing::{DepthRole, Drawing, Event, TreatmentScope};
+use chroma_core::goals::{
+	goal_report, recognizability_report, seed_drawing, GoalKind, ProjectGoal,
+};
 use chroma_core::viewability::DepthBand;
-use chroma_core::palette::{starter_palette, PaletteColor, Provenance};
+use chroma_core::palette::{gray_ramp, starter_palette, PaletteColor, Provenance};
 use chroma_core::plain::{parse_color, parse_position, parse_size};
 use chroma_core::project::{Project, ProjectStats, DEFAULT_PAGE_JUMP_PERCENT};
 use chroma_core::sliders::{
@@ -94,6 +97,8 @@ const ID_TACTILE_GRID: Id = 121;
 const ID_SAVE_SCENE: Id = 122;
 const ID_INSERT_SCENE: Id = 123;
 const ID_PATTERN_TEMPLATES: Id = 124;
+const ID_NEW_WIZARD: Id = 125;
+const ID_EXPORT_WIZARD: Id = 126;
 const ID_DESCRIBE_AREA: Id = 318;
 const ID_ADD_SYMBOL: Id = 319;
 const ID_STATS: Id = 320;
@@ -104,6 +109,10 @@ const ID_LOCK_TOGGLE: Id = 324;
 const ID_SEARCH_INSERT: Id = 325;
 const ID_INSPECT_LAYER: Id = 326;
 const ID_INSPECT_COLOR: Id = 327;
+const ID_SETUP_WIZARD: Id = 328;
+const ID_ELEMENT_WIZARD: Id = 329;
+const ID_RECOGNIZABILITY: Id = 330;
+const ID_COLOR_TREATMENT: Id = 331;
 const ID_ABOUT: Id = 401;
 const ID_DICTIONARY: Id = 402;
 const ID_HELP_FILE: Id = 403;
@@ -180,6 +189,8 @@ const MENU_IDS: &[Id] = &[
 	ID_SAVE_SCENE,
 	ID_INSERT_SCENE,
 	ID_PATTERN_TEMPLATES,
+	ID_NEW_WIZARD,
+	ID_EXPORT_WIZARD,
 	ID_EXIT,
 	ID_COMPLEMENTARY,
 	ID_SPLIT,
@@ -218,6 +229,10 @@ const MENU_IDS: &[Id] = &[
 	ID_SEARCH_INSERT,
 	ID_INSPECT_LAYER,
 	ID_INSPECT_COLOR,
+	ID_SETUP_WIZARD,
+	ID_ELEMENT_WIZARD,
+	ID_RECOGNIZABILITY,
+	ID_COLOR_TREATMENT,
 	ID_ANNOUNCE_SLIDERS,
 	ID_LISTS_SIDE_BY_SIDE,
 	ID_ABOUT,
@@ -328,6 +343,14 @@ struct State {
 	/// like the other View toggles: nothing else in the app
 	/// persists view state either.
 	lists_side_by_side: bool,
+	/// The project's stated goal, when the setup wizard has
+	/// given it one. Saved in the design file.
+	goal: Option<ProjectGoal>,
+	/// Grayscale start: this project is being built in grayscale
+	/// first, colour treatment to come per part, layer or depth.
+	/// A new project starts this way; a loaded project carries
+	/// whatever its file says. Saved in the design file.
+	grayscale_start: bool,
 }
 
 /// The color-channel sliders' run state: the format the values
@@ -519,12 +542,39 @@ fn readout_text(state: &State, color: Srgb) -> String {
 	)
 }
 
+/// The whole project as the core sees it: the state's pieces
+/// assembled into the one struct the file format, the goal
+/// report and the search catalog all consume.
+fn current_project(state: &State) -> Project {
+	Project {
+		drawing: state.drawing.clone(),
+		palette: state.palette.clone(),
+		pinned_sliders: state.pinned_sliders.clone(),
+		slider_target: state.slider_target,
+		page_jump_percent: state.page_jump_percent,
+		goal: state.goal.clone(),
+		grayscale_start: state.grayscale_start,
+	}
+}
+
+/// The main window's statistics line: the counts, and — when
+/// the project has a stated goal — the goal's two percentages
+/// after them.
+fn stats_line(state: &State) -> String {
+	let mut line = ProjectStats::gather(&state.drawing, state.palette.len()).one_line();
+	if state.goal.is_some() {
+		if let Some(report) = goal_report(&current_project(state)) {
+			line.push_str(&format!(" {}", report.one_line()));
+		}
+	}
+	line
+}
+
 fn refresh_lists(win: &Win, state: &State) {
 	win.palette_list.borrow().update_labelled(palette_rows(state), Select::Keep);
 	win.elements_list.borrow().update_labelled(element_rows(state), Select::Keep);
 	win.layers_list.update_labelled(layer_rows(state), Select::Keep);
-	win.stats_text
-		.set_label(&ProjectStats::gather(&state.drawing, state.palette.len()).one_line());
+	win.stats_text.set_label(&stats_line(state));
 	refresh_menu_states(win, state);
 	refresh_slider_values(win, state);
 }
@@ -561,6 +611,7 @@ fn refresh_menu_states(win: &Win, state: &State) {
 		ID_REMOVE_SHAPE,
 		ID_INSPECT,
 		ID_LOCK_TOGGLE,
+		ID_ELEMENT_WIZARD,
 	] {
 		bar.enable_item(id, has_element);
 	}
@@ -1701,6 +1752,18 @@ fn project_options_dialog(win: &Rc<Win>, shared: &Shared) {
 	jump_spin.set_value(jump_now as i32);
 	sizer.add(&jump_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
 	sizer.add(&jump_spin, 0, SizerFlag::Expand | SizerFlag::All, 5);
+	// Grayscale start: build the design in grayscale first —
+	// form and legibility before colour — then give parts,
+	// layers or depths their colour treatment when they are
+	// ready (Design, Apply Colour Treatment). The gray ramp is
+	// the palette that mode works from.
+	let gray_check = CheckBox::builder(&dialog)
+		.with_label("Grayscale start (build in grayscale; colours come later, per part, layer or depth)")
+		.build();
+	gray_check.set_value(shared.borrow().grayscale_start);
+	sizer.add(&gray_check, 0, SizerFlag::All, 5);
+	let gray_btn = Button::builder(&dialog).with_label("Load Gray Ramp").build();
+	sizer.add(&gray_btn, 0, SizerFlag::All, 5);
 	let starter_btn = Button::builder(&dialog).with_label("Load Starter Colors").build();
 	sizer.add(&starter_btn, 0, SizerFlag::All, 5);
 	let ok = Button::builder(&dialog).with_label("OK").build();
@@ -1715,6 +1778,29 @@ fn project_options_dialog(win: &Rc<Win>, shared: &Shared) {
 		starter_btn.on_click(move |_| {
 			let mut state = s.borrow_mut();
 			load_starter_colors(&w, &mut state);
+		});
+	}
+	{
+		let (w, s) = (win.clone(), shared.clone());
+		gray_btn.on_click(move |_| {
+			let mut state = s.borrow_mut();
+			let fresh: Vec<PaletteColor> = gray_ramp()
+				.into_iter()
+				.filter(|pc| !state.palette.iter().any(|p| p.color == pc.color))
+				.collect();
+			if fresh.is_empty() {
+				w.frame.set_status_text("The gray ramp is already in the palette.", 0);
+				return;
+			}
+			let count = fresh.len();
+			state.palette.extend(fresh);
+			refresh_lists(&w, &state);
+			w.frame.set_status_text(
+				&format!(
+					"Loaded the gray ramp: {count} grays, near-black to near-white, for grayscale work."
+				),
+				0,
+			);
 		});
 	}
 	{
@@ -1742,13 +1828,20 @@ fn project_options_dialog(win: &Rc<Win>, shared: &Shared) {
 			}
 		}
 		state.page_jump_percent = jump_spin.value().clamp(1, 100) as u8;
+		state.grayscale_start = gray_check.is_checked();
 		let count = state.pinned_sliders.len();
+		let grayscale = state.grayscale_start;
 		drop(state);
 		build_sliders_tab(win, shared);
 		frame.set_status_text(
 			&format!(
-				"Project options saved: {count} slider{} pinned to the Sliders tab.",
-				if count == 1 { "" } else { "s" }
+				"Project options saved: {count} slider{} pinned to the Sliders tab.{}",
+				if count == 1 { "" } else { "s" },
+				if grayscale {
+					" Grayscale start is on: colors come later, per part, layer, or depth."
+				} else {
+					""
+				}
 			),
 			0,
 		);
@@ -2914,6 +3007,7 @@ fn show_elements_context(win: &Rc<Win>) {
 	let mut menu = Menu::builder().build();
 	if win.elements_list.borrow().selected().is_some() {
 		ctx(&menu, ID_INSPECT, "Inspect Selected…");
+		ctx(&menu, ID_ELEMENT_WIZARD, "Element Wizard…");
 		ctx(&menu, ID_LOCK_TOGGLE, "Lock/Unlock Selected");
 		ctx(&menu, ID_MOVE_SHAPE, "Move…");
 		ctx(&menu, ID_ROTATE_SHAPE, "Rotate…");
@@ -3118,13 +3212,7 @@ fn search_dialog(win: &Rc<Win>, shared: &Shared) {
 		move || {
 			let project = {
 				let state = shared.borrow();
-				Project {
-					drawing: state.drawing.clone(),
-					palette: state.palette.clone(),
-					pinned_sliders: state.pinned_sliders.clone(),
-					slider_target: state.slider_target,
-					page_jump_percent: state.page_jump_percent,
-				}
+				current_project(&state)
 			};
 			let found = search_catalog(&project, &field.get_value());
 			let rows: Vec<(usize, String)> = found
@@ -3274,6 +3362,8 @@ fn pattern_dialog(win: &Rc<Win>, shared: &Shared, preselect: Option<&str>) {
 			state.pinned_sliders = Vec::new();
 			state.slider_target = AdjustTarget::BaseColor;
 			state.page_jump_percent = DEFAULT_PAGE_JUMP_PERCENT;
+			state.goal = None;
+			state.grayscale_start = true;
 			reset_adjustment(&mut state);
 			drop(state);
 			frame.set_status_text(
@@ -3345,6 +3435,947 @@ fn viewability_dialog(win: &Win, shared: &Shared) {
 			"Viewability",
 			&format!("How the design reads from {angle} degrees"),
 			&state.drawing.viewability_report(angle as f64, band),
+		);
+	}
+}
+
+/// The wizard frame: one reusable step dialog every wizard in
+/// the app is built on (Elshara's wizard frame — the same
+/// controls, invocable at any step of the process, adaptively
+/// scoped to whatever is in focus). A wizard is a header that
+/// always says where you are ("Step 2 of 4: ..."), one body
+/// panel per step — only the current step's panel is shown, so
+/// Tab walks just this step's controls — and Back, Next, Finish
+/// and Cancel. Finish is offered on every step: a wizard may be
+/// finished as soon as it has what it needs. Callers build each
+/// step's body into the panel `add_step` hands back, and may
+/// register an `on_show` hook to refresh a step's body from the
+/// steps before it each time it becomes current.
+struct Wizard {
+	dialog: Dialog,
+	header: StaticText,
+	sizer: BoxSizer,
+	/// The Back/Next/Finish/Cancel row: built at construction,
+	/// added to the sizer only when the wizard runs, so it sits
+	/// under the step panels instead of between them and the
+	/// header.
+	buttons: BoxSizer,
+	built: std::cell::Cell<bool>,
+	steps: RefCell<Vec<(String, Panel)>>,
+	current: std::cell::Cell<usize>,
+	back_btn: Button,
+	next_btn: Button,
+	on_show: RefCell<Option<Rc<dyn Fn(usize)>>>,
+}
+
+impl Wizard {
+	fn new(frame: &Frame, title: &str) -> Rc<Wizard> {
+		let dialog = Dialog::builder(frame, title).with_size(680, 560).build();
+		let sizer = BoxSizer::builder(Orientation::Vertical).build();
+		let header = StaticText::builder(&dialog).with_label("Step 1 of 1").build();
+		sizer.add(&header, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+		let back_btn = Button::builder(&dialog).with_label("Back").build();
+		let next_btn = Button::builder(&dialog).with_label("Next").build();
+		let finish_btn = Button::builder(&dialog).with_label("Finish").build();
+		let cancel_btn = Button::builder(&dialog).with_label("Cancel").build();
+		let buttons = BoxSizer::builder(Orientation::Horizontal).build();
+		buttons.add(&back_btn, 0, SizerFlag::All, 5);
+		buttons.add(&next_btn, 0, SizerFlag::All, 5);
+		buttons.add(&finish_btn, 0, SizerFlag::All, 5);
+		buttons.add(&cancel_btn, 0, SizerFlag::All, 5);
+		dialog.set_sizer(sizer, true);
+		let wiz = Rc::new(Wizard {
+			dialog,
+			header,
+			sizer,
+			buttons,
+			built: std::cell::Cell::new(false),
+			steps: RefCell::new(Vec::new()),
+			current: std::cell::Cell::new(0),
+			back_btn,
+			next_btn,
+			on_show: RefCell::new(None),
+		});
+		{
+			let w = wiz.clone();
+			wiz.back_btn.on_click(move |_| {
+				let i = w.current.get();
+				if i > 0 {
+					w.show_step(i - 1);
+				}
+			});
+		}
+		{
+			let w = wiz.clone();
+			wiz.next_btn.on_click(move |_| {
+				let i = w.current.get();
+				if i + 1 < w.steps.borrow().len() {
+					w.show_step(i + 1);
+				}
+			});
+		}
+		{
+			let d = wiz.dialog.clone();
+			finish_btn.on_click(move |_| d.end_modal(ID_OK));
+		}
+		{
+			let d = wiz.dialog.clone();
+			cancel_btn.on_click(move |_| d.end_modal(ID_CANCEL));
+		}
+		wiz
+	}
+
+	/// Add a step and hand back its body panel: build the step's
+	/// controls into it (with its own sizer, set on the panel).
+	/// The first step starts visible; the rest start hidden.
+	fn add_step(self: &Rc<Self>, title: &str) -> Panel {
+		let panel = Panel::builder(&self.dialog).build();
+		let first = self.steps.borrow().is_empty();
+		self.sizer.add(&panel, 1, SizerFlag::Expand | SizerFlag::All, 5);
+		panel.show(first);
+		self.steps.borrow_mut().push((title.to_string(), panel));
+		self.refresh_chrome();
+		panel
+	}
+
+	/// The step-change hook: called with the new step's index
+	/// each time a step becomes current, so a step's body can be
+	/// built from what the earlier steps settled.
+	fn set_on_show(self: &Rc<Self>, hook: impl Fn(usize) + 'static) {
+		*self.on_show.borrow_mut() = Some(Rc::new(hook));
+	}
+
+	fn refresh_chrome(&self) {
+		let steps = self.steps.borrow();
+		if steps.is_empty() {
+			return;
+		}
+		let i = self.current.get().min(steps.len() - 1);
+		self.header
+			.set_label(&format!("Step {} of {}: {}", i + 1, steps.len(), steps[i].0));
+		self.back_btn.enable(i > 0);
+		self.next_btn.enable(i + 1 < steps.len());
+	}
+
+	fn show_step(&self, i: usize) {
+		{
+			let steps = self.steps.borrow();
+			for (j, (_, panel)) in steps.iter().enumerate() {
+				panel.show(j == i);
+			}
+		}
+		self.current.set(i);
+		self.refresh_chrome();
+		if let Some(hook) = self.on_show.borrow().clone() {
+			hook(i);
+		}
+		self.dialog.layout();
+	}
+
+	/// Run the wizard; true when it was finished, false when
+	/// cancelled.
+	fn run(&self) -> bool {
+		if !self.built.get() {
+			self.built.set(true);
+			self.sizer.add_sizer(&self.buttons, 0, SizerFlag::All, 5);
+			self.dialog.layout();
+		}
+		self.dialog.show_modal() == ID_OK
+	}
+}
+
+/// The body panel's own vertical sizer, the shape every wizard
+/// step uses: a word label first (screen readers find it), then
+/// the step's controls.
+fn step_sizer(panel: &Panel) -> BoxSizer {
+	let sizer = BoxSizer::builder(Orientation::Vertical).build();
+	panel.set_sizer(sizer, true);
+	sizer
+}
+
+/// The Setup Wizard (File, New with Wizard — a new project; and
+/// Design, Setup Wizard — restate the current project's goal).
+/// Step 1 asks Elshara's first question — what do you want to
+/// create or build? — and the kind chosen decides which focus
+/// questions step 2 asks; the tools that matter follow the
+/// focus, and the answers ARE the goal, confirmed on the last
+/// step with the goal report's preview. Finishing a new project
+/// seeds its canvas per the kind (see `seed_drawing`): writing
+/// starts with words to replace, image creation with a tagged
+/// background layer and a grey ground, cosmetic work with the
+/// gray ramp in the palette (its work starts from a picture
+/// brought in). Finishing on an existing project only states
+/// (or restates) its goal.
+fn setup_wizard(win: &Rc<Win>, shared: &Shared, new_project: bool) {
+	let frame = win.frame;
+	let wiz = Wizard::new(
+		&frame,
+		if new_project { "New Project Wizard" } else { "Setup Wizard" },
+	);
+	// Step 1: the kind.
+	let p1 = wiz.add_step("What do you want to create or build?");
+	let s1 = step_sizer(&p1);
+	let kind_label = StaticText::builder(&p1)
+		.with_label("What do you want to create or build?")
+		.build();
+	s1.add(&kind_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	let kind_list = QuietList::<usize>::new(&p1, "What do you want to create or build");
+	s1.add(&kind_list, 1, SizerFlag::Expand | SizerFlag::All, 5);
+	let kind_list = Rc::new(kind_list);
+	kind_list.update_labelled(
+		GoalKind::ALL
+			.iter()
+			.enumerate()
+			.map(|(i, k)| (i, k.name().to_string()))
+			.collect(),
+		Select::Start,
+	);
+	let kind_sel = Rc::new(std::cell::Cell::new(
+		shared.borrow().goal.as_ref().map(|g| g.kind).unwrap_or(GoalKind::Writing),
+	));
+	// Preselect the current goal's kind when restating one.
+	if !new_project {
+		if let Some(pos) = GoalKind::ALL.iter().position(|k| *k == kind_sel.get()) {
+			kind_list.update_labelled(
+				GoalKind::ALL
+					.iter()
+					.enumerate()
+					.map(|(i, k)| (i, k.name().to_string()))
+					.collect(),
+				Select::Key(pos),
+			);
+		}
+	}
+	{
+		let kind_sel = kind_sel.clone();
+		let list = kind_list.clone();
+		kind_list.on_selection_changed(move || {
+			if let Some(i) = list.selected() {
+				kind_sel.set(GoalKind::ALL[i]);
+			}
+		});
+	}
+	// Step 2: the focus questions of the chosen kind — up to
+	// four rows, relabelled each time the step is shown, each
+	// answer a choice whose last entry is "No fixed answer".
+	let p2 = wiz.add_step("Focus questions");
+	let s2 = step_sizer(&p2);
+	let mut q_labels: Vec<StaticText> = Vec::new();
+	let mut q_choices: Vec<Choice> = Vec::new();
+	for _ in 0..4 {
+		let label = StaticText::builder(&p2).with_label("").build();
+		let choice = Choice::builder(&p2).build();
+		s2.add(&label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+		s2.add(&choice, 0, SizerFlag::Expand | SizerFlag::All, 5);
+		q_labels.push(label);
+		q_choices.push(choice);
+	}
+	// The answers being built: one slot per question row, and
+	// the kind they belong to (changing kind restarts them).
+	let answers: Rc<RefCell<Vec<Option<String>>>> =
+		Rc::new(RefCell::new(vec![None; 4]));
+	let answers_kind: Rc<std::cell::Cell<Option<GoalKind>>> =
+		Rc::new(std::cell::Cell::new(None));
+	// Preload a restated goal's answers on its first showing.
+	if !new_project {
+		if let Some(goal) = &shared.borrow().goal {
+			let mut slot = answers.borrow_mut();
+			for (i, (_, a)) in goal.answers.iter().enumerate().take(4) {
+				slot[i] = a.clone();
+			}
+			answers_kind.set(Some(goal.kind));
+		}
+	}
+	let collect_answers: Rc<dyn Fn()> = {
+		let (answers, q_choices) = (answers.clone(), q_choices.clone());
+		let kind_sel = kind_sel.clone();
+		Rc::new(move || {
+			let kind = kind_sel.get();
+			let questions = kind.questions();
+			let mut slot = answers.borrow_mut();
+			for (i, choice) in q_choices.iter().enumerate() {
+				let Some(q) = questions.get(i) else { break };
+				// A row the focus step never populated (the
+				// wizard was finished from another step) has no
+				// choices at all: leave its stored answer as it
+				// was rather than erasing it.
+				if choice.get_count() == 0 {
+					continue;
+				}
+				slot[i] = choice
+					.get_selection()
+					.and_then(|sel| q.options.get(sel as usize).copied())
+					.map(|s| s.to_string());
+			}
+		})
+	};
+	// Step 3: the goal, confirmed — the report preview.
+	let p3 = wiz.add_step("Your goal");
+	let s3 = step_sizer(&p3);
+	let goal_label = StaticText::builder(&p3).with_label("Your goal").build();
+	s3.add(&goal_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	let goal_body = TextCtrl::builder(&p3)
+		.with_style(TextCtrlStyle::MultiLine | TextCtrlStyle::ReadOnly)
+		.build();
+	s3.add(&goal_body, 1, SizerFlag::Expand | SizerFlag::All, 5);
+	let build_goal: Rc<dyn Fn() -> ProjectGoal> = {
+		let (kind_sel, answers, answers_kind) =
+			(kind_sel.clone(), answers.clone(), answers_kind.clone());
+		Rc::new(move || {
+			let kind = kind_sel.get();
+			let slot = answers.borrow();
+			// The stored answers belong to the kind they were
+			// collected under; a kind chosen but never taken
+			// through the focus step starts with them all open.
+			let usable = answers_kind.get() == Some(kind);
+			ProjectGoal {
+				kind,
+				answers: kind
+					.questions()
+					.iter()
+					.enumerate()
+					.map(|(i, q)| {
+						(
+							q.question.to_string(),
+							if usable { slot.get(i).cloned().flatten() } else { None },
+						)
+					})
+					.collect(),
+			}
+		})
+	};
+	{
+		let (q_labels, q_choices, answers, answers_kind, kind_sel, collect) = (
+			q_labels.clone(),
+			q_choices.clone(),
+			answers.clone(),
+			answers_kind.clone(),
+			kind_sel.clone(),
+			collect_answers.clone(),
+		);
+		let (goal_body, build_goal, shared) =
+			(goal_body.clone(), build_goal.clone(), shared.clone());
+		wiz.set_on_show(move |step| {
+			match step {
+				1 => {
+					let kind = kind_sel.get();
+					if answers_kind.get() != Some(kind) {
+						*answers.borrow_mut() = vec![None; 4];
+						answers_kind.set(Some(kind));
+					}
+					let slot = answers.borrow();
+					for (i, (label, choice)) in
+						q_labels.iter().zip(q_choices.iter()).enumerate()
+					{
+						match kind.questions().get(i) {
+							Some(q) => {
+								label.set_label(q.question);
+								label.show(true);
+								choice.show(true);
+								choice.clear();
+								for opt in q.options {
+									choice.append(opt);
+								}
+								choice.append("No fixed answer");
+								let sel = slot
+									.get(i)
+									.cloned()
+									.flatten()
+									.and_then(|a| {
+										q.options.iter().position(|o| *o == a)
+									})
+									.unwrap_or(q.options.len());
+								choice.set_selection(sel as u32);
+								choice.set_name(q.question);
+							}
+							None => {
+								label.set_label("");
+								label.show(false);
+								choice.show(false);
+							}
+						}
+					}
+				}
+				2 => {
+					collect();
+					let goal = build_goal();
+					let preview = {
+						let state = shared.borrow();
+						let mut project = if new_project {
+							let mut p = current_project(&state);
+							p.drawing = seed_drawing(goal.kind);
+							p.palette = if goal.kind == GoalKind::ImageCosmetic {
+								gray_ramp()
+							} else {
+								Vec::new()
+							};
+							p
+						} else {
+							current_project(&state)
+						};
+						project.goal = Some(goal.clone());
+						project
+					};
+					let text = match goal_report(&preview) {
+						Some(rep) => rep.full_text(&goal),
+						None => "No goal to report.".to_string(),
+					};
+					goal_body.set_value(&text);
+				}
+				_ => {}
+			}
+		});
+	}
+	if !wiz.run() {
+		return;
+	}
+	collect_answers();
+	let goal = build_goal();
+	let mut state = shared.borrow_mut();
+	if new_project {
+		state.drawing = seed_drawing(goal.kind);
+		state.palette = if goal.kind == GoalKind::ImageCosmetic {
+			gray_ramp()
+		} else {
+			Vec::new()
+		};
+		state.layer = 0;
+		// A new project starts from scratch, like a template:
+		// no pins, default target and jump, grayscale start on.
+		state.pinned_sliders = Vec::new();
+		state.slider_target = AdjustTarget::BaseColor;
+		state.page_jump_percent = DEFAULT_PAGE_JUMP_PERCENT;
+		state.grayscale_start = true;
+		reset_adjustment(&mut state);
+	}
+	state.goal = Some(goal.clone());
+	let report = goal_report(&current_project(&state));
+	drop(state);
+	if new_project {
+		build_sliders_tab(win, shared);
+	}
+	let state = shared.borrow();
+	refresh_lists(win, &state);
+	frame.set_status_text(
+		&format!(
+			"{}: goal set — {}.{}{}",
+			if new_project { "New project" } else { "Setup wizard" },
+			goal.kind.name(),
+			report.map(|r| format!(" {}", r.one_line())).unwrap_or_default(),
+			if new_project && goal.kind == GoalKind::ImageCosmetic {
+				" Cosmetic work starts from a picture: File, Import, Open Image — the gray ramp is in the palette for the shading work."
+			} else if new_project {
+				" Grayscale start is on: colors come later, per part, layer, or depth."
+			} else {
+				""
+			},
+		),
+		0,
+	);
+}
+
+/// The Element Wizard (Design, Element Wizard; the Elements
+/// list's context menu): the wizard frame scoped to the one
+/// element in focus. Step 1 is its stack — what sits on top of
+/// it and what it sits on, and why (the viewability core's box
+/// maths). Step 2 edits it with sliders (opacity, and
+/// roundedness for a rectangle). Step 3 reviews it with the
+/// inspector's report — by then the edits are applied, so the
+/// review describes the element as it now is.
+fn element_wizard(win: &Rc<Win>, shared: &Shared) {
+	let frame = win.frame;
+	let Some((li, si)) = selected_element_locate(win, shared) else {
+		frame.set_status_text("Select an element first.", 0);
+		return;
+	};
+	let flat = {
+		let state = shared.borrow();
+		state.drawing.layers[..li].iter().map(|l| l.shapes.len()).sum::<usize>() + si
+	};
+	let (stack_text, kind, opacity, corner) = {
+		let state = shared.borrow();
+		let shape = &state.drawing.layers[li].shapes[si];
+		(
+			state.drawing.stack_report(flat).unwrap_or_default(),
+			shape.kind,
+			shape.opacity,
+			shape.corner,
+		)
+	};
+	let wiz = Wizard::new(&frame, "Element Wizard");
+	// Step 1: the stack.
+	let p1 = wiz.add_step("Stack: what sits on what");
+	let s1 = step_sizer(&p1);
+	let stack_label = StaticText::builder(&p1).with_label("The stack").build();
+	s1.add(&stack_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	let stack_body = TextCtrl::builder(&p1)
+		.with_style(TextCtrlStyle::MultiLine | TextCtrlStyle::ReadOnly)
+		.build();
+	stack_body.set_value(&stack_text);
+	s1.add(&stack_body, 1, SizerFlag::Expand | SizerFlag::All, 5);
+	// Step 2: edit with sliders. The sliders hold pending
+	// values; they are applied when the review step is reached
+	// or the wizard is finished, never mid-wizard on Cancel.
+	let p2 = wiz.add_step("Edit");
+	let s2 = step_sizer(&p2);
+	let pending_opacity = Rc::new(std::cell::Cell::new(opacity));
+	let pending_corner = Rc::new(std::cell::Cell::new(corner));
+	let op_label = StaticText::builder(&p2).with_label("Opacity").build();
+	let op_slider = Slider::builder(&p2)
+		.with_min_value(0)
+		.with_max_value(100)
+		.with_value(opacity as i32)
+		.build();
+	op_slider.set_name("Opacity");
+	let op_readout = StaticText::builder(&p2)
+		.with_label(&format!("{opacity} percent opaque"))
+		.build();
+	s2.add(&op_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	let op_row = BoxSizer::builder(Orientation::Horizontal).build();
+	op_row.add(&op_slider, 1, SizerFlag::Expand | SizerFlag::All, 5);
+	op_row.add(&op_readout, 0, SizerFlag::All, 5);
+	s2.add_sizer(&op_row, 0, SizerFlag::Expand, 0);
+	{
+		let (pending, readout) = (pending_opacity.clone(), op_readout.clone());
+		op_slider.on_slider(move |e| {
+			pending.set(e.get_value().clamp(0, 100) as u8);
+			readout.set_label(&format!("{} percent opaque", pending.get()));
+		});
+	}
+	if kind == ShapeKind::Rectangle {
+		let c_label = StaticText::builder(&p2).with_label("Roundedness").build();
+		let c_slider = Slider::builder(&p2)
+			.with_min_value(0)
+			.with_max_value(50)
+			.with_value(corner as i32)
+			.build();
+		c_slider.set_name("Roundedness");
+		let c_readout = StaticText::builder(&p2)
+			.with_label(&format!("corners {corner} percent"))
+			.build();
+		s2.add(&c_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+		let c_row = BoxSizer::builder(Orientation::Horizontal).build();
+		c_row.add(&c_slider, 1, SizerFlag::Expand | SizerFlag::All, 5);
+		c_row.add(&c_readout, 0, SizerFlag::All, 5);
+		s2.add_sizer(&c_row, 0, SizerFlag::Expand, 0);
+		let (pending, readout) = (pending_corner.clone(), c_readout.clone());
+		c_slider.on_slider(move |e| {
+			pending.set(e.get_value().clamp(0, 50) as u8);
+			readout.set_label(&format!("corners {} percent", pending.get()));
+		});
+	} else {
+		let note = StaticText::builder(&p2)
+			.with_label(&format!(
+				"Roundedness applies to rectangles; this is a {}, so opacity is its only slider here.",
+				kind.name()
+			))
+			.build();
+		s2.add(&note, 0, SizerFlag::All, 5);
+	}
+	// Step 3: review with the inspector.
+	let p3 = wiz.add_step("Review");
+	let s3 = step_sizer(&p3);
+	let review_label = StaticText::builder(&p3).with_label("Review").build();
+	s3.add(&review_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	let review_body = TextCtrl::builder(&p3)
+		.with_style(TextCtrlStyle::MultiLine | TextCtrlStyle::ReadOnly)
+		.build();
+	s3.add(&review_body, 1, SizerFlag::Expand | SizerFlag::All, 5);
+	let applied = Rc::new(std::cell::Cell::new(false));
+	let apply_edits: Rc<dyn Fn()> = {
+		let (shared, win) = (shared.clone(), win.clone());
+		let (po, pc, applied) =
+			(pending_opacity.clone(), pending_corner.clone(), applied.clone());
+		Rc::new(move || {
+			if applied.get() {
+				return;
+			}
+			applied.set(true);
+			let mut state = shared.borrow_mut();
+			let mut changed = false;
+			if state.drawing.layers[li].shapes[si].opacity != po.get() {
+				changed |= state.drawing.set_shape_opacity(li, si, po.get());
+			}
+			if kind == ShapeKind::Rectangle
+				&& state.drawing.layers[li].shapes[si].corner != pc.get()
+			{
+				changed |= state.drawing.set_shape_corner(li, si, pc.get());
+			}
+			if changed {
+				refresh_lists(&win, &state);
+				announce(&win, &state);
+			}
+		})
+	};
+	{
+		let (apply, review_body, shared) =
+			(apply_edits.clone(), review_body.clone(), shared.clone());
+		wiz.set_on_show(move |step| {
+			if step == 2 {
+				apply();
+				let state = shared.borrow();
+				if let Some(text) = inspect_shape(&state.drawing, flat) {
+					review_body.set_value(&text);
+				}
+			}
+		});
+	}
+	if wiz.run() {
+		apply_edits();
+	}
+}
+
+/// The Export Wizard (File, Export, Export Wizard): the wizard
+/// frame over the exporters. Step 1 chooses the format, step 2
+/// how the result is embedded or accompanied, step 3 confirms
+/// in words what will be written — then Finish asks for the
+/// main file's name and writes. Embedding honestly means what
+/// each format can do: a picture inlined in a page gets an HTML
+/// companion that shows it; "with caption text" writes the
+/// caption sheet beside the main file; a description is words
+/// already, so embedding changes nothing and the confirm step
+/// says so.
+fn export_wizard(win: &Rc<Win>, shared: &Shared) {
+	let frame = win.frame;
+	const FORMATS: [&str; 5] = [
+		"PNG picture",
+		"HTML page",
+		"Raised-line SVG",
+		"Description (recreation file)",
+		"Animated GIF",
+	];
+	const EMBEDS: [&str; 3] = [
+		"A separate file on its own",
+		"Inline in an HTML page",
+		"With caption text alongside",
+	];
+	let wiz = Wizard::new(&frame, "Export Wizard");
+	let p1 = wiz.add_step("Format");
+	let s1 = step_sizer(&p1);
+	let f_label = StaticText::builder(&p1).with_label("Export format").build();
+	s1.add(&f_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	let f_list = QuietList::<usize>::new(&p1, "Export format");
+	s1.add(&f_list, 1, SizerFlag::Expand | SizerFlag::All, 5);
+	let f_list = Rc::new(f_list);
+	f_list.update_labelled(
+		FORMATS.iter().enumerate().map(|(i, n)| (i, n.to_string())).collect(),
+		Select::Start,
+	);
+	let format_sel = Rc::new(std::cell::Cell::new(0usize));
+	{
+		let (sel, list) = (format_sel.clone(), f_list.clone());
+		f_list.on_selection_changed(move || {
+			if let Some(i) = list.selected() {
+				sel.set(i);
+			}
+		});
+	}
+	let p2 = wiz.add_step("Embedding");
+	let s2 = step_sizer(&p2);
+	let e_label = StaticText::builder(&p2)
+		.with_label("How it will be embedded or accompanied")
+		.build();
+	s2.add(&e_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	let e_list = QuietList::<usize>::new(&p2, "Embedding");
+	s2.add(&e_list, 1, SizerFlag::Expand | SizerFlag::All, 5);
+	let e_list = Rc::new(e_list);
+	e_list.update_labelled(
+		EMBEDS.iter().enumerate().map(|(i, n)| (i, n.to_string())).collect(),
+		Select::Start,
+	);
+	let embed_sel = Rc::new(std::cell::Cell::new(0usize));
+	{
+		let (sel, list) = (embed_sel.clone(), e_list.clone());
+		e_list.on_selection_changed(move || {
+			if let Some(i) = list.selected() {
+				sel.set(i);
+			}
+		});
+	}
+	let p3 = wiz.add_step("Confirm");
+	let s3 = step_sizer(&p3);
+	let c_label = StaticText::builder(&p3).with_label("Confirm the export").build();
+	s3.add(&c_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	let c_body = TextCtrl::builder(&p3)
+		.with_style(TextCtrlStyle::MultiLine | TextCtrlStyle::ReadOnly)
+		.build();
+	s3.add(&c_body, 1, SizerFlag::Expand | SizerFlag::All, 5);
+	{
+		let (c_body, format_sel, embed_sel) =
+			(c_body.clone(), format_sel.clone(), embed_sel.clone());
+		wiz.set_on_show(move |step| {
+			if step != 2 {
+				return;
+			}
+			let (f, e) = (format_sel.get(), embed_sel.get());
+			let embed_line = match (f, e) {
+				(3, _) => {
+					"A description is words already: embedding changes nothing, and only the description file is written."
+				}
+				(_, 0) => "One file, on its own.",
+				(1, 1) => {
+					"An HTML page is inline by nature: the design's shapes are the page. Only the page is written."
+				}
+				(2, 1) => {
+					"SVG is a text format pages embed as it is: only the SVG file is written."
+				}
+				(_, 1) => {
+					"The picture file, plus an HTML page beside it that shows the picture inline."
+				}
+				(_, 2) => "The main file, plus the caption sheet as a text file beside it.",
+				_ => "",
+			};
+			c_body.set_value(&format!(
+				"Format: {}.\nEmbedding: {}.\n{}\nPress Finish to choose the file name and write it.",
+				FORMATS[f], EMBEDS[e], embed_line
+			));
+		});
+	}
+	if !wiz.run() {
+		return;
+	}
+	let (f, e) = (format_sel.get(), embed_sel.get());
+	// The files a caption sheet or an inline page would sit
+	// beside the main one, derived from the chosen path.
+	let sibling = |path: &str, ext: &str, tag: &str| -> String {
+		let p = Path::new(path);
+		let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("design");
+		let name = if tag.is_empty() {
+			format!("{stem}.{ext}")
+		} else {
+			format!("{stem}-{tag}.{ext}")
+		};
+		match p.parent() {
+			Some(dir) if !dir.as_os_str().is_empty() => {
+				dir.join(name).to_string_lossy().into_owned()
+			}
+			_ => name,
+		}
+	};
+	let write_side = |path: &str, what: &str, text: &str| {
+		match std::fs::write(path, text) {
+			Ok(()) => frame.set_status_text(&format!("Exported {what} to {path}"), 0),
+			Err(err) => {
+				frame.set_status_text(&format!("Export of {what} failed: {err}"), 0)
+			}
+		}
+	};
+	let state = shared.borrow();
+	match f {
+		0 => {
+			let Some(path) =
+				file_dialog(&frame, "Export wizard: PNG picture", "PNG image (*.png)|*.png", true)
+			else {
+				return;
+			};
+			match state.drawing.flatten().render().save(&path) {
+				Ok(()) => frame.set_status_text(&format!("Exported PNG to {path}"), 0),
+				Err(err) => {
+					frame.set_status_text(&format!("Export failed: {err}"), 0);
+					return;
+				}
+			}
+			if e == 1 {
+				let name = Path::new(&path)
+					.file_name()
+					.and_then(|n| n.to_str())
+					.unwrap_or("design.png")
+					.to_string();
+				let html = format!(
+					"<!DOCTYPE html>\n<html lang=\"en\">\n<head><meta charset=\"utf-8\"><title>Blind Designer design</title></head>\n<body>\n<img src=\"{name}\" alt=\"A design exported from Blind Designer\">\n</body>\n</html>\n"
+				);
+				write_side(&sibling(&path, "html", ""), "inline page", &html);
+			} else if e == 2 {
+				let sheet = state.drawing.flatten().caption_sheet();
+				write_side(&sibling(&path, "txt", "captions"), "captions", &sheet);
+			}
+		}
+		1 => {
+			let Some(path) = file_dialog(
+				&frame,
+				"Export wizard: HTML page",
+				"HTML page (*.html)|*.html",
+				true,
+			) else {
+				return;
+			};
+			write_side(&path, "HTML page", &state.drawing.flatten().to_html("Blind Designer design"));
+			if e == 2 {
+				let sheet = state.drawing.flatten().caption_sheet();
+				write_side(&sibling(&path, "txt", "captions"), "captions", &sheet);
+			}
+		}
+		2 => {
+			let Some(path) = file_dialog(
+				&frame,
+				"Export wizard: raised-line SVG",
+				"SVG drawing (*.svg)|*.svg",
+				true,
+			) else {
+				return;
+			};
+			let svg = state.drawing.to_tactile_svg();
+			write_side(&path, "raised-line SVG", &svg);
+			if e == 2 {
+				let sheet = state.drawing.flatten().caption_sheet();
+				write_side(&sibling(&path, "txt", "captions"), "captions", &sheet);
+			}
+		}
+		3 => {
+			let Some(path) = file_dialog(
+				&frame,
+				"Export wizard: description (recreation file)",
+				"Text file (*.txt)|*.txt",
+				true,
+			) else {
+				return;
+			};
+			let summary = state.drawing.summary();
+			write_side(&path, "description", &summary);
+		}
+		_ => {
+			let Some(path) = file_dialog(
+				&frame,
+				"Export wizard: animated GIF",
+				"GIF image (*.gif)|*.gif",
+				true,
+			) else {
+				return;
+			};
+			match state.drawing.to_gif() {
+				Ok(bytes) => match std::fs::write(&path, &bytes) {
+					Ok(()) => frame.set_status_text(&format!("Exported GIF to {path}"), 0),
+					Err(err) => {
+						frame.set_status_text(&format!("Export failed: {err}"), 0);
+						return;
+					}
+				},
+				Err(err) => {
+					frame.set_status_text(&format!("Export failed: {err}"), 0);
+					return;
+				}
+			}
+			if e == 1 {
+				let name = Path::new(&path)
+					.file_name()
+					.and_then(|n| n.to_str())
+					.unwrap_or("design.gif")
+					.to_string();
+				let html = format!(
+					"<!DOCTYPE html>\n<html lang=\"en\">\n<head><meta charset=\"utf-8\"><title>Blind Designer animation</title></head>\n<body>\n<img src=\"{name}\" alt=\"An animation exported from Blind Designer\">\n</body>\n</html>\n"
+				);
+				write_side(&sibling(&path, "html", ""), "inline page", &html);
+			} else if e == 2 {
+				let sheet = state.drawing.animation_description();
+				write_side(&sibling(&path, "txt", "description"), "animation description", &sheet);
+			}
+		}
+	}
+}
+
+/// The Recognizability report (Design, Recognizability): how
+/// clearly someone else would recognize what is being created,
+/// per project type — core's rough guide, in the standard
+/// report dialog.
+fn recognizability_dialog(win: &Win, shared: &Shared) {
+	let report = {
+		let state = shared.borrow();
+		recognizability_report(&current_project(&state))
+	};
+	report_dialog(
+		win,
+		"Recognizability",
+		"How recognizable this design is, per its project type",
+		&report,
+	);
+}
+
+/// The Colour Treatment dialog (Design, Apply Colour
+/// Treatment): grayscale start's second half. Pick a layer, or
+/// a whole depth, and its grayscale shapes take the palette's
+/// colours in paint order — form first, colour when the part
+/// is ready. Locked shapes stay grayscale, and the outcome
+/// says both counts.
+fn color_treatment_dialog(win: &Rc<Win>, shared: &Shared) {
+	let frame = win.frame;
+	// The scopes on offer: every layer, then every depth role
+	// that has a layer. Built from the design itself, so a scope
+	// that does not exist is never offered.
+	let scopes: Vec<(String, TreatmentScope)> = {
+		let state = shared.borrow();
+		let mut v: Vec<(String, TreatmentScope)> = state
+			.drawing
+			.layers
+			.iter()
+			.enumerate()
+			.map(|(i, l)| (format!("Layer: {}", l.name), TreatmentScope::Layer(i)))
+			.collect();
+		for role in DepthRole::ALL {
+			if role != DepthRole::Unassigned
+				&& state.drawing.layers.iter().any(|l| l.depth == role)
+			{
+				v.push((format!("Depth: {}", role.name()), TreatmentScope::Depth(role)));
+			}
+		}
+		v
+	};
+	let dialog = Dialog::builder(&frame, "Apply Colour Treatment").build();
+	let sizer = BoxSizer::builder(Orientation::Vertical).build();
+	let label = StaticText::builder(&dialog)
+		.with_label("Give the grayscale shapes in this scope the palette colours, in paint order")
+		.build();
+	sizer.add(&label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	let choice = Choice::builder(&dialog).build();
+	for (name, _) in &scopes {
+		choice.append(name);
+	}
+	choice.set_selection(0);
+	choice.set_name("Colour treatment scope");
+	sizer.add(&choice, 0, SizerFlag::Expand | SizerFlag::All, 5);
+	let ok = Button::builder(&dialog).with_label("Apply Treatment").build();
+	let cancel = Button::builder(&dialog).with_label("Cancel").build();
+	let buttons = BoxSizer::builder(Orientation::Horizontal).build();
+	buttons.add(&ok, 0, SizerFlag::All, 5);
+	buttons.add(&cancel, 0, SizerFlag::All, 5);
+	sizer.add_sizer(&buttons, 0, SizerFlag::All, 5);
+	dialog.set_sizer(sizer, true);
+	{
+		let d = dialog.clone();
+		ok.on_click(move |_| d.end_modal(ID_OK));
+	}
+	{
+		let d = dialog.clone();
+		cancel.on_click(move |_| d.end_modal(ID_CANCEL));
+	}
+	if dialog.show_modal() != ID_OK {
+		return;
+	}
+	let Some(sel) = choice.get_selection() else { return };
+	let Some((name, scope)) = scopes.get(sel as usize) else { return };
+	let mut state = shared.borrow_mut();
+	if state.palette.is_empty() {
+		frame.set_status_text(
+			"Colour treatment takes colours from the palette, and the palette is empty: add colours or load the starter colours first.",
+			0,
+		);
+		return;
+	}
+	let colors: Vec<Srgb> = state.palette.iter().map(|pc| pc.color).collect();
+	let outcome = state.drawing.apply_color_treatment(*scope, &colors);
+	if outcome.changed > 0 {
+		refresh_lists(win, &state);
+		announce(win, &state);
+	} else {
+		frame.set_status_text(
+			&format!(
+				"Colour treatment on {name}: no grayscale shapes to colour{}.",
+				if outcome.locked > 0 {
+					format!(" ({} locked stayed grayscale)", outcome.locked)
+				} else {
+					String::new()
+				}
+			),
+			0,
 		);
 	}
 }
@@ -3723,10 +4754,13 @@ fn templates_dialog(win: &Win, shared: &Shared) {
 				state.drawing = design;
 				state.layer = 0;
 				// A new project starts from scratch (Elshara):
-				// no pinned sliders, default target and page jump.
+				// no pinned sliders, default target and page jump,
+				// no goal, grayscale start on.
 				state.pinned_sliders = Vec::new();
 				state.slider_target = AdjustTarget::BaseColor;
 				state.page_jump_percent = DEFAULT_PAGE_JUMP_PERCENT;
+				state.goal = None;
+				state.grayscale_start = true;
 				reset_adjustment(&mut state);
 				drop(state);
 				frame.set_status_text(
@@ -3947,6 +4981,12 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 		ID_OPEN_IMAGE => extract_image_dialog(win, shared, true),
 		ID_EXTRACT_IMAGE => extract_image_dialog(win, shared, false),
 		ID_PROJECT_OPTIONS => project_options_dialog(win, shared),
+		ID_NEW_WIZARD => setup_wizard(win, shared, true),
+		ID_SETUP_WIZARD => setup_wizard(win, shared, false),
+		ID_ELEMENT_WIZARD => element_wizard(win, shared),
+		ID_EXPORT_WIZARD => export_wizard(win, shared),
+		ID_RECOGNIZABILITY => recognizability_dialog(win, shared),
+		ID_COLOR_TREATMENT => color_treatment_dialog(win, shared),
 		ID_ANNOUNCE_SLIDERS => {
 			let mut state = shared.borrow_mut();
 			state.announce_sliders = !state.announce_sliders;
@@ -3970,13 +5010,7 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 				true,
 			) {
 				let state = shared.borrow();
-				let project = Project {
-					drawing: state.drawing.clone(),
-					palette: state.palette.clone(),
-					pinned_sliders: state.pinned_sliders.clone(),
-					slider_target: state.slider_target,
-					page_jump_percent: state.page_jump_percent,
-				};
+				let project = current_project(&state);
 				match std::fs::write(&path, project.to_text()) {
 					Ok(()) => frame.set_status_text(&format!("Saved design to {path}"), 0),
 					Err(e) => frame.set_status_text(&format!("Save failed: {e}"), 0),
@@ -3999,6 +5033,8 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 							state.pinned_sliders = project.pinned_sliders;
 							state.slider_target = project.slider_target;
 							state.page_jump_percent = project.page_jump_percent;
+							state.goal = project.goal;
+							state.grayscale_start = project.grayscale_start;
 							reset_adjustment(&mut state);
 							state.layer = 0;
 							let layers = state.drawing.layers.len();
@@ -4253,6 +5289,9 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 						let mut state = shared.borrow_mut();
 						state.drawing = drawing;
 						state.layer = 0;
+						// The old project's goal described the old
+						// design; the imported one starts unstated.
+						state.goal = None;
 						state.palette = imp
 							.colors
 							.iter()
@@ -4297,7 +5336,17 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 		ID_STATS => {
 			let report = {
 				let state = shared.borrow();
-				ProjectStats::gather(&state.drawing, state.palette.len()).report()
+				let mut text =
+					ProjectStats::gather(&state.drawing, state.palette.len()).report();
+				// A stated goal is measured here too: the two
+				// percentages and every criterion behind them.
+				if let Some(goal) = &state.goal {
+					if let Some(rep) = goal_report(&current_project(&state)) {
+						text.push_str("\n\n");
+						text.push_str(&rep.full_text(goal));
+					}
+				}
+				text
 			};
 			report_dialog(win, "Project statistics", "What is in this project", &report);
 		}
@@ -4826,6 +5875,8 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 					pinned_sliders: Vec::new(),
 					slider_target: AdjustTarget::BaseColor,
 					page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT,
+					goal: None,
+					grayscale_start: false,
 				};
 				match std::fs::write(&path, scene.to_text()) {
 					Ok(()) => frame.set_status_text(&format!("Saved scene to {path}"), 0),
@@ -5100,6 +6151,7 @@ fn build_menus(frame: &Frame) {
 	import.append(ID_TACTILE_GRID, "Describe Image as &Tactile Grid…", "Describe any image as a grid of shades, in braille patterns and in words.", ItemKind::Normal);
 
 	let export = Menu::builder().build();
+	export.append(ID_EXPORT_WIZARD, "Export &Wizard…", "Step through the export: choose the format, how it will be embedded or accompanied, and confirm what will be written before anything is.", ItemKind::Normal);
 	export.append(ID_EXPORT_PNG, "&PNG…\tCtrl+E", "Save the design as a PNG picture.", ItemKind::Normal);
 	export.append(ID_EXPORT_CAPTIONS, "&Captions…", "Save a text sheet describing every shape in words.", ItemKind::Normal);
 	export.append(ID_EXPORT_CSS, "C&SS…", "Save the palette as CSS variables, ready for a web page.", ItemKind::Normal);
@@ -5118,6 +6170,7 @@ fn build_menus(frame: &Frame) {
 	file.append(ID_SAVE_SCENE, "Save Sc&ene…", "Save the current design as a scene file, ready to insert into other designs as a group.", ItemKind::Normal);
 	file.append(ID_INSERT_SCENE, "Insert &Scene…", "Insert a saved scene's elements onto the current layer, captioned as one group under the scene's name.", ItemKind::Normal);
 	file.append(ID_TEMPLATES, "New from &Template…", "Start a new design from a built-in layout: birthday card, house, face, chart, portrait or landscape.", ItemKind::Normal);
+	file.append(ID_NEW_WIZARD, "New with &Wizard…", "Start a new project through the setup wizard: say what you want to create or build, answer its focus questions (any may be left with no fixed answer), and the goal is set and the canvas seeded for that kind.", ItemKind::Normal);
 	file.append(ID_PATTERN_TEMPLATES, "New from &Pattern…", "Start a new design as a two-color pattern — checkerboard, stripes or dots — woven from two palette colors you pick.", ItemKind::Normal);
 	file.append_separator();
 	file.append_submenu(import, "&Import", "Bring images, colors and designs in.");
@@ -5174,14 +6227,18 @@ fn build_menus(frame: &Frame) {
 	design.append_separator();
 	design.append(ID_ELEMENTS, "E&lements…", "Every element in plain language, with rename, describe, move, resize, recolor and delete.", ItemKind::Normal);
 	design.append(ID_INSPECT, "In&spect Selected…", "The inspector: what the selected element is, where it is used, what can change it and what happens if it is left alone. Enter on the Elements list does the same.", ItemKind::Normal);
+	design.append(ID_ELEMENT_WIZARD, "Element &Wizard…", "The wizard scoped to the selected element: its stack (what sits on it, what it sits on), slider edits, and the inspector's review.", ItemKind::Normal);
 	design.append(ID_LOCK_TOGGLE, "&Lock/Unlock Selected", "Lock the selected element so bulk changes skip it, or unlock it so they reach it again. Direct edits work either way.", ItemKind::Normal);
 	design.append(ID_SEARCH_INSERT, "&Search and Insert…\tCtrl+F", "Search palette colors, starter colors, elements, symbols and templates by name, and insert what you find at the cursor.", ItemKind::Normal);
 	design.append(ID_LAYERS, "&Layers…", "Add, rename, reorder, show or hide layers, and choose where new shapes land.", ItemKind::Normal);
 	design.append(ID_ANIMATION, "Anim&ation…", "Build a film from frames of the canvas, each with its own duration.", ItemKind::Normal);
 	design.append(ID_DESCRIBE_AREA, "&Describe Area…", "Hear only the elements inside one part of the canvas.", ItemKind::Normal);
 	design.append(ID_VIEWABILITY, "&Viewability…", "Report how the design reads from a viewing angle: what is viewable, what is hidden behind something else, what is turned away, per depth.", ItemKind::Normal);
+	design.append(ID_RECOGNIZABILITY, "&Recognizability…", "How clearly someone else would recognize what you are creating, judged for this project's type: a rough guide from element counts, contrast and depth layering, not a measurement.", ItemKind::Normal);
 	design.append(ID_STATS, "&Project Statistics…", "How many layers, elements, palette colors and animation frames this project has.", ItemKind::Normal);
-	design.append(ID_PROJECT_OPTIONS, "Project &Options…", "Choose which sliders this project pins to its Sliders tab, what the color adjustments act on, how far Page Up and Page Down jump, and load the starter colors.", ItemKind::Normal);
+	design.append(ID_PROJECT_OPTIONS, "Project &Options…", "Choose which sliders this project pins to its Sliders tab, what the color adjustments act on, how far Page Up and Page Down jump, grayscale start, and load the starter colors or the gray ramp.", ItemKind::Normal);
+	design.append(ID_SETUP_WIZARD, "Setup &Wizard…", "State (or restate) this project's goal through the wizard: what you want to create or build, and its focus questions — any answer may be left with no fixed answer.", ItemKind::Normal);
+	design.append(ID_COLOR_TREATMENT, "Apply Colour &Treatment…", "Grayscale start's second half: give the grayscale shapes of one layer, or of a whole depth, the palette colours in paint order. Locked shapes stay grayscale.", ItemKind::Normal);
 	design.append_separator();
 	design.append(ID_SAVE_BRUSH, "Save Current Br&ush…", "Keep the current brush — width, color, pattern — in the brush library under a name.", ItemKind::Normal);
 	design.append(ID_BRUSHES, "Brush Li&brary…", "The saved brushes; apply one to make it current for new strokes.", ItemKind::Normal);
@@ -5339,6 +6396,11 @@ fn main() {
 			scale_base: None,
 			channel_run: None,
 			lists_side_by_side: false,
+			// A new project has no goal yet (the setup wizard
+			// states one), and starts in grayscale: form first,
+			// colour treatment later.
+			goal: None,
+			grayscale_start: true,
 		}));
 		let win = Rc::new(Win {
 			frame,
@@ -5366,6 +6428,10 @@ fn main() {
 			let state = shared.borrow();
 			refresh_lists(&win, &state);
 		}
+		frame.set_status_text(
+			"A new project: grayscale start is on — colors come later, per part, layer, or depth. File, New with Wizard states a goal and seeds the canvas.",
+			0,
+		);
 
 		wire_palette_list(&win, &shared);
 		wire_elements_list(&win, &shared);

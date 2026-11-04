@@ -210,6 +210,97 @@ impl Drawing {
 		));
 		out
 	}
+
+	/// One element's stack: what is painted over it, what it is
+	/// painted over, and what sits beneath it all — the element
+	/// wizard's first step. The element is named by its flat
+	/// index (the elements list's numbering, over every layer).
+	/// Only visible layers paint, so only they stack; an element
+	/// on a hidden layer gets that said about it instead. The
+	/// maths is the same honest box maths as the report above:
+	/// overlaps are box overlaps, in paint order.
+	pub fn stack_report(&self, flat: usize) -> Option<String> {
+		// Locate the element over every layer, hidden included.
+		let (mut rest, mut target) = (flat, None);
+		for (li, layer) in self.layers.iter().enumerate() {
+			if rest < layer.shapes.len() {
+				target = Some((li, rest));
+				break;
+			}
+			rest -= layer.shapes.len();
+		}
+		let (tli, tsi) = target?;
+		let tlayer = &self.layers[tli];
+		let tshape = &tlayer.shapes[tsi];
+		let head = format!(
+			"{} on layer \"{}\".\n",
+			self.plain_of(tshape),
+			tlayer.name
+		);
+		if !tlayer.visible {
+			return Some(format!(
+				"{head}Layer \"{}\" is hidden, so this element does not paint: nothing is stacked over or under it until the layer is shown.\n",
+				tlayer.name
+			));
+		}
+		// The painting stack: visible layers' elements in paint
+		// order, with the target's place in it.
+		let mut stack: Vec<&Shape> = Vec::new();
+		let mut at = 0usize;
+		for layer in &self.layers {
+			if !layer.visible {
+				continue;
+			}
+			for shape in &layer.shapes {
+				if std::ptr::eq(shape, tshape) {
+					at = stack.len();
+				}
+				stack.push(shape);
+			}
+		}
+		let my_box = element_box(tshape);
+		let mut over: Vec<String> = Vec::new();
+		for later in &stack[at + 1..] {
+			let cover = coverage_fraction(element_box(later), my_box);
+			if cover > 0.0 {
+				over.push(format!(
+					"{} (covers about {:.0} percent of it)",
+					self.plain_of(later),
+					cover * 100.0
+				));
+			}
+		}
+		let mut under: Vec<String> = Vec::new();
+		for earlier in &stack[..at] {
+			let covered = coverage_fraction(my_box, element_box(earlier));
+			if covered > 0.0 {
+				under.push(format!(
+					"{} (it covers about {:.0} percent of that)",
+					self.plain_of(earlier),
+					covered * 100.0
+				));
+			}
+		}
+		let mut out = head;
+		if over.is_empty() {
+			out.push_str("Painted over it: nothing — it is on top of everything it touches.\n");
+		} else {
+			out.push_str(&format!("Painted over it: {}.\n", over.join("; ")));
+		}
+		if under.is_empty() {
+			out.push_str(
+				"Painted under it: nothing — beneath it is the design background itself.\n",
+			);
+		} else {
+			out.push_str(&format!("Painted under it: {}.\n", under.join("; ")));
+		}
+		out.push_str(&format!(
+			"It is element {} of {} in the painting order.\n",
+			at + 1,
+			stack.len()
+		));
+		Some(out)
+	}
 }
 
 #[cfg(test)]
@@ -308,6 +399,27 @@ mod tests {
 		// Band membership is by role: unassigned is no band's member.
 		assert!(!DepthBand::Background.includes(DepthRole::Unassigned));
 		assert!(DepthBand::All.includes(DepthRole::Unassigned));
+	}
+
+	#[test]
+	fn stack_report_names_over_and_under() {
+		let mut d = Drawing::new(200, 200, Srgb::WHITE);
+		d.add_shape(0, rect(0, 0, 100, 100)); // bottom
+		d.add_shape(0, rect(0, 0, 100, 100)); // middle: fully covered, fully covering
+		d.add_shape(0, rect(0, 0, 50, 100)); // top: covers half of those below
+		let mid = d.stack_report(1).unwrap();
+		assert!(mid.contains("covers about 50 percent of it"), "{mid}");
+		assert!(mid.contains("it covers about 100 percent of that"), "{mid}");
+		assert!(mid.contains("element 2 of 3"), "{mid}");
+		let bottom = d.stack_report(0).unwrap();
+		assert!(bottom.contains("Painted under it: nothing"), "{bottom}");
+		let top = d.stack_report(2).unwrap();
+		assert!(top.contains("Painted over it: nothing"), "{top}");
+		assert!(d.stack_report(3).is_none());
+		// A hidden layer's element does not stack at all.
+		d.set_layer_visible(0, false);
+		let hidden = d.stack_report(0).unwrap();
+		assert!(hidden.contains("does not paint"), "{hidden}");
 	}
 
 	#[test]

@@ -1,6 +1,6 @@
 [package]
 name = "blind-designer"
-version = "0.18.0"
+version = "0.19.0"
 edition.workspace = true
 license.workspace = true
 
@@ -11,7 +11,16 @@ shipfitter = { version = "*", features = ["windows-resources"] }
 
 [dependencies]
 chroma-core = { path = "../chroma-core" }
-wxdragon = "*"
+# default-features = false for exactly one reason: wxdragon's
+# defaults include wx-asserts, which builds wxWidgets with
+# its internal consistency checks live — every failed check
+# becomes a modal "debugging check" dialog for the end user,
+# even in release builds (the class removed in
+# Accessible-IPTV-Client-Rust v0.4.19). Release wx builds
+# compile those checks out, as wxPython ships. Every other
+# default is re-enabled explicitly, so the ONLY build change
+# is the asserts.
+wxdragon = { version = "*", default-features = false, features = ["wx-printing", "wx-tiff", "wx-jpeg", "wx-tango-icons", "wx-extra-image-formats", "wx-regex", "appindicator"] }
 quiet-list = "*"
 image = { version = "*", default-features = false, features = ["png", "jpeg", "webp"] }
 # Blocking HTTP for the feed-snapshot embed: one GET, no runtime.

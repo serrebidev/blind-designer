@@ -4,6 +4,21 @@ Readable release history for Blind Designer (renamed from Transversion at 0.2.0)
 section is its GitHub release note, taken from this file by the release
 workflow.
 
+## 0.19.0
+
+- No more "debugging check" dialogs. The interface library
+  was being built with its developer consistency checks
+  switched on, so an internal check a shipped build is
+  supposed to skip could stop the app with a dialog. It is
+  now built the way release builds are meant to be, with
+  those checks compiled out — the same fix as the other
+  apps.
+- Escape now cancels every dialog. Before, Escape did
+  nothing in the app's dialogs (their buttons are not the
+  standard kind the toolkit looks for), so there was no
+  keyboard way out without choosing something. Escape now
+  works like Cancel everywhere.
+
 ## 0.18.0
 
 - One interaction surface at a time, per project (Elshara's

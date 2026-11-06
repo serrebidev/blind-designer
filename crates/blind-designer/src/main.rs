@@ -586,6 +586,25 @@ struct Win {
 
 type Shared = Rc<RefCell<State>>;
 
+
+/// Escape cancels a dialog, the way a standard Cancel
+/// button would. These dialogs' buttons are closures, not
+/// the standard ids wx looks for, so without this binding
+/// Escape does nothing at all (Brandon's cross-app report,
+/// 2026-11-06; the same fix as Accessible-IPTV-Client-Rust
+/// v0.4.21). `CHAR_HOOK` on the dialog itself fires
+/// whatever control holds focus.
+fn bind_escape_cancel(dialog: Dialog) {
+	dialog.bind_internal(EventType::CHAR_HOOK, move |event| {
+		if event.get_key_code() == Some(27) {
+			dialog.end_modal(ID_CANCEL);
+			event.skip(false);
+		} else {
+			event.skip(true);
+		}
+	});
+}
+
 fn palette_rows(state: &State) -> Vec<(usize, String)> {
 	state
 		.palette
@@ -2462,6 +2481,7 @@ fn locked_suffix(locked: usize) -> String {
 fn project_options_dialog(win: &Rc<Win>, shared: &Shared) {
 	let frame = win.frame;
 	let dialog = Dialog::builder(&frame, "Project Options").with_size(560, 640).build();
+	bind_escape_cancel(dialog);
 	let sizer = BoxSizer::builder(Orientation::Vertical).build();
 	let pins_label = StaticText::builder(&dialog)
 		.with_label("Sliders pinned to this project's Sliders tab (check the ones to keep; with none checked, the tab shows every slider)")
@@ -2660,6 +2680,7 @@ fn numbers_dialog(
 	fields: &[(&str, i32, i32, i32)],
 ) -> Option<Vec<i32>> {
 	let dialog = Dialog::builder(parent, title).build();
+	bind_escape_cancel(dialog);
 	let sizer = BoxSizer::builder(Orientation::Vertical).build();
 	let mut spins: Vec<SpinCtrl> = Vec::new();
 	for (label, min, max, value) in fields {
@@ -2709,6 +2730,7 @@ fn file_dialog(parent: &Frame, message: &str, wildcard: &str, save: bool) -> Opt
 /// One line of text, asked modally. `None` on cancel.
 fn text_dialog(parent: &Frame, title: &str, label: &str, value: &str) -> Option<String> {
 	let dialog = Dialog::builder(parent, title).build();
+	bind_escape_cancel(dialog);
 	let sizer = BoxSizer::builder(Orientation::Vertical).build();
 	let text = StaticText::builder(&dialog).with_label(label).build();
 	let field = TextCtrl::builder(&dialog).build();
@@ -2743,6 +2765,7 @@ fn fields_dialog(
 	fields: &[(&str, &str)],
 ) -> Option<Vec<String>> {
 	let dialog = Dialog::builder(parent, title).build();
+	bind_escape_cancel(dialog);
 	let sizer = BoxSizer::builder(Orientation::Vertical).build();
 	let mut inputs: Vec<TextCtrl> = Vec::new();
 	for (label, value) in fields {
@@ -2940,6 +2963,7 @@ fn layer_rows(state: &State) -> Vec<(usize, String)> {
 fn layers_dialog(win: &Win, shared: &Shared) {
 	let frame = win.frame;
 	let dialog = Dialog::builder(&frame, "Layers").build();
+	bind_escape_cancel(dialog);
 	let sizer = BoxSizer::builder(Orientation::Vertical).build();
 	let list = QuietList::new(&dialog, "Layers");
 	sizer.add(&list, 1, SizerFlag::Expand | SizerFlag::All, 5);
@@ -3135,6 +3159,7 @@ fn frame_rows(state: &State) -> Vec<(usize, String)> {
 fn animation_dialog(win: &Win, shared: &Shared) {
 	let frame = win.frame;
 	let dialog = Dialog::builder(&frame, "Animation").build();
+	bind_escape_cancel(dialog);
 	let sizer = BoxSizer::builder(Orientation::Vertical).build();
 	let list = QuietList::new(&dialog, "Animation frames");
 	sizer.add(&list, 1, SizerFlag::Expand | SizerFlag::All, 5);
@@ -3315,6 +3340,7 @@ fn element_rows(state: &State) -> Vec<(usize, String)> {
 fn elements_dialog(win: &Win, shared: &Shared) {
 	let frame = win.frame;
 	let dialog = Dialog::builder(&frame, "Elements").build();
+	bind_escape_cancel(dialog);
 	let sizer = BoxSizer::builder(Orientation::Vertical).build();
 	let list = QuietList::new(&dialog, "Elements");
 	sizer.add(&list, 1, SizerFlag::Expand | SizerFlag::All, 5);
@@ -3543,6 +3569,7 @@ fn elements_dialog(win: &Win, shared: &Shared) {
 fn brushes_dialog(win: &Win, shared: &Shared) {
 	let frame = win.frame;
 	let dialog = Dialog::builder(&frame, "Brush Library").build();
+	bind_escape_cancel(dialog);
 	let sizer = BoxSizer::builder(Orientation::Vertical).build();
 	let list = QuietList::new(&dialog, "Brush library");
 	sizer.add(&list, 1, SizerFlag::Expand | SizerFlag::All, 5);
@@ -3616,6 +3643,7 @@ fn brushes_dialog(win: &Win, shared: &Shared) {
 fn dictionary_dialog(win: &Win) {
 	let frame = win.frame;
 	let dialog = Dialog::builder(&frame, "Design Terms Dictionary").with_size(560, 480).build();
+	bind_escape_cancel(dialog);
 	let sizer = BoxSizer::builder(Orientation::Vertical).build();
 	let search_label = StaticText::builder(&dialog).with_label("Search terms").build();
 	let search_field = TextCtrl::builder(&dialog).build();
@@ -3701,6 +3729,7 @@ fn dictionary_dialog(win: &Win) {
 fn help_dialog(win: &Win) {
 	let frame = win.frame;
 	let dialog = Dialog::builder(&frame, "Help and Worked Examples").with_size(640, 520).build();
+	bind_escape_cancel(dialog);
 	let sizer = BoxSizer::builder(Orientation::Vertical).build();
 	let label = StaticText::builder(&dialog).with_label("Help and worked examples").build();
 	sizer.add(&label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
@@ -3727,6 +3756,7 @@ fn help_dialog(win: &Win) {
 fn report_dialog(win: &Win, title: &str, label: &str, text: &str) {
 	let frame = win.frame;
 	let dialog = Dialog::builder(&frame, title).with_size(680, 540).build();
+	bind_escape_cancel(dialog);
 	let sizer = BoxSizer::builder(Orientation::Vertical).build();
 	let caption = StaticText::builder(&dialog).with_label(label).build();
 	sizer.add(&caption, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
@@ -3976,6 +4006,7 @@ fn search_dialog(win: &Rc<Win>, shared: &Shared) {
 	let frame = win.frame;
 	let dialog =
 		Dialog::builder(&frame, "Search and Insert").with_size(620, 560).build();
+	bind_escape_cancel(dialog);
 	let sizer = BoxSizer::builder(Orientation::Vertical).build();
 	let search_label = StaticText::builder(&dialog).with_label("Search for").build();
 	let field = TextCtrl::builder(&dialog).build();
@@ -4097,6 +4128,7 @@ fn pattern_dialog(win: &Rc<Win>, shared: &Shared, preselect: Option<&str>) {
 		.position(|c| *c == background)
 		.unwrap_or(if colors.len() > 1 { 1 } else { 0 });
 	let dialog = Dialog::builder(&frame, "New from Pattern").build();
+	bind_escape_cancel(dialog);
 	let sizer = BoxSizer::builder(Orientation::Vertical).build();
 	let kind_label = StaticText::builder(&dialog).with_label("Pattern").build();
 	sizer.add(&kind_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
@@ -4189,6 +4221,7 @@ fn pattern_dialog(win: &Rc<Win>, shared: &Shared, preselect: Option<&str>) {
 fn viewability_dialog(win: &Win, shared: &Shared) {
 	let frame = win.frame;
 	let dialog = Dialog::builder(&frame, "Viewability").build();
+	bind_escape_cancel(dialog);
 	let sizer = BoxSizer::builder(Orientation::Vertical).build();
 	let angle_label = StaticText::builder(&dialog)
 		.with_label("Viewing angle in degrees (0 is straight on from the front)")
@@ -4269,6 +4302,7 @@ struct Wizard {
 impl Wizard {
 	fn new(frame: &Frame, title: &str) -> Rc<Wizard> {
 		let dialog = Dialog::builder(frame, title).with_size(680, 560).build();
+		bind_escape_cancel(dialog);
 		let sizer = BoxSizer::builder(Orientation::Vertical).build();
 		let header = StaticText::builder(&dialog).with_label("Step 1 of 1").build();
 		sizer.add(&header, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
@@ -5167,6 +5201,7 @@ fn color_treatment_dialog(win: &Rc<Win>, shared: &Shared) {
 		v
 	};
 	let dialog = Dialog::builder(&frame, "Apply Colour Treatment").build();
+	bind_escape_cancel(dialog);
 	let sizer = BoxSizer::builder(Orientation::Vertical).build();
 	let label = StaticText::builder(&dialog)
 		.with_label("Give the grayscale shapes in this scope the palette colours, in paint order")
@@ -5239,6 +5274,7 @@ fn scheme_settings_dialog(win: &Win, shared: &Shared) {
 		(state.wheel_ryb, state.scheme_spread)
 	};
 	let dialog = Dialog::builder(&frame, "Scheme Settings").build();
+	bind_escape_cancel(dialog);
 	let sizer = BoxSizer::builder(Orientation::Vertical).build();
 	let wheel_label = StaticText::builder(&dialog).with_label("Harmony wheel").build();
 	sizer.add(&wheel_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
@@ -5292,6 +5328,7 @@ fn scheme_settings_dialog(win: &Win, shared: &Shared) {
 fn color_tools_dialog(win: &Rc<Win>, shared: &Shared) {
 	let frame = win.frame;
 	let dialog = Dialog::builder(&frame, "Color Tools").with_size(640, 560).build();
+	bind_escape_cancel(dialog);
 	let sizer = BoxSizer::builder(Orientation::Vertical).build();
 	let first_label = StaticText::builder(&dialog).with_label("First color").build();
 	sizer.add(&first_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
@@ -5579,6 +5616,7 @@ fn template_rows() -> Vec<(usize, String)> {
 fn templates_dialog(win: &Rc<Win>, shared: &Shared) {
 	let frame = win.frame;
 	let dialog = Dialog::builder(&frame, "New from Template").build();
+	bind_escape_cancel(dialog);
 	let sizer = BoxSizer::builder(Orientation::Vertical).build();
 	let list = QuietList::new(&dialog, "Templates");
 	sizer.add(&list, 1, SizerFlag::Expand | SizerFlag::All, 5);
@@ -5641,6 +5679,7 @@ fn templates_dialog(win: &Rc<Win>, shared: &Shared) {
 fn symbols_dialog(win: &Win, shared: &Shared) {
 	let frame = win.frame;
 	let dialog = Dialog::builder(&frame, "Add Symbol").build();
+	bind_escape_cancel(dialog);
 	let sizer = BoxSizer::builder(Orientation::Vertical).build();
 	let list = QuietList::new(&dialog, "Symbols");
 	sizer.add(&list, 1, SizerFlag::Expand | SizerFlag::All, 5);
@@ -5825,6 +5864,7 @@ fn replacement_variables_dialog(win: &Rc<Win>, shared: &Shared) {
 		return;
 	}
 	let dialog = Dialog::builder(&frame, "Replacement Variables").build();
+	bind_escape_cancel(dialog);
 	let sizer = BoxSizer::builder(Orientation::Vertical).build();
 	let intro = StaticText::builder(&dialog)
 		.with_label("Give each variable a value. Leave a field empty to leave that token as it is.")
@@ -6123,6 +6163,7 @@ fn draw_pointer_dialog(win: &Rc<Win>, shared: &Shared) {
 		canvas_h,
 	}));
 	let dialog = Dialog::builder(&frame, "Draw with Pointer").build();
+	bind_escape_cancel(dialog);
 	let sizer = BoxSizer::builder(Orientation::Vertical).build();
 	let intro = StaticText::builder(&dialog)
 		.with_label("Press and drag to draw one stroke. Keys: 1 to 9 set the brush width, C cycles the brush colour, Escape cancels.")
@@ -6344,6 +6385,7 @@ fn text_rows(state: &State) -> Vec<(usize, String)> {
 fn text_studio_dialog(win: &Rc<Win>, shared: &Shared) {
 	let frame = win.frame;
 	let dialog = Dialog::builder(&frame, "Text Studio").with_size(640, 720).build();
+	bind_escape_cancel(dialog);
 	let sizer = BoxSizer::builder(Orientation::Vertical).build();
 	let list_label = StaticText::builder(&dialog).with_label("Text elements").build();
 	sizer.add(&list_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
@@ -6646,6 +6688,7 @@ fn embed_feed_dialog(win: &Rc<Win>, shared: &Shared) {
 fn embed_paste_dialog(win: &Rc<Win>, shared: &Shared) {
 	let frame = win.frame;
 	let dialog = Dialog::builder(&frame, "Embed Pasted Post").with_size(560, 420).build();
+	bind_escape_cancel(dialog);
 	let sizer = BoxSizer::builder(Orientation::Vertical).build();
 	let label = StaticText::builder(&dialog)
 		.with_label("Paste the post or text here")

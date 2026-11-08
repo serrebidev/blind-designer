@@ -20,6 +20,8 @@
 //! ponytail: index matching by design — upgrade path is identity
 //! tracking if shapes ever gain stable ids.
 
+use patois::t;
+
 use crate::design::{Design, Shape, ShapeKind};
 use crate::drawing::{Drawing, Event, Layer};
 use crate::{color_words, Srgb};
@@ -63,7 +65,6 @@ impl Frame {
 		}
 		design
 	}
-
 }
 
 impl Drawing {
@@ -151,10 +152,9 @@ impl Drawing {
 			frame.duration_ms = duration_ms;
 		}
 		let count = self.frames.len();
-		self.log_slider_event(
-			Event::AllFramesDurationSet { count, duration_ms },
-			|e| matches!(e, Event::AllFramesDurationSet { .. }),
-		);
+		self.log_slider_event(Event::AllFramesDurationSet { count, duration_ms }, |e| {
+			matches!(e, Event::AllFramesDurationSet { .. })
+		});
 		true
 	}
 
@@ -245,18 +245,23 @@ impl Drawing {
 			self.frames.len()
 		};
 		let total = self.total_duration_ms();
-		let mut out = format!(
-			"Animation description: {} frame{}, total running time {} milliseconds ({:.1} seconds).\n",
-			count,
-			if count == 1 { "" } else { "s" },
-			total,
-			total as f64 / 1000.0
-		);
+		let mut out = t(
+			"Animation description: %s frame%s, total running time %s milliseconds (%s seconds).\n",
+		)
+		.replacen("%s", &(count).to_string(), 1)
+		.replacen("%s", if count == 1 { "" } else { "s" }, 1)
+		.replacen("%s", &(total).to_string(), 1)
+		.replacen("%s", &format!("{:.1}", total as f64 / 1000.0), 1);
 		for (i, ms) in self.frame_durations().iter().enumerate() {
 			let what = self
 				.frame_change_description(i)
 				.unwrap_or_else(|| "nothing".to_string());
-			out.push_str(&format!("Frame {} ({ms} milliseconds): {what}\n", i + 1));
+			out.push_str(
+				&t("Frame %s (%s milliseconds): %s\n")
+					.replacen("%s", &(i + 1).to_string(), 1)
+					.replacen("%s", &(ms).to_string(), 1)
+					.replacen("%s", &(what).to_string(), 1),
+			);
 		}
 		out
 	}
@@ -269,16 +274,16 @@ impl Drawing {
 		let mut buf: Vec<u8> = Vec::new();
 		{
 			let mut encoder = GifEncoder::new(&mut buf);
-			encoder
-				.set_repeat(Repeat::Infinite)
-				.map_err(|e| format!("the GIF would not start looping: {e}"))?;
+			encoder.set_repeat(Repeat::Infinite).map_err(|e| {
+				t("the GIF would not start looping: %s").replacen("%s", &(e).to_string(), 1)
+			})?;
 			for (design, ms) in self.frame_designs().iter().zip(self.frame_durations()) {
 				let rgba = image::DynamicImage::ImageRgb8(design.render()).to_rgba8();
 				let frame =
 					image::Frame::from_parts(rgba, 0, 0, image::Delay::from_numer_denom_ms(ms, 1));
-				encoder
-					.encode_frame(frame)
-					.map_err(|e| format!("a frame would not encode as GIF: {e}"))?;
+				encoder.encode_frame(frame).map_err(|e| {
+					t("a frame would not encode as GIF: %s").replacen("%s", &(e).to_string(), 1)
+				})?;
 			}
 		}
 		Ok(buf)
@@ -291,31 +296,32 @@ impl Drawing {
 fn describe_contents(width: u32, height: u32, frame: &Frame) -> String {
 	let design = frame.flatten(width, height);
 	if design.shapes.is_empty() {
-		return format!("a blank {} canvas", color_words(frame.background));
+		return t("a blank %s canvas").replacen(
+			"%s",
+			&(color_words(frame.background)).to_string(),
+			1,
+		);
 	}
 	let parts: Vec<String> = design
 		.shapes
 		.iter()
 		.map(|s| design.describe_plain(s))
 		.collect();
-	format!(
-		"{} on a {} background",
-		parts.join("; "),
-		color_words(frame.background)
-	)
+	t("%s on a %s background")
+		.replacen("%s", &(parts.join("; ")).to_string(), 1)
+		.replacen("%s", &(color_words(frame.background)).to_string(), 1)
 }
 
 /// A short name for a shape in change sentences: "red ellipse",
 /// "blue stroke", "text \"Hi\"", "image photo.png".
 fn shape_label(shape: &Shape) -> String {
 	match shape.kind {
-		ShapeKind::Text => format!("text \"{}\"", shape.text),
-		ShapeKind::Image => {
-			format!(
-				"image {}",
-				crate::design::image_file_name(&shape.image_path)
-			)
-		}
+		ShapeKind::Text => t("text \"%s\"").replacen("%s", &(shape.text).to_string(), 1),
+		ShapeKind::Image => t("image %s").replacen(
+			"%s",
+			&(crate::design::image_file_name(&shape.image_path)).to_string(),
+			1,
+		),
 		kind => format!("{} {}", color_words(shape.fill), kind.name()),
 	}
 }
@@ -344,39 +350,45 @@ fn shapes_equal(a: &Shape, b: &Shape) -> bool {
 fn describe_shape_change(width: u32, height: u32, bg: Srgb, a: &Shape, b: &Shape) -> String {
 	let mut parts: Vec<String> = Vec::new();
 	if a.kind != b.kind {
-		return format!("the {} is replaced by a {}", shape_label(a), shape_label(b));
+		return t("the %s is replaced by a %s")
+			.replacen("%s", &(shape_label(a)).to_string(), 1)
+			.replacen("%s", &(shape_label(b)).to_string(), 1);
 	}
 	let (dx, dy) = (b.x - a.x, b.y - a.y);
 	if dx != 0 || dy != 0 {
 		let mut moves: Vec<String> = Vec::new();
 		if dx > 0 {
-			moves.push(format!("right {dx} pixels"));
+			moves.push(t("right %s pixels").replacen("%s", &(dx).to_string(), 1));
 		} else if dx < 0 {
-			moves.push(format!("left {} pixels", -dx));
+			moves.push(t("left %s pixels").replacen("%s", &(-dx).to_string(), 1));
 		}
 		if dy > 0 {
-			moves.push(format!("down {dy} pixels"));
+			moves.push(t("down %s pixels").replacen("%s", &(dy).to_string(), 1));
 		} else if dy < 0 {
-			moves.push(format!("up {} pixels", -dy));
+			moves.push(t("up %s pixels").replacen("%s", &(-dy).to_string(), 1));
 		}
-		parts.push(format!("moves {}", moves.join(" and ")));
+		parts.push(t("moves %s").replacen("%s", &(moves.join(" and ")).to_string(), 1));
 	} else if a.points != b.points && a.kind == ShapeKind::Stroke {
-		parts.push("is redrawn along a new path".to_string());
+		parts.push(t("is redrawn along a new path"));
 	}
 	if (a.w, a.h) != (b.w, b.h) {
-		parts.push(format!("resizes to {} by {} pixels", b.w, b.h));
+		parts.push(
+			t("resizes to %s by %s pixels")
+				.replacen("%s", &(b.w).to_string(), 1)
+				.replacen("%s", &(b.h).to_string(), 1),
+		);
 	}
 	if a.angle != b.angle {
-		parts.push(format!("rotates to {} degrees", b.angle));
+		parts.push(t("rotates to %s degrees").replacen("%s", &(b.angle).to_string(), 1));
 	}
 	if a.fill != b.fill {
-		parts.push(format!("changes color to {}", color_words(b.fill)));
+		parts.push(t("changes color to %s").replacen("%s", &(color_words(b.fill)).to_string(), 1));
 	}
 	if a.kind == ShapeKind::Text && a.text != b.text {
-		parts.push(format!("now reads \"{}\"", b.text));
+		parts.push(t("now reads \"%s\"").replacen("%s", &(b.text).to_string(), 1));
 	}
 	if a.caption != b.caption {
-		parts.push("gets a new caption".to_string());
+		parts.push(t("gets a new caption"));
 	}
 	if parts.is_empty() {
 		// Some field the sentences above do not single out changed
@@ -388,13 +400,13 @@ fn describe_shape_change(width: u32, height: u32, bg: Srgb, a: &Shape, b: &Shape
 			background: bg,
 			shapes: Vec::new(),
 		};
-		return format!(
-			"the {} changes: now {}",
-			shape_label(a),
-			design.describe_plain(b)
-		);
+		return t("the %s changes: now %s")
+			.replacen("%s", &(shape_label(a)).to_string(), 1)
+			.replacen("%s", &(design.describe_plain(b)).to_string(), 1);
 	}
-	format!("the {} {}", shape_label(a), parts.join(" and "))
+	t("the %s %s")
+		.replacen("%s", &(shape_label(a)).to_string(), 1)
+		.replacen("%s", &(parts.join(" and ")).to_string(), 1)
 }
 
 /// What changed between two frames, in one line: changes joined by
@@ -402,42 +414,47 @@ fn describe_shape_change(width: u32, height: u32, bg: Srgb, a: &Shape, b: &Shape
 fn describe_diff(width: u32, height: u32, prev: &Frame, curr: &Frame) -> String {
 	let mut changes: Vec<String> = Vec::new();
 	if prev.background != curr.background {
-		changes.push(format!(
-			"the background changes from {} to {}",
-			color_words(prev.background),
-			color_words(curr.background)
-		));
+		changes.push(
+			t("the background changes from %s to %s")
+				.replacen("%s", &(color_words(prev.background)).to_string(), 1)
+				.replacen("%s", &(color_words(curr.background)).to_string(), 1),
+		);
 	}
 	let design = curr.flatten(width, height);
 	for (li, layer) in curr.layers.iter().enumerate() {
 		let Some(before) = prev.layers.get(li) else {
-			changes.push(format!(
-				"layer \"{}\" is added with {} shapes",
-				layer.name,
-				layer.shapes.len()
-			));
+			changes.push(
+				t("layer \"%s\" is added with %s shapes")
+					.replacen("%s", &(layer.name).to_string(), 1)
+					.replacen("%s", &(layer.shapes.len()).to_string(), 1),
+			);
 			continue;
 		};
 		if before.name != layer.name {
-			changes.push(format!(
-				"layer \"{}\" is renamed to \"{}\"",
-				before.name, layer.name
-			));
+			changes.push(
+				t("layer \"%s\" is renamed to \"%s\"")
+					.replacen("%s", &(before.name).to_string(), 1)
+					.replacen("%s", &(layer.name).to_string(), 1),
+			);
 		}
 		if before.visible != layer.visible {
-			changes.push(format!(
-				"layer \"{}\" is {}",
-				layer.name,
-				if layer.visible { "shown" } else { "hidden" }
-			));
+			changes.push(
+				t("layer \"%s\" is %s")
+					.replacen("%s", &(layer.name).to_string(), 1)
+					.replacen(
+						"%s",
+						if layer.visible { "shown" } else { "hidden" },
+						1,
+					),
+			);
 		}
 		for (si, shape) in layer.shapes.iter().enumerate() {
 			match before.shapes.get(si) {
-				None => changes.push(format!(
-					"a new shape appears on layer \"{}\": {}",
-					layer.name,
-					design.describe_plain(shape)
-				)),
+				None => changes.push(
+					t("a new shape appears on layer \"%s\": %s")
+						.replacen("%s", &(layer.name).to_string(), 1)
+						.replacen("%s", &(design.describe_plain(shape)).to_string(), 1),
+				),
 				Some(old) if !shapes_equal(old, shape) => {
 					changes.push(describe_shape_change(
 						width,
@@ -451,18 +468,18 @@ fn describe_diff(width: u32, height: u32, prev: &Frame, curr: &Frame) -> String 
 			}
 		}
 		for gone in before.shapes.iter().skip(layer.shapes.len()) {
-			changes.push(format!(
-				"the {} on layer \"{}\" disappears",
-				shape_label(gone),
-				layer.name
-			));
+			changes.push(
+				t("the %s on layer \"%s\" disappears")
+					.replacen("%s", &(shape_label(gone)).to_string(), 1)
+					.replacen("%s", &(layer.name).to_string(), 1),
+			);
 		}
 	}
 	for gone in prev.layers.iter().skip(curr.layers.len()) {
-		changes.push(format!("layer \"{}\" is removed", gone.name));
+		changes.push(t("layer \"%s\" is removed").replacen("%s", &(gone.name).to_string(), 1));
 	}
 	if changes.is_empty() {
-		"no change from the previous frame".to_string()
+		t("no change from the previous frame")
 	} else {
 		changes.join("; ")
 	}

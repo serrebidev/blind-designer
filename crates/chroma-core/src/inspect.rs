@@ -13,6 +13,8 @@
 //! of the elements list: layer 1's shapes first, then layer
 //! 2's, in paint order.
 
+use patois::t;
+
 use crate::design::ShapeKind;
 use crate::drawing::{DepthRole, Drawing};
 use crate::palette::PaletteColor;
@@ -33,9 +35,18 @@ fn locate(drawing: &Drawing, mut flat: usize) -> Option<(usize, usize)> {
 /// are snapshots, so identity is positional: the frame's layer
 /// at the same place holds a shape at the same place with the
 /// same kind, box, color, angle and words.
-fn frame_holds(frame: &crate::animation::Frame, li: usize, si: usize, shape: &crate::design::Shape) -> bool {
-	let Some(layer) = frame.layers.get(li) else { return false };
-	let Some(copy) = layer.shapes.get(si) else { return false };
+fn frame_holds(
+	frame: &crate::animation::Frame,
+	li: usize,
+	si: usize,
+	shape: &crate::design::Shape,
+) -> bool {
+	let Some(layer) = frame.layers.get(li) else {
+		return false;
+	};
+	let Some(copy) = layer.shapes.get(si) else {
+		return false;
+	};
 	copy.kind == shape.kind
 		&& copy.x == shape.x
 		&& copy.y == shape.y
@@ -57,112 +68,135 @@ pub fn inspect_shape(drawing: &Drawing, flat: usize) -> Option<String> {
 	// What it is.
 	out.push_str(&format!("{}\n", drawing.plain_of(shape)));
 	if let Some(caption) = &shape.caption {
-		out.push_str(&format!("Its caption: \"{caption}\".\n"));
+		out.push_str(&t("Its caption: \"%s\".\n").replacen("%s", &(caption).to_string(), 1));
 	}
-	out.push_str(&format!(
-		"It is element {} of {} on layer \"{}\", {} by {} pixels at {}, {}.\n",
-		si + 1,
-		layer.shapes.len(),
-		layer.name,
-		shape.w,
-		shape.h,
-		shape.x,
-		shape.y
-	));
+	out.push_str(
+		&t("It is element %s of %s on layer \"%s\", %s by %s pixels at %s, %s.\n")
+			.replacen("%s", &(si + 1).to_string(), 1)
+			.replacen("%s", &(layer.shapes.len()).to_string(), 1)
+			.replacen("%s", &(layer.name).to_string(), 1)
+			.replacen("%s", &(shape.w).to_string(), 1)
+			.replacen("%s", &(shape.h).to_string(), 1)
+			.replacen("%s", &(shape.x).to_string(), 1)
+			.replacen("%s", &(shape.y).to_string(), 1),
+	);
 	if shape.angle != 0.0 {
-		out.push_str(&format!("It is turned {} degrees.\n", shape.angle));
+		out.push_str(&t("It is turned %s degrees.\n").replacen(
+			"%s",
+			&(shape.angle).to_string(),
+			1,
+		));
 	}
 	match shape.kind {
 		ShapeKind::Rectangle if shape.corner > 0 => {
-			out.push_str(&format!(
-				"Its corners are {} percent rounded (0 is sharp, 50 is fully rounded).\n",
-				shape.corner
-			));
+			out.push_str(
+				&t("Its corners are %s percent rounded (0 is sharp, 50 is fully rounded).\n")
+					.replacen("%s", &(shape.corner).to_string(), 1),
+			);
 		}
 		ShapeKind::Stroke => {
-			out.push_str(&format!(
-				"It is drawn with a {} pixel brush{}.",
-				shape.brush,
-				if shape.pattern.is_empty() || shape.pattern == "solid" {
-					String::new()
-				} else {
-					format!(", {} pattern", shape.pattern)
-				}
-			));
+			out.push_str(
+				&t("It is drawn with a %s pixel brush%s.")
+					.replacen("%s", &(shape.brush).to_string(), 1)
+					.replacen(
+						"%s",
+						&(if shape.pattern.is_empty() || shape.pattern == "solid" {
+							String::new()
+						} else {
+							t(", %s pattern").replacen("%s", &shape.pattern, 1)
+						})
+						.to_string(),
+						1,
+					),
+			);
 			out.push('\n');
 		}
 		ShapeKind::Text => {
-			out.push_str(&format!(
-				"The words are set in {} at {} points.\n",
-				if shape.font.is_empty() { "the built-in font" } else { &shape.font },
-				shape.font_size
-			));
+			out.push_str(
+				&t("The words are set in %s at %s points.\n")
+					.replacen(
+						"%s",
+						if shape.font.is_empty() {
+							"the built-in font"
+						} else {
+							&shape.font
+						},
+						1,
+					)
+					.replacen("%s", &(shape.font_size).to_string(), 1),
+			);
 		}
 		ShapeKind::Image => {
-			out.push_str(&format!("The picture comes from the file {}.\n", shape.image_path));
+			out.push_str(&t("The picture comes from the file %s.\n").replacen(
+				"%s",
+				&(shape.image_path).to_string(),
+				1,
+			));
 		}
 		_ => {}
 	}
 	if shape.opacity < 100 {
-		out.push_str(&format!(
-			"It paints {} percent opaque, so what is beneath it shows through.\n",
-			shape.opacity
-		));
-	}
-	// Where it is used.
-	out.push_str(&format!(
-		"Layer \"{}\" is layer {} of {}{}.\n",
-		layer.name,
-		li + 1,
-		drawing.layers.len(),
-		if layer.depth == DepthRole::Unassigned {
-			String::new()
-		} else {
-			format!(", the {} of the design", layer.depth.name())
-		}
-	));
-	if layer.visible {
-		out.push_str("The layer is shown, so every export includes this element.\n");
-	} else {
 		out.push_str(
-			"The layer is hidden, so the exports leave this element out until the layer is shown.\n",
+			&t("It paints %s percent opaque, so what is beneath it shows through.\n").replacen(
+				"%s",
+				&(shape.opacity).to_string(),
+				1,
+			),
 		);
 	}
+	// Where it is used.
+	out.push_str(
+		&t("Layer \"%s\" is layer %s of %s%s.\n")
+			.replacen("%s", &(layer.name).to_string(), 1)
+			.replacen("%s", &(li + 1).to_string(), 1)
+			.replacen("%s", &(drawing.layers.len()).to_string(), 1)
+			.replacen(
+				"%s",
+				&(if layer.depth == DepthRole::Unassigned {
+					String::new()
+				} else {
+					t(", the %s of the design").replacen("%s", &layer.depth.name(), 1)
+				})
+				.to_string(),
+				1,
+			),
+	);
+	if layer.visible {
+		out.push_str(&t(
+			"The layer is shown, so every export includes this element.\n",
+		));
+	} else {
+		out.push_str(&t("The layer is hidden, so the exports leave this element out until the layer is shown.\n"));
+	}
 	if drawing.frames.is_empty() {
-		out.push_str("The design is a still picture; it has no animation frames.\n");
+		out.push_str(&t(
+			"The design is a still picture; it has no animation frames.\n",
+		));
 	} else {
 		let held = drawing
 			.frames
 			.iter()
 			.filter(|f| frame_holds(f, li, si, shape))
 			.count();
-		out.push_str(&format!(
-			"It appears in {held} of the animation's {} {} (frames are snapshots: a frame counts when its copy of this layer holds the same element in the same place).\n",
-			drawing.frames.len(),
-			plural("frame", drawing.frames.len())
-		));
+		out.push_str(&t("It appears in %s of the animation's %s %s (frames are snapshots: a frame counts when its copy of this layer holds the same element in the same place).\n").replacen("%s", &(held).to_string(), 1).replacen("%s", &(drawing.frames.len()).to_string(), 1).replacen("%s", &(plural("frame", drawing.frames.len())).to_string(), 1));
 	}
 	// What touches it.
 	if shape.locked {
-		out.push_str(
-			"It is LOCKED: the layer-wide and depth-wide color adjustments skip it, and bulk changes count it as stayed-the-same. Direct edits to it alone — move, resize, recolor, rename — still work.\n",
-		);
+		out.push_str(&t("It is LOCKED: the layer-wide and depth-wide color adjustments skip it, and bulk changes count it as stayed-the-same. Direct edits to it alone — move, resize, recolor, rename — still work.\n"));
 	} else {
-		out.push_str(&format!(
-			"It is dynamic (not locked): a color adjustment aimed at layer \"{}\" changes its color along with the layer's other unlocked elements",
-			layer.name
-		));
+		out.push_str(&t("It is dynamic (not locked): a color adjustment aimed at layer \"%s\" changes its color along with the layer's other unlocked elements").replacen("%s", &(layer.name).to_string(), 1));
 		if layer.depth != DepthRole::Unassigned {
-			out.push_str(&format!(
-				", and an adjustment aimed at the {} depth reaches it the same way",
-				layer.depth.name()
-			));
+			out.push_str(
+				&t(", and an adjustment aimed at the %s depth reaches it the same way").replacen(
+					"%s",
+					&(layer.depth.name()).to_string(),
+					1,
+				),
+			);
 		}
 		out.push_str(".\n");
 	}
-	out.push_str(
-		"Left alone, it stays exactly as it is: nothing in Blind Designer changes an element by itself.\n",
-	);
+	out.push_str(&t("Left alone, it stays exactly as it is: nothing in Blind Designer changes an element by itself.\n"));
 	Some(out.trim_end().to_string())
 }
 
@@ -171,14 +205,18 @@ pub fn inspect_shape(drawing: &Drawing, flat: usize) -> Option<String> {
 pub fn inspect_layer(drawing: &Drawing, index: usize) -> Option<String> {
 	let layer = drawing.layers.get(index)?;
 	let mut out = String::new();
-	out.push_str(&format!(
-		"Layer {} of {}: \"{}\", {} element{}.\n",
-		index + 1,
-		drawing.layers.len(),
-		layer.name,
-		layer.shapes.len(),
-		if layer.shapes.len() == 1 { "" } else { "s" }
-	));
+	out.push_str(
+		&t("Layer %s of %s: \"%s\", %s element%s.\n")
+			.replacen("%s", &(index + 1).to_string(), 1)
+			.replacen("%s", &(drawing.layers.len()).to_string(), 1)
+			.replacen("%s", &(layer.name).to_string(), 1)
+			.replacen("%s", &(layer.shapes.len()).to_string(), 1)
+			.replacen(
+				"%s",
+				if layer.shapes.len() == 1 { "" } else { "s" },
+				1,
+			),
+	);
 	// Its contents, by kind.
 	let mut kinds: Vec<(ShapeKind, usize)> = Vec::new();
 	for s in &layer.shapes {
@@ -190,49 +228,40 @@ pub fn inspect_layer(drawing: &Drawing, index: usize) -> Option<String> {
 	if !kinds.is_empty() {
 		let parts: Vec<String> = kinds
 			.iter()
-			.map(|(k, n)| format!("{n} {}", plural(k.name(), *n)))
+			.map(|(k, n)| format!("{n} {}", plural(&k.name(), *n)))
 			.collect();
-		out.push_str(&format!("It holds {}.\n", parts.join(", ")));
+		out.push_str(&t("It holds %s.\n").replacen("%s", &(parts.join(", ")).to_string(), 1));
 	}
 	// Where it sits: paint order is the layer order.
 	match (index, drawing.layers.len()) {
-		(0, 1) => out.push_str("It is the only layer; everything paints on it.\n"),
-		(0, _) => out.push_str("It paints first: everything else stands on it.\n"),
-		(i, n) if i == n - 1 => {
-			out.push_str("It paints last: nothing covers it.\n")
-		}
-		_ => out.push_str(&format!(
-			"It paints over layer \"{}\" and under layer \"{}\".\n",
-			drawing.layers[index - 1].name,
-			drawing.layers[index + 1].name
-		)),
+		(0, 1) => out.push_str(&t("It is the only layer; everything paints on it.\n")),
+		(0, _) => out.push_str(&t("It paints first: everything else stands on it.\n")),
+		(i, n) if i == n - 1 => out.push_str(&t("It paints last: nothing covers it.\n")),
+		_ => out.push_str(
+			&t("It paints over layer \"%s\" and under layer \"%s\".\n")
+				.replacen("%s", &(drawing.layers[index - 1].name).to_string(), 1)
+				.replacen("%s", &(drawing.layers[index + 1].name).to_string(), 1),
+		),
 	}
 	if layer.depth == DepthRole::Unassigned {
-		out.push_str("It has no depth role, so the depth-wide adjustments do not reach it.\n");
-	} else {
-		out.push_str(&format!(
-			"It is the {} of the design: an adjustment aimed at the {} depth changes this layer's unlocked elements along with every other {} layer's.\n",
-			layer.depth.name(),
-			layer.depth.name(),
-			layer.depth.name()
+		out.push_str(&t(
+			"It has no depth role, so the depth-wide adjustments do not reach it.\n",
 		));
+	} else {
+		out.push_str(&t("It is the %s of the design: an adjustment aimed at the %s depth changes this layer's unlocked elements along with every other %s layer's.\n").replacen("%s", &(layer.depth.name()).to_string(), 1).replacen("%s", &(layer.depth.name()).to_string(), 1).replacen("%s", &(layer.depth.name()).to_string(), 1));
 	}
 	let locked = layer.shapes.iter().filter(|s| s.locked).count();
 	if locked > 0 {
-		out.push_str(&format!(
-			"{locked} of its elements are locked: bulk color changes skip them and count them as stayed-the-same.\n"
-		));
+		out.push_str(&t("%s of its elements are locked: bulk color changes skip them and count them as stayed-the-same.\n").replacen("%s", &(locked).to_string(), 1));
 	}
 	if layer.visible {
-		out.push_str("It is shown, so its elements are in every export.\n");
+		out.push_str(&t("It is shown, so its elements are in every export.\n"));
 	} else {
-		out.push_str(
+		out.push_str(&t(
 			"It is hidden, so its elements are left out of every export until it is shown.\n",
-		);
+		));
 	}
-	out.push_str(
-		"Left alone, it stays exactly as it is: hiding, renaming, a depth role or a bulk color change are the things that can touch a whole layer, and each one is a step you take.\n",
-	);
+	out.push_str(&t("Left alone, it stays exactly as it is: hiding, renaming, a depth role or a bulk color change are the things that can touch a whole layer, and each one is a step you take.\n"));
 	Some(out.trim_end().to_string())
 }
 
@@ -246,21 +275,20 @@ fn plural(kind: &str, n: usize) -> String {
 
 /// The full inspector report for one palette color, or `None`
 /// when the index names no palette color.
-pub fn inspect_color(
-	drawing: &Drawing,
-	palette: &[PaletteColor],
-	index: usize,
-) -> Option<String> {
+pub fn inspect_color(drawing: &Drawing, palette: &[PaletteColor], index: usize) -> Option<String> {
 	let pc = palette.get(index)?;
 	let color: Srgb = pc.color;
 	let mut out = String::new();
 	out.push_str(&format!("{} ({}).\n", describe(color), color.to_hex()));
-	out.push_str(&format!("It came from {}.\n", pc.provenance.spoken()));
+	out.push_str(&t("It came from %s.\n").replacen("%s", &(pc.provenance.spoken()).to_string(), 1));
 	if let Some(cov) = pc.coverage {
-		out.push_str(&format!(
-			"It covered {:.0} percent of the image it was extracted from.\n",
-			cov * 100.0
-		));
+		out.push_str(
+			&t("It covered %s percent of the image it was extracted from.\n").replacen(
+				"%s",
+				&format!("{:.0}", cov * 100.0),
+				1,
+			),
+		);
 	}
 	// Which elements use it, by their own fill: elements keep
 	// their color, the palette is a working set.
@@ -282,28 +310,33 @@ pub fn inspect_color(
 	}
 	let is_background = drawing.background == color;
 	if total == 0 && !is_background {
-		out.push_str("No element uses it yet, and it is not the background.\n");
+		out.push_str(&t(
+			"No element uses it yet, and it is not the background.\n",
+		));
 	} else {
 		if total > 0 {
-			out.push_str(&format!(
-				"{total} element{} use{} it:\n",
-				if total == 1 { "" } else { "s" },
-				if total == 1 { "s" } else { "" }
-			));
+			out.push_str(
+				&t("%s element%s use%s it:\n")
+					.replacen("%s", &(total).to_string(), 1)
+					.replacen("%s", if total == 1 { "" } else { "s" }, 1)
+					.replacen("%s", if total == 1 { "s" } else { "" }, 1),
+			);
 			for u in &uses {
 				out.push_str(&format!("  {u}\n"));
 			}
 			if total > uses.len() {
-				out.push_str(&format!("  and {} more.\n", total - uses.len()));
+				out.push_str(&t("  and %s more.\n").replacen(
+					"%s",
+					&(total - uses.len()).to_string(),
+					1,
+				));
 			}
 		}
 		if is_background {
-			out.push_str("It is the design's background color.\n");
+			out.push_str(&t("It is the design's background color.\n"));
 		}
 	}
-	out.push_str(
-		"Left alone, it stays in the palette. Removing a palette color never recolors an element: elements keep their own colors, and the palette is a working set you pick from.\n",
-	);
+	out.push_str(&t("Left alone, it stays in the palette. Removing a palette color never recolors an element: elements keep their own colors, and the palette is a working set you pick from.\n"));
 	Some(out.trim_end().to_string())
 }
 
@@ -329,7 +362,14 @@ mod tests {
 		d.add_shape(0, Shape::new(ShapeKind::Rectangle, 10, 10, 100, 50, red()));
 		d.set_shape_locked(0, 0, true);
 		let front = d.add_layer("Front");
-		let mut cap = Shape::new(ShapeKind::Ellipse, 200, 100, 40, 40, Srgb::new(58, 124, 165));
+		let mut cap = Shape::new(
+			ShapeKind::Ellipse,
+			200,
+			100,
+			40,
+			40,
+			Srgb::new(58, 124, 165),
+		);
 		cap.opacity = 60;
 		d.add_shape(front, cap);
 		d.caption_shape(front, 0, "the moon".to_string());
@@ -350,11 +390,20 @@ mod tests {
 		assert!(text.contains("rectangle"), "{text}");
 		assert!(text.contains("element 1 of 1 on layer \"Back\""), "{text}");
 		assert!(text.contains("the background of the design"), "{text}");
-		assert!(text.contains("every export includes this element"), "{text}");
-		assert!(text.contains("appears in 1 of the animation's 1 frame"), "{text}");
+		assert!(
+			text.contains("every export includes this element"),
+			"{text}"
+		);
+		assert!(
+			text.contains("appears in 1 of the animation's 1 frame"),
+			"{text}"
+		);
 		assert!(text.contains("LOCKED"), "{text}");
 		assert!(text.contains("skip it"), "{text}");
-		assert!(text.contains("Left alone, it stays exactly as it is"), "{text}");
+		assert!(
+			text.contains("Left alone, it stays exactly as it is"),
+			"{text}"
+		);
 		// The ellipse is flat element 1: dynamic, translucent,
 		// captioned, on an unassigned layer.
 		let text = inspect_shape(&d, 1).unwrap();
@@ -372,7 +421,10 @@ mod tests {
 		assert!(text.contains("Layer 1 of 2: \"Back\", 1 element"), "{text}");
 		assert!(text.contains("It holds 1 rectangle"), "{text}");
 		assert!(text.contains("paints first"), "{text}");
-		assert!(text.contains("adjustment aimed at the background depth"), "{text}");
+		assert!(
+			text.contains("adjustment aimed at the background depth"),
+			"{text}"
+		);
 		assert!(text.contains("1 of its elements are locked"), "{text}");
 		let text = inspect_layer(&d, 1).unwrap();
 		assert!(text.contains("paints last"), "{text}");
@@ -400,6 +452,9 @@ mod tests {
 		let mut d2 = Drawing::new(10, 10, red());
 		d2.add_shape(0, Shape::new(ShapeKind::Rectangle, 0, 0, 5, 5, Srgb::BLACK));
 		let text = inspect_color(&d2, &palette, 1).unwrap();
-		assert!(text.contains("It is the design's background color"), "{text}");
+		assert!(
+			text.contains("It is the design's background color"),
+			"{text}"
+		);
 	}
 }

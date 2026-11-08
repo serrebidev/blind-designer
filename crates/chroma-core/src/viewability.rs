@@ -15,6 +15,8 @@
 //! see-through parts are not taken into account — the report
 //! says so, in its own header.
 
+use patois::t;
+
 use crate::design::Shape;
 use crate::drawing::{DepthRole, Drawing};
 
@@ -30,16 +32,20 @@ pub enum DepthBand {
 
 impl DepthBand {
 	/// Every band, in chooser order.
-	pub const ALL: [DepthBand; 4] =
-		[DepthBand::All, DepthBand::Background, DepthBand::Midground, DepthBand::Foreground];
+	pub const ALL: [DepthBand; 4] = [
+		DepthBand::All,
+		DepthBand::Background,
+		DepthBand::Midground,
+		DepthBand::Foreground,
+	];
 
 	/// The spoken name the chooser shows.
-	pub fn name(&self) -> &'static str {
+	pub fn name(&self) -> String {
 		match self {
-			DepthBand::All => "All depths",
-			DepthBand::Background => "Background only",
-			DepthBand::Midground => "Midground only",
-			DepthBand::Foreground => "Foreground only",
+			DepthBand::All => t("All depths"),
+			DepthBand::Background => t("Background only"),
+			DepthBand::Midground => t("Midground only"),
+			DepthBand::Foreground => t("Foreground only"),
 		}
 	}
 
@@ -115,15 +121,15 @@ impl Drawing {
 	pub fn viewability_report(&self, view_angle: f64, band: DepthBand) -> String {
 		let view_angle = view_angle.rem_euclid(360.0);
 		let band_words = match band.role() {
-			None => "all depths".to_string(),
-			Some(role) => format!("the {} only", role.name()),
+			None => t("all depths"),
+			Some(role) => t("the %s only").replacen("%s", &(role.name()).to_string(), 1),
 		};
-		let mut out = format!(
-			"Viewability from {view_angle:.0} degrees, {band_words}.\n\
+		let mut out = t("Viewability from %s degrees, %s.\n\
 			 Judged by each element's box and rotation: elements count as their \
 			 boxes, so curves, holes and see-through parts are not taken into \
-			 account.\n"
-		);
+			 account.\n")
+		.replacen("%s", &format!("{:.0}", view_angle), 1)
+		.replacen("%s", &(band_words).to_string(), 1);
 		let mut subjects: Vec<Subject> = Vec::new();
 		for layer in &self.layers {
 			if !layer.visible {
@@ -138,34 +144,38 @@ impl Drawing {
 			}
 		}
 		if subjects.is_empty() {
-			out.push_str("There are no elements on visible layers to check.\n");
+			out.push_str(&t("There are no elements on visible layers to check.\n"));
 			return out;
 		}
 		let (mut viewable, mut hidden_count, mut turned, mut outside) = (0, 0, 0, 0);
 		for (i, subject) in subjects.iter().enumerate() {
 			let shape = subject.shape;
 			let depth_note = if subject.role == DepthRole::Unassigned {
-				"no depth role".to_string()
+				t("no depth role")
 			} else {
 				subject.role.name().to_string()
 			};
-			let head = format!(
-				"- {} (layer \"{}\", {})",
-				self.plain_of(shape),
-				subject.layer_name,
-				depth_note
-			);
+			let head = t("- %s (layer \"%s\", %s)")
+				.replacen("%s", &(self.plain_of(shape)).to_string(), 1)
+				.replacen("%s", subject.layer_name, 1)
+				.replacen("%s", &(depth_note).to_string(), 1);
 			if !band.includes(subject.role) {
 				outside += 1;
-				out.push_str(&format!("{head}: outside the chosen depth.\n"));
+				out.push_str(&t("%s: outside the chosen depth.\n").replacen(
+					"%s",
+					&(head).to_string(),
+					1,
+				));
 				continue;
 			}
 			let turned_by = angle_difference(shape.angle, view_angle);
 			if turned_by > TURNED_AWAY_PAST {
 				turned += 1;
-				out.push_str(&format!(
-					"{head}: turned away at {turned_by:.0} degrees.\n"
-				));
+				out.push_str(
+					&t("%s: turned away at %s degrees.\n")
+						.replacen("%s", &(head).to_string(), 1)
+						.replacen("%s", &format!("{:.0}", turned_by), 1),
+				);
 				continue;
 			}
 			// The strongest single cover among the elements
@@ -181,33 +191,28 @@ impl Drawing {
 			match strongest {
 				Some((coverer, cover)) if cover >= HIDDEN_AT => {
 					hidden_count += 1;
-					out.push_str(&format!(
-						"{head}: hidden behind {}.\n",
-						self.plain_of(coverer)
-					));
+					out.push_str(
+						&t("%s: hidden behind %s.\n")
+							.replacen("%s", &(head).to_string(), 1)
+							.replacen("%s", &(self.plain_of(coverer)).to_string(), 1),
+					);
 				}
 				Some((coverer, cover)) if cover >= PARTLY_HIDDEN_AT => {
 					hidden_count += 1;
-					out.push_str(&format!(
-						"{head}: partly hidden behind {} (about {:.0} percent covered).\n",
-						self.plain_of(coverer),
-						cover * 100.0
-					));
+					out.push_str(
+						&t("%s: partly hidden behind %s (about %s percent covered).\n")
+							.replacen("%s", &(head).to_string(), 1)
+							.replacen("%s", &(self.plain_of(coverer)).to_string(), 1)
+							.replacen("%s", &format!("{:.0}", cover * 100.0), 1),
+					);
 				}
 				_ => {
 					viewable += 1;
-					out.push_str(&format!("{head}: viewable.\n"));
+					out.push_str(&t("%s: viewable.\n").replacen("%s", &(head).to_string(), 1));
 				}
 			}
 		}
-		out.push_str(&format!(
-			"{} elements: {} viewable, {} hidden or partly hidden, {} turned away, {} outside the chosen depth.\n",
-			subjects.len(),
-			viewable,
-			hidden_count,
-			turned,
-			outside
-		));
+		out.push_str(&t("%s elements: %s viewable, %s hidden or partly hidden, %s turned away, %s outside the chosen depth.\n").replacen("%s", &(subjects.len()).to_string(), 1).replacen("%s", &(viewable).to_string(), 1).replacen("%s", &(hidden_count).to_string(), 1).replacen("%s", &(turned).to_string(), 1).replacen("%s", &(outside).to_string(), 1));
 		out
 	}
 
@@ -232,16 +237,11 @@ impl Drawing {
 		let (tli, tsi) = target?;
 		let tlayer = &self.layers[tli];
 		let tshape = &tlayer.shapes[tsi];
-		let head = format!(
-			"{} on layer \"{}\".\n",
-			self.plain_of(tshape),
-			tlayer.name
-		);
+		let head = t("%s on layer \"%s\".\n")
+			.replacen("%s", &(self.plain_of(tshape)).to_string(), 1)
+			.replacen("%s", &(tlayer.name).to_string(), 1);
 		if !tlayer.visible {
-			return Some(format!(
-				"{head}Layer \"{}\" is hidden, so this element does not paint: nothing is stacked over or under it until the layer is shown.\n",
-				tlayer.name
-			));
+			return Some(t("%sLayer \"%s\" is hidden, so this element does not paint: nothing is stacked over or under it until the layer is shown.\n").replacen("%s", &(head).to_string(), 1).replacen("%s", &(tlayer.name).to_string(), 1));
 		}
 		// The painting stack: visible layers' elements in paint
 		// order, with the target's place in it.
@@ -263,42 +263,52 @@ impl Drawing {
 		for later in &stack[at + 1..] {
 			let cover = coverage_fraction(element_box(later), my_box);
 			if cover > 0.0 {
-				over.push(format!(
-					"{} (covers about {:.0} percent of it)",
-					self.plain_of(later),
-					cover * 100.0
-				));
+				over.push(
+					t("%s (covers about %s percent of it)")
+						.replacen("%s", &(self.plain_of(later)).to_string(), 1)
+						.replacen("%s", &format!("{:.0}", cover * 100.0), 1),
+				);
 			}
 		}
 		let mut under: Vec<String> = Vec::new();
 		for earlier in &stack[..at] {
 			let covered = coverage_fraction(my_box, element_box(earlier));
 			if covered > 0.0 {
-				under.push(format!(
-					"{} (it covers about {:.0} percent of that)",
-					self.plain_of(earlier),
-					covered * 100.0
-				));
+				under.push(
+					t("%s (it covers about %s percent of that)")
+						.replacen("%s", &(self.plain_of(earlier)).to_string(), 1)
+						.replacen("%s", &format!("{:.0}", covered * 100.0), 1),
+				);
 			}
 		}
 		let mut out = head;
 		if over.is_empty() {
-			out.push_str("Painted over it: nothing — it is on top of everything it touches.\n");
+			out.push_str(&t(
+				"Painted over it: nothing — it is on top of everything it touches.\n",
+			));
 		} else {
-			out.push_str(&format!("Painted over it: {}.\n", over.join("; ")));
+			out.push_str(&t("Painted over it: %s.\n").replacen(
+				"%s",
+				&(over.join("; ")).to_string(),
+				1,
+			));
 		}
 		if under.is_empty() {
-			out.push_str(
+			out.push_str(&t(
 				"Painted under it: nothing — beneath it is the design background itself.\n",
-			);
+			));
 		} else {
-			out.push_str(&format!("Painted under it: {}.\n", under.join("; ")));
+			out.push_str(&t("Painted under it: %s.\n").replacen(
+				"%s",
+				&(under.join("; ")).to_string(),
+				1,
+			));
 		}
-		out.push_str(&format!(
-			"It is element {} of {} in the painting order.\n",
-			at + 1,
-			stack.len()
-		));
+		out.push_str(
+			&t("It is element %s of %s in the painting order.\n")
+				.replacen("%s", &(at + 1).to_string(), 1)
+				.replacen("%s", &(stack.len()).to_string(), 1),
+		);
 		Some(out)
 	}
 }
@@ -332,7 +342,11 @@ mod tests {
 		assert!((coverage_fraction((50, 50, 150, 150), big) - 0.25).abs() < 1e-9);
 		// A coverer smaller than the covered: only its own area counts.
 		assert!((coverage_fraction((25, 25, 75, 75), big) - 0.25).abs() < 1e-9);
-		assert_eq!(coverage_fraction(big, (10, 10, 10, 10)), 0.0, "a zero-area box is uncoverable");
+		assert_eq!(
+			coverage_fraction(big, (10, 10, 10, 10)),
+			0.0,
+			"a zero-area box is uncoverable"
+		);
 	}
 
 	#[test]

@@ -9,6 +9,8 @@
 
 use std::fmt;
 
+use patois::t;
+
 pub mod animation;
 pub mod braille;
 pub mod brushes;
@@ -76,22 +78,22 @@ impl ColorFormat {
 		ColorFormat::Binary,
 	];
 
-	pub fn name(self) -> &'static str {
+	pub fn name(self) -> String {
 		match self {
-			ColorFormat::Hex => "hex",
-			ColorFormat::Rgb => "RGB",
-			ColorFormat::Hsl => "HSL",
-			ColorFormat::Hsv => "HSV",
-			ColorFormat::Cmyk => "CMYK",
-			ColorFormat::Xyz => "CIE XYZ",
-			ColorFormat::XyY => "xyY",
-			ColorFormat::Lab => "CIE Lab",
-			ColorFormat::Lch => "CIE LCH",
-			ColorFormat::Luv => "CIE LUV",
-			ColorFormat::HunterLab => "Hunter Lab",
-			ColorFormat::Decimal => "decimal",
-			ColorFormat::WebSafe => "web safe",
-			ColorFormat::Binary => "binary",
+			ColorFormat::Hex => t("hex"),
+			ColorFormat::Rgb => t("RGB"),
+			ColorFormat::Hsl => t("HSL"),
+			ColorFormat::Hsv => t("HSV"),
+			ColorFormat::Cmyk => t("CMYK"),
+			ColorFormat::Xyz => t("CIE XYZ"),
+			ColorFormat::XyY => t("xyY"),
+			ColorFormat::Lab => t("CIE Lab"),
+			ColorFormat::Lch => t("CIE LCH"),
+			ColorFormat::Luv => t("CIE LUV"),
+			ColorFormat::HunterLab => t("Hunter Lab"),
+			ColorFormat::Decimal => t("decimal"),
+			ColorFormat::WebSafe => t("web safe"),
+			ColorFormat::Binary => t("binary"),
 		}
 	}
 }
@@ -118,7 +120,11 @@ pub struct Srgb {
 
 impl Srgb {
 	pub const BLACK: Srgb = Srgb { r: 0, g: 0, b: 0 };
-	pub const WHITE: Srgb = Srgb { r: 255, g: 255, b: 255 };
+	pub const WHITE: Srgb = Srgb {
+		r: 255,
+		g: 255,
+		b: 255,
+	};
 
 	pub fn new(r: u8, g: u8, b: u8) -> Srgb {
 		Srgb { r, g, b }
@@ -150,7 +156,11 @@ impl Srgb {
 	/// Hue, saturation, lightness in HSL terms: hue in degrees 0..360,
 	/// saturation and lightness in percent 0..100.
 	pub fn to_hsl(self) -> (f32, f32, f32) {
-		let (r, g, b) = (self.r as f32 / 255.0, self.g as f32 / 255.0, self.b as f32 / 255.0);
+		let (r, g, b) = (
+			self.r as f32 / 255.0,
+			self.g as f32 / 255.0,
+			self.b as f32 / 255.0,
+		);
 		let max = r.max(g).max(b);
 		let min = r.min(g).min(b);
 		let d = max - min;
@@ -168,7 +178,11 @@ impl Srgb {
 	/// Hue, saturation, value in HSV terms: hue in degrees 0..360,
 	/// saturation and value in percent 0..100.
 	pub fn to_hsv(self) -> (f32, f32, f32) {
-		let (r, g, b) = (self.r as f32 / 255.0, self.g as f32 / 255.0, self.b as f32 / 255.0);
+		let (r, g, b) = (
+			self.r as f32 / 255.0,
+			self.g as f32 / 255.0,
+			self.b as f32 / 255.0,
+		);
 		let max = r.max(g).max(b);
 		let min = r.min(g).min(b);
 		let d = max - min;
@@ -184,46 +198,83 @@ impl Srgb {
 	pub fn format(self, format: ColorFormat) -> String {
 		match format {
 			ColorFormat::Hex => self.to_hex(),
-			ColorFormat::Rgb => format!("rgb({}, {}, {})", self.r, self.g, self.b),
+			ColorFormat::Rgb => t("rgb(%s, %s, %s)")
+				.replacen("%s", &(self.r).to_string(), 1)
+				.replacen("%s", &(self.g).to_string(), 1)
+				.replacen("%s", &(self.b).to_string(), 1),
 			ColorFormat::Hsl => {
 				let (h, s, l) = self.to_hsl();
-				format!("hsl({h:.0}, {s:.0}%, {l:.0}%)")
+				t("hsl(%s, %s%, %s%)")
+					.replacen("%s", &format!("{:.0}", h), 1)
+					.replacen("%s", &format!("{:.0}", s), 1)
+					.replacen("%s", &format!("{:.0}", l), 1)
 			}
 			ColorFormat::Hsv => {
 				let (h, s, v) = self.to_hsv();
-				format!("hsv({h:.0}, {s:.0}%, {v:.0}%)")
+				t("hsv(%s, %s%, %s%)")
+					.replacen("%s", &format!("{:.0}", h), 1)
+					.replacen("%s", &format!("{:.0}", s), 1)
+					.replacen("%s", &format!("{:.0}", v), 1)
 			}
 			ColorFormat::Cmyk => {
 				let (c, m, y, k) = self.to_cmyk();
-				format!("cmyk({c:.0}%, {m:.0}%, {y:.0}%, {k:.0}%)")
+				t("cmyk(%s%, %s%, %s%, %s%)")
+					.replacen("%s", &format!("{:.0}", c), 1)
+					.replacen("%s", &format!("{:.0}", m), 1)
+					.replacen("%s", &format!("{:.0}", y), 1)
+					.replacen("%s", &format!("{:.0}", k), 1)
 			}
 			ColorFormat::Xyz => {
 				let xyz = self.to_xyz();
-				format!("xyz({:.1}, {:.1}, {:.1})", xyz.x, xyz.y, xyz.z)
+				t("xyz(%s, %s, %s)")
+					.replacen("%s", &format!("{:.1}", xyz.x), 1)
+					.replacen("%s", &format!("{:.1}", xyz.y), 1)
+					.replacen("%s", &format!("{:.1}", xyz.z), 1)
 			}
 			ColorFormat::XyY => {
 				let (x, y, lum) = self.to_xyy();
-				format!("xyY({x:.3}, {y:.3}, {lum:.1})")
+				t("xyY(%s, %s, %s)")
+					.replacen("%s", &format!("{:.3}", x), 1)
+					.replacen("%s", &format!("{:.3}", y), 1)
+					.replacen("%s", &format!("{:.1}", lum), 1)
 			}
 			ColorFormat::Lab => {
 				let lab = self.to_lab();
-				format!("lab({:.0}, {:.0}, {:.0})", lab.l, lab.a, lab.b)
+				t("lab(%s, %s, %s)")
+					.replacen("%s", &format!("{:.0}", lab.l), 1)
+					.replacen("%s", &format!("{:.0}", lab.a), 1)
+					.replacen("%s", &format!("{:.0}", lab.b), 1)
 			}
 			ColorFormat::Lch => {
 				let (l, c, h) = self.to_lch();
-				format!("lch({l:.0}, {c:.0}, {h:.0})")
+				t("lch(%s, %s, %s)")
+					.replacen("%s", &format!("{:.0}", l), 1)
+					.replacen("%s", &format!("{:.0}", c), 1)
+					.replacen("%s", &format!("{:.0}", h), 1)
 			}
 			ColorFormat::Luv => {
 				let (l, u, v) = self.to_luv();
-				format!("luv({l:.0}, {u:.0}, {v:.0})")
+				t("luv(%s, %s, %s)")
+					.replacen("%s", &format!("{:.0}", l), 1)
+					.replacen("%s", &format!("{:.0}", u), 1)
+					.replacen("%s", &format!("{:.0}", v), 1)
 			}
 			ColorFormat::HunterLab => {
 				let (l, a, b) = self.to_hunter_lab();
-				format!("hunter lab({l:.0}, {a:.0}, {b:.0})")
+				t("hunter lab(%s, %s, %s)")
+					.replacen("%s", &format!("{:.0}", l), 1)
+					.replacen("%s", &format!("{:.0}", a), 1)
+					.replacen("%s", &format!("{:.0}", b), 1)
 			}
-			ColorFormat::Decimal => format!("decimal {}", self.to_decimal()),
-			ColorFormat::WebSafe => format!("web safe {}", self.to_web_safe().to_hex()),
-			ColorFormat::Binary => format!("binary {}", self.to_binary()),
+			ColorFormat::Decimal => {
+				t("decimal %s").replacen("%s", &(self.to_decimal()).to_string(), 1)
+			}
+			ColorFormat::WebSafe => {
+				t("web safe %s").replacen("%s", &(self.to_web_safe().to_hex()).to_string(), 1)
+			}
+			ColorFormat::Binary => {
+				t("binary %s").replacen("%s", &(self.to_binary()).to_string(), 1)
+			}
 		}
 	}
 
@@ -331,7 +382,9 @@ impl Oklch {
 	}
 
 	fn in_srgb_gamut(self) -> bool {
-		self.to_linear_rgb().iter().all(|v| (-0.0001..=1.0001).contains(v))
+		self.to_linear_rgb()
+			.iter()
+			.all(|v| (-0.0001..=1.0001).contains(v))
 	}
 
 	/// Convert to sRGB. If the color sits outside the sRGB gamut, the
@@ -361,12 +414,18 @@ impl Oklch {
 
 	/// Rotate the hue by `deg` degrees (wraps at 360).
 	pub fn rotate(self, deg: f32) -> Oklch {
-		Oklch { h: wrap_hue(self.h + deg), ..self }
+		Oklch {
+			h: wrap_hue(self.h + deg),
+			..self
+		}
 	}
 
 	/// Set the lightness exactly (0..1).
 	pub fn with_lightness(self, l: f32) -> Oklch {
-		Oklch { l: l.clamp(0.0, 1.0), ..self }
+		Oklch {
+			l: l.clamp(0.0, 1.0),
+			..self
+		}
 	}
 
 	/// Step the lightness by a signed amount.
@@ -376,7 +435,10 @@ impl Oklch {
 
 	/// Scale the chroma by a factor (1.0 = unchanged, 0.0 = gray).
 	pub fn scale_chroma(self, f: f32) -> Oklch {
-		Oklch { c: (self.c * f).max(0.0), ..self }
+		Oklch {
+			c: (self.c * f).max(0.0),
+			..self
+		}
 	}
 
 	// ---- Schemes: known hue angles from the base color. ----
@@ -442,40 +504,40 @@ fn wrap_hue(h: f32) -> f32 {
 /// the OKLCH hues of the pure sRGB primaries and secondaries (red 29,
 /// orange 57, yellow 110, green 142, cyan/teal 195, blue 264, magenta 328),
 /// which sit very differently from their HSL angles.
-pub fn hue_family(h: f32) -> &'static str {
+pub fn hue_family(h: f32) -> String {
 	let h = wrap_hue(h);
 	match h {
-		x if x < 35.0 || x >= 340.0 => "red",
-		x if x < 70.0 => "orange",
-		x if x < 115.0 => "yellow",
-		x if x < 130.0 => "yellow-green",
-		x if x < 165.0 => "green",
-		x if x < 215.0 => "teal",
-		x if x < 280.0 => "blue",
-		x if x < 310.0 => "purple",
-		_ => "magenta",
+		x if x < 35.0 || x >= 340.0 => t("red"),
+		x if x < 70.0 => t("orange"),
+		x if x < 115.0 => t("yellow"),
+		x if x < 130.0 => t("yellow-green"),
+		x if x < 165.0 => t("green"),
+		x if x < 215.0 => t("teal"),
+		x if x < 280.0 => t("blue"),
+		x if x < 310.0 => t("purple"),
+		_ => t("magenta"),
 	}
 }
 
-fn lightness_word(l: f32) -> &'static str {
+fn lightness_word(l: f32) -> String {
 	match l {
-		x if x < 0.15 => "near-black",
-		x if x < 0.30 => "very dark",
-		x if x < 0.45 => "dark",
-		x if x < 0.60 => "medium",
-		x if x < 0.75 => "light",
-		x if x < 0.90 => "very light",
-		_ => "near-white",
+		x if x < 0.15 => t("near-black"),
+		x if x < 0.30 => t("very dark"),
+		x if x < 0.45 => t("dark"),
+		x if x < 0.60 => t("medium"),
+		x if x < 0.75 => t("light"),
+		x if x < 0.90 => t("very light"),
+		_ => t("near-white"),
 	}
 }
 
-fn chroma_word(c: f32) -> &'static str {
+fn chroma_word(c: f32) -> String {
 	match c {
-		x if x < 0.02 => "gray",
-		x if x < 0.06 => "muted",
-		x if x < 0.12 => "moderate",
-		x if x < 0.20 => "vivid",
-		_ => "electric",
+		x if x < 0.02 => t("gray"),
+		x if x < 0.06 => t("muted"),
+		x if x < 0.12 => t("moderate"),
+		x if x < 0.20 => t("vivid"),
+		_ => t("electric"),
 	}
 }
 
@@ -496,23 +558,19 @@ pub fn describe_in(color: Srgb, format: ColorFormat) -> String {
 	let value = color.format(format);
 	if o.c < 0.02 {
 		// Achromatic: hue is meaningless, don't invent one.
-		return format!(
-			"{} gray ({}), lightness {:.0} percent",
-			lightness_word(o.l),
-			value,
-			o.l * 100.0
-		);
+		return t("%s gray (%s), lightness %s percent")
+			.replacen("%s", &(lightness_word(o.l)).to_string(), 1)
+			.replacen("%s", &(value).to_string(), 1)
+			.replacen("%s", &format!("{:.0}", o.l * 100.0), 1);
 	}
-	format!(
-		"{} {} {} ({}), lightness {:.0} percent, chroma {:.2}, hue {:.0} degrees",
-		lightness_word(o.l),
-		chroma_word(o.c),
-		hue_family(o.h),
-		value,
-		o.l * 100.0,
-		o.c,
-		o.h
-	)
+	t("%s %s %s (%s), lightness %s percent, chroma %s, hue %s degrees")
+		.replacen("%s", &(lightness_word(o.l)).to_string(), 1)
+		.replacen("%s", &(chroma_word(o.c)).to_string(), 1)
+		.replacen("%s", &(hue_family(o.h)).to_string(), 1)
+		.replacen("%s", &(value).to_string(), 1)
+		.replacen("%s", &format!("{:.0}", o.l * 100.0), 1)
+		.replacen("%s", &format!("{:.2}", o.c), 1)
+		.replacen("%s", &format!("{:.0}", o.h), 1)
 }
 
 /// A color in two or three plain words — "dark blue", "light gray",
@@ -532,8 +590,13 @@ pub fn color_words(color: Srgb) -> String {
 	};
 	if o.c < 0.02 {
 		return match light {
-			"black" | "white" => light.to_string(),
-			other => format!("{other} gray"),
+			"black" => t("black"),
+			"white" => t("white"),
+			"very dark" => t("very dark gray"),
+			"dark" => t("dark gray"),
+			"medium" => t("medium gray"),
+			"light" => t("light gray"),
+			_ => t("very light gray"),
 		};
 	}
 	let light = match light {
@@ -541,7 +604,9 @@ pub fn color_words(color: Srgb) -> String {
 		"white" => "very light",
 		other => other,
 	};
-	format!("{} {}", light, hue_family(o.h))
+	t("%s %s")
+		.replacen("%s", &t(light), 1)
+		.replacen("%s", &hue_family(o.h), 1)
 }
 
 /// One palette entry: a color plus the share of the source image it covers.
@@ -625,7 +690,11 @@ pub fn extract_palette(img: &image::DynamicImage, max_colors: usize) -> Vec<Pale
 			}
 		})
 		.collect();
-	entries.sort_by(|a, b| b.coverage.partial_cmp(&a.coverage).unwrap_or(std::cmp::Ordering::Equal));
+	entries.sort_by(|a, b| {
+		b.coverage
+			.partial_cmp(&a.coverage)
+			.unwrap_or(std::cmp::Ordering::Equal)
+	});
 	// Merge entries that are perceptually the same color (solid areas and
 	// JPEG noise split into several buckets with near-identical centers).
 	let mut merged: Vec<PaletteEntry> = Vec::new();
@@ -642,7 +711,11 @@ pub fn extract_palette(img: &image::DynamicImage, max_colors: usize) -> Vec<Pale
 			None => merged.push(e),
 		}
 	}
-	merged.sort_by(|a, b| b.coverage.partial_cmp(&a.coverage).unwrap_or(std::cmp::Ordering::Equal));
+	merged.sort_by(|a, b| {
+		b.coverage
+			.partial_cmp(&a.coverage)
+			.unwrap_or(std::cmp::Ordering::Equal)
+	});
 	merged
 }
 
@@ -783,7 +856,11 @@ mod tests {
 		let many = extract_palette(&img, 48);
 		let few = extract_palette(&img, 8);
 		assert!(few.len() <= 8, "asked for 8, got {}", few.len());
-		assert!(many.len() >= 24, "asked for 48 well-separated colors, got {}", many.len());
+		assert!(
+			many.len() >= 24,
+			"asked for 48 well-separated colors, got {}",
+			many.len()
+		);
 		assert!(many.len() > few.len());
 	}
 

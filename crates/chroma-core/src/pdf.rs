@@ -11,6 +11,8 @@
 //! PDF crate if documents ever need more than two pages or
 //! embedded fonts.
 
+use patois::t;
+
 use crate::design::ShapeKind;
 use crate::drawing::Drawing;
 use std::io::Write;
@@ -23,7 +25,10 @@ struct Obj {
 }
 
 fn obj(num: usize, body: impl Into<Vec<u8>>) -> Obj {
-	Obj { num, body: body.into() }
+	Obj {
+		num,
+		body: body.into(),
+	}
 }
 
 fn stream_obj(num: usize, dict: &str, data: &[u8]) -> Obj {
@@ -64,10 +69,8 @@ impl Drawing {
 		let (w, h) = (img.width(), img.height());
 		let raw: Vec<u8> = img.as_raw().clone();
 		let compressed = {
-			let mut enc = flate2::write::ZlibEncoder::new(
-				Vec::new(),
-				flate2::Compression::default(),
-			);
+			let mut enc =
+				flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
 			// Writing to a Vec cannot fail; a failure here would
 			// be a flate2 bug, and the empty stream still yields
 			// a structurally valid (if blank) PDF.
@@ -80,15 +83,13 @@ impl Drawing {
 		let scale = (540.0 / w.max(1) as f64).min(720.0 / h.max(1) as f64);
 		let (dw, dh) = (w as f64 * scale, h as f64 * scale);
 		let (ox, oy) = ((612.0 - dw) / 2.0, (792.0 - dh) / 2.0);
-		let picture_ops = format!(
-			"q {dw:.2} 0 0 {dh:.2} {ox:.2} {oy:.2} cm /Im1 Do Q\n"
-		);
+		let picture_ops = format!("q {dw:.2} 0 0 {dh:.2} {ox:.2} {oy:.2} cm /Im1 Do Q\n");
 
 		// The words page: a heading, then every text element's
 		// lines, in reading order. Lines stop at the page's
 		// bottom margin — what does not fit is counted in a
 		// closing line rather than silently dropped.
-		let mut lines: Vec<String> = vec!["Text in this design".to_string(), String::new()];
+		let mut lines: Vec<String> = vec![t("Text in this design"), String::new()];
 		let mut texts: Vec<&crate::design::Shape> = Vec::new();
 		for layer in &self.layers {
 			if !layer.visible {
@@ -103,7 +104,7 @@ impl Drawing {
 			texts.extend(mine);
 		}
 		if texts.is_empty() {
-			lines.push("(This design has no text elements.)".to_string());
+			lines.push(t("(This design has no text elements.)"));
 		}
 		for shape in &texts {
 			for line in shape.text.split('\n') {
@@ -114,7 +115,11 @@ impl Drawing {
 		let total = lines.len();
 		lines.truncate(48);
 		if total > lines.len() {
-			lines.push(format!("(... and {} more lines in the design.)", total - lines.len()));
+			lines.push(t("(... and %s more lines in the design.)").replacen(
+				"%s",
+				&(total - lines.len()).to_string(),
+				1,
+			));
 		}
 		let mut text_ops = String::from("BT /F1 13 Tf 50 742 Td 15 TL\n");
 		for (i, line) in lines.iter().enumerate() {
@@ -186,8 +191,14 @@ mod tests {
 
 	fn sample() -> Drawing {
 		let mut d = Drawing::new(40, 20, Srgb::WHITE);
-		d.add_shape(0, Shape::new(ShapeKind::Rectangle, 0, 0, 10, 10, Srgb::BLACK));
-		d.add_shape(0, Shape::text("Hello (PDF) \\ test", "Arial", 14, 2, 2, 30, 8, Srgb::BLACK));
+		d.add_shape(
+			0,
+			Shape::new(ShapeKind::Rectangle, 0, 0, 10, 10, Srgb::BLACK),
+		);
+		d.add_shape(
+			0,
+			Shape::text("Hello (PDF) \\ test", "Arial", 14, 2, 2, 30, 8, Srgb::BLACK),
+		);
 		d
 	}
 
@@ -282,6 +293,9 @@ mod tests {
 		// A design with no text still gets its words page.
 		let bare = Drawing::new(10, 10, Srgb::WHITE).to_pdf();
 		let bare_text = String::from_utf8_lossy(&bare).into_owned();
-		assert!(bare_text.contains("(\\(This design has no text elements.\\)) Tj"), "{bare_text}");
+		assert!(
+			bare_text.contains("(\\(This design has no text elements.\\)) Tj"),
+			"{bare_text}"
+		);
 	}
 }

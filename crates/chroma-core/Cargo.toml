@@ -4,7 +4,13 @@ version = "0.1.0"
 edition.workspace = true
 license.workspace = true
 
+# Library strings are translatable with patois: they resolve against
+# the catalog of the app that uses this crate, so no setup lives here.
+[package.metadata.patois]
+translatable = true
+
 [dependencies]
+patois = "0.3"
 image = { version = "*", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
 # Already in the lockfile through the png encoder; the PDF export
 # uses it directly to FlateDecode-compress the design's raster.

@@ -14,6 +14,8 @@
 //! block letters a finger or a pen can follow, with a legibility
 //! line (size and contrast, labeled a rough guide).
 
+use patois::t;
+
 use crate::design::ShapeKind;
 use crate::drawing::Drawing;
 use crate::font;
@@ -43,9 +45,7 @@ fn decode_entities(text: &str) -> String {
 			_ => entity
 				.strip_prefix("#x")
 				.and_then(|h| u32::from_str_radix(h, 16).ok())
-				.or_else(|| {
-					entity.strip_prefix('#').and_then(|d| d.parse::<u32>().ok())
-				})
+				.or_else(|| entity.strip_prefix('#').and_then(|d| d.parse::<u32>().ok()))
 				.and_then(char::from_u32)
 				.map(|c| c.to_string()),
 		};
@@ -88,7 +88,10 @@ fn clean_title(raw: &str) -> String {
 		}
 		out
 	};
-	decode_entities(&inner).split_whitespace().collect::<Vec<_>>().join(" ")
+	decode_entities(&inner)
+		.split_whitespace()
+		.collect::<Vec<_>>()
+		.join(" ")
 }
 
 /// The titles of a feed's items, in feed order, at most `max`
@@ -121,7 +124,11 @@ pub fn parse_feed_titles(xml: &str, max: usize) -> Vec<String> {
 			})
 			.min_by_key(|(at, _)| *at);
 		let Some((start, tag)) = next else { break };
-		let close_tag = if tag == "<item" { "</item>" } else { "</entry>" };
+		let close_tag = if tag == "<item" {
+			"</item>"
+		} else {
+			"</entry>"
+		};
 		let end = lower[start..]
 			.find(close_tag)
 			.map(|e| start + e)
@@ -179,13 +186,11 @@ fn legibility_line(size: u32, ratio: f32) -> String {
 		"small"
 	};
 	let contrast_word = match ratio {
-		x if x >= 4.5 => "easy to read",
-		x if x >= 3.0 => "hard to read",
-		_ => "unreadable",
+		x if x >= 4.5 => t("easy to read"),
+		x if x >= 3.0 => t("hard to read"),
+		_ => t("unreadable"),
 	};
-	format!(
-		"Legibility (rough guide): {size_word} letters at {size} point; contrast {ratio:.1} to 1 against the background, {contrast_word}."
-	)
+	t("Legibility (rough guide): %s letters at %s point; contrast %s to 1 against the background, %s.").replacen("%s", size_word, 1).replacen("%s", &(size).to_string(), 1).replacen("%s", &format!("{:.1}", ratio), 1).replacen("%s", &(contrast_word).to_string(), 1)
 }
 
 impl Drawing {
@@ -215,7 +220,7 @@ impl Drawing {
 			 The legibility lines are a rough guide, not a measurement.\n",
 		);
 		if texts.is_empty() {
-			out.push_str("\nThis design has no text elements to practise with.\n");
+			out.push_str(&t("\nThis design has no text elements to practise with.\n"));
 			return out;
 		}
 		for (i, shape) in texts.iter().enumerate() {
@@ -283,13 +288,20 @@ mod tests {
 	fn non_feeds_and_empty_feeds_yield_nothing() {
 		assert!(parse_feed_titles("<html><body>hello</body></html>", 5).is_empty());
 		assert!(parse_feed_titles("", 5).is_empty());
-		assert!(parse_feed_titles("<rss><channel><title>Only Channel</title></channel></rss>", 5).is_empty());
+		assert!(parse_feed_titles(
+			"<rss><channel><title>Only Channel</title></channel></rss>",
+			5
+		)
+		.is_empty());
 	}
 
 	#[test]
 	fn practice_sheet_prints_block_letters_and_legibility() {
 		let mut d = Drawing::new(200, 100, Srgb::WHITE);
-		d.add_shape(0, crate::design::Shape::text("Hi", "Arial", 32, 0, 0, 60, 40, Srgb::BLACK));
+		d.add_shape(
+			0,
+			crate::design::Shape::text("Hi", "Arial", 32, 0, 0, 60, 40, Srgb::BLACK),
+		);
 		let sheet = d.practice_sheet();
 		assert!(sheet.contains("rough guide"), "{sheet}");
 		assert!(sheet.contains("\"Hi\""), "{sheet}");
@@ -307,9 +319,15 @@ mod tests {
 	#[test]
 	fn practice_sheet_skips_hidden_layers() {
 		let mut d = Drawing::new(200, 100, Srgb::WHITE);
-		d.add_shape(0, crate::design::Shape::text("Shown", "Arial", 16, 0, 0, 60, 20, Srgb::BLACK));
+		d.add_shape(
+			0,
+			crate::design::Shape::text("Shown", "Arial", 16, 0, 0, 60, 20, Srgb::BLACK),
+		);
 		let top = d.add_layer("Hidden words");
-		d.add_shape(top, crate::design::Shape::text("Secret", "Arial", 16, 0, 30, 60, 20, Srgb::BLACK));
+		d.add_shape(
+			top,
+			crate::design::Shape::text("Secret", "Arial", 16, 0, 30, 60, 20, Srgb::BLACK),
+		);
 		d.set_layer_visible(top, false);
 		let sheet = d.practice_sheet();
 		assert!(sheet.contains("Shown"), "{sheet}");

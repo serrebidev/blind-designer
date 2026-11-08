@@ -18,6 +18,8 @@
 //! plainly labelled a rough guide, not a measurement) and the
 //! seed drawing a new wizard project starts from.
 
+use patois::t;
+
 use crate::design::{Shape, ShapeKind};
 use crate::drawing::{DepthRole, Drawing};
 use crate::project::{Project, ProjectStats};
@@ -67,85 +69,122 @@ impl GoalKind {
 
 	/// The spoken name the wizard lists: "a writing project",
 	/// and so on.
-	pub fn name(&self) -> &'static str {
+	pub fn name(&self) -> String {
 		match self {
-			GoalKind::Writing => "a writing project (mostly typing)",
-			GoalKind::ImageCosmetic => "an image project (cosmetic work on a picture)",
-			GoalKind::ImageCreation => "creating an image (shapes and colours)",
-			GoalKind::Mixed => "a mixed project (words and pictures together)",
-			GoalKind::AccessibilityReview => "an accessibility review",
-			GoalKind::Conversion => "a conversion (one form into another)",
+			GoalKind::Writing => t("a writing project (mostly typing)"),
+			GoalKind::ImageCosmetic => t("an image project (cosmetic work on a picture)"),
+			GoalKind::ImageCreation => t("creating an image (shapes and colours)"),
+			GoalKind::Mixed => t("a mixed project (words and pictures together)"),
+			GoalKind::AccessibilityReview => t("an accessibility review"),
+			GoalKind::Conversion => t("a conversion (one form into another)"),
 		}
 	}
 
 	/// The focus questions this kind asks, in order. Every one
 	/// of them may be answered "no fixed answer" — see
 	/// `ProjectGoal`.
-	pub fn questions(&self) -> &'static [GoalQuestion] {
+	pub fn questions(&self) -> Vec<GoalQuestion> {
 		match self {
-			GoalKind::Writing => &[
+			GoalKind::Writing => vec![
 				GoalQuestion {
-					question: "What will the writing be?",
-					options: &["A document or letter", "A sign or label", "Words inside a picture"],
-				},
-				GoalQuestion {
-					question: "How will it be read?",
-					options: &["On screen", "In print", "Both on screen and in print"],
-				},
-			],
-			GoalKind::ImageCreation => &[
-				GoalQuestion {
-					question: "What is the picture of?",
-					options: &[
-						"A scene or place",
-						"An object",
-						"A person or character",
-						"A pattern or decoration",
+					question: t("What will the writing be?"),
+					options: vec![
+						t("A document or letter"),
+						t("A sign or label"),
+						t("Words inside a picture"),
 					],
 				},
 				GoalQuestion {
-					question: "What should stand out most?",
-					options: &["The foreground", "The colours", "The shapes themselves"],
+					question: t("How will it be read?"),
+					options: vec![
+						t("On screen"),
+						t("In print"),
+						t("Both on screen and in print"),
+					],
 				},
 			],
-			GoalKind::ImageCosmetic => &[
+			GoalKind::ImageCreation => vec![
 				GoalQuestion {
-					question: "What are you improving?",
-					options: &["A photo or picture", "A palette or colour scheme", "A design made here"],
+					question: t("What is the picture of?"),
+					options: vec![
+						t("A scene or place"),
+						t("An object"),
+						t("A person or character"),
+						t("A pattern or decoration"),
+					],
 				},
 				GoalQuestion {
-					question: "What matters most?",
-					options: &["The colours", "The contrast", "The balance of light and dark"],
-				},
-			],
-			GoalKind::Mixed => &[
-				GoalQuestion {
-					question: "How will it be presented?",
-					options: &["As a picture", "As a document", "As a web page", "As slides"],
-				},
-				GoalQuestion {
-					question: "How will people use it?",
-					options: &["Just look at it or read it", "Hear it described", "Feel it (tactile)"],
-				},
-			],
-			GoalKind::AccessibilityReview => &[
-				GoalQuestion {
-					question: "What are you reviewing?",
-					options: &["A design made here", "An imported design", "A picture"],
-				},
-				GoalQuestion {
-					question: "Who is it for?",
-					options: &["Blind readers", "Low-vision readers", "Everyone"],
+					question: t("What should stand out most?"),
+					options: vec![
+						t("The foreground"),
+						t("The colours"),
+						t("The shapes themselves"),
+					],
 				},
 			],
-			GoalKind::Conversion => &[
+			GoalKind::ImageCosmetic => vec![
 				GoalQuestion {
-					question: "What are you converting from?",
-					options: &["A picture file", "A web page", "Another design"],
+					question: t("What are you improving?"),
+					options: vec![
+						t("A photo or picture"),
+						t("A palette or colour scheme"),
+						t("A design made here"),
+					],
 				},
 				GoalQuestion {
-					question: "What should it become?",
-					options: &["A tactile design", "A described design (words)", "A web page"],
+					question: t("What matters most?"),
+					options: vec![
+						t("The colours"),
+						t("The contrast"),
+						t("The balance of light and dark"),
+					],
+				},
+			],
+			GoalKind::Mixed => vec![
+				GoalQuestion {
+					question: t("How will it be presented?"),
+					options: vec![
+						t("As a picture"),
+						t("As a document"),
+						t("As a web page"),
+						t("As slides"),
+					],
+				},
+				GoalQuestion {
+					question: t("How will people use it?"),
+					options: vec![
+						t("Just look at it or read it"),
+						t("Hear it described"),
+						t("Feel it (tactile)"),
+					],
+				},
+			],
+			GoalKind::AccessibilityReview => vec![
+				GoalQuestion {
+					question: t("What are you reviewing?"),
+					options: vec![
+						t("A design made here"),
+						t("An imported design"),
+						t("A picture"),
+					],
+				},
+				GoalQuestion {
+					question: t("Who is it for?"),
+					options: vec![t("Blind readers"), t("Low-vision readers"), t("Everyone")],
+				},
+			],
+			GoalKind::Conversion => vec![
+				GoalQuestion {
+					question: t("What are you converting from?"),
+					options: vec![t("A picture file"), t("A web page"), t("Another design")],
+				},
+				GoalQuestion {
+					question: t("What should it become?"),
+					options: vec![
+						t("A tactile design"),
+						t("A described design (words)"),
+						t("A web page"),
+					],
 				},
 			],
 		}
@@ -156,10 +195,10 @@ impl GoalKind {
 /// wizard offers. "No fixed answer" is always offered as well;
 /// it is not in `options` because it is the absence of an
 /// answer, and the goal model stores it as `None`.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct GoalQuestion {
-	pub question: &'static str,
-	pub options: &'static [&'static str],
+	pub question: String,
+	pub options: Vec<String>,
 }
 
 /// A project's stated goal: its kind, and one entry per focus
@@ -190,7 +229,10 @@ impl ProjectGoal {
 	/// `Some(None)` when deliberately open, `None` when the
 	/// question is not part of this goal at all.
 	pub fn answer_for(&self, question: &str) -> Option<&Option<String>> {
-		self.answers.iter().find(|(q, _)| q == question).map(|(_, a)| a)
+		self.answers
+			.iter()
+			.find(|(q, _)| q == question)
+			.map(|(_, a)| a)
 	}
 
 	/// Has this question been given a fixed answer?
@@ -223,33 +265,40 @@ impl GoalReport {
 	/// The pair of percentages as one line — the form the main
 	/// window's statistics line carries.
 	pub fn one_line(&self) -> String {
-		format!(
-			"Goal match {} percent. Creation {} percent.",
-			self.goal_match_pct, self.creation_pct
-		)
+		t("Goal match %s percent. Creation %s percent.")
+			.replacen("%s", &(self.goal_match_pct).to_string(), 1)
+			.replacen("%s", &(self.creation_pct).to_string(), 1)
 	}
 
 	/// The full report text: the percentages, every criterion
 	/// line, the suggestions, and the answers still open.
 	pub fn full_text(&self, goal: &ProjectGoal) -> String {
-		let mut out = format!(
-			"Goal: {}.\nGoal match: {} percent of the settled criteria the design meets.\n\
-			 Creation: {} percent of all criteria, open answers counted as not yet.\n",
-			goal.kind.name(),
-			self.goal_match_pct,
-			self.creation_pct
-		);
+		let mut out = t(
+			"Goal: %s.\nGoal match: %s percent of the settled criteria the design meets.\n\
+			 Creation: %s percent of all criteria, open answers counted as not yet.\n",
+		)
+		.replacen("%s", &(goal.kind.name()).to_string(), 1)
+		.replacen("%s", &(self.goal_match_pct).to_string(), 1)
+		.replacen("%s", &(self.creation_pct).to_string(), 1);
 		for (question, answer) in &goal.answers {
 			match answer {
-				Some(a) => out.push_str(&format!("{question} {a}.\n")),
-				None => out.push_str(&format!("{question} No fixed answer — left open.\n")),
+				Some(a) => out.push_str(
+					&t("%s %s.\n")
+						.replacen("%s", &(question).to_string(), 1)
+						.replacen("%s", &(a).to_string(), 1),
+				),
+				None => out.push_str(&t("%s No fixed answer — left open.\n").replacen(
+					"%s",
+					&(question).to_string(),
+					1,
+				)),
 			}
 		}
 		for line in &self.lines {
 			out.push_str(&format!("{line}\n"));
 		}
 		if !self.suggestions.is_empty() {
-			out.push_str("Suggested improvements:\n");
+			out.push_str(&t("Suggested improvements:\n"));
 			for s in &self.suggestions {
 				out.push_str(&format!("- {s}\n"));
 			}
@@ -324,7 +373,9 @@ pub fn goal_report(project: &Project) -> Option<GoalReport> {
 		criteria.push(Criterion {
 			settled: true,
 			met,
-			line: format!("{}: {label}.", if met { "Met" } else { "Not yet" }),
+			line: t("%s: %s.")
+				.replacen("%s", if met { "Met" } else { "Not yet" }, 1)
+				.replacen("%s", label, 1),
 			suggestion: (!met).then(|| suggestion.to_string()),
 		});
 	};
@@ -336,9 +387,13 @@ pub fn goal_report(project: &Project) -> Option<GoalReport> {
 			settled,
 			met: settled,
 			line: if settled {
-				format!("Met: {label}.")
+				t("Met: %s.").replacen("%s", label, 1)
 			} else {
-				format!("Open: {label} — that answer has no fixed answer yet.")
+				t("Open: %s — that answer has no fixed answer yet.").replacen(
+					"%s",
+					label,
+					1,
+				)
 			},
 			suggestion: None,
 		});
@@ -347,90 +402,110 @@ pub fn goal_report(project: &Project) -> Option<GoalReport> {
 		GoalKind::Writing => {
 			plain(
 				f.texts >= 1,
-				"the design has at least one text element",
-				"Add a text element: Design, Add, Text.",
+				&t("the design has at least one text element"),
+				&t("Add a text element: Design, Add, Text."),
 				&mut criteria,
 			);
 			plain(
 				f.texts >= 1 && f.unreadable_texts == 0,
-				"every text element is readable against the background (none unreadable)",
-				"Raise the contrast of the unreadable words: Color, Text Readability names them.",
+				&t("every text element is readable against the background (none unreadable)"),
+				&t("Raise the contrast of the unreadable words: Color, Text Readability names them."),
 				&mut criteria,
 			);
-			gated("What will the writing be?", "you have said what the writing will be", &mut criteria);
+			gated(
+				&t("What will the writing be?"),
+				&t("you have said what the writing will be"),
+				&mut criteria,
+			);
 		}
 		GoalKind::ImageCreation => {
 			plain(
 				f.elements >= 1,
-				"the design has at least one shape",
-				"Add a shape: Design, Add offers rectangles, ellipses, strokes and symbols.",
+				&t("the design has at least one shape"),
+				&t("Add a shape: Design, Add offers rectangles, ellipses, strokes and symbols."),
 				&mut criteria,
 			);
 			plain(
 				f.has_background,
-				"the design has a background (a chosen background colour, or a layer with the background depth role)",
-				"Set a background colour from the palette, or give a layer the background depth role in Design, Layers.",
+				&t("the design has a background (a chosen background colour, or a layer with the background depth role)"),
+				&t("Set a background colour from the palette, or give a layer the background depth role in Design, Layers."),
 				&mut criteria,
 			);
-			gated("What is the picture of?", "you have said what the picture is of", &mut criteria);
+			gated(
+				&t("What is the picture of?"),
+				&t("you have said what the picture is of"),
+				&mut criteria,
+			);
 		}
 		GoalKind::ImageCosmetic => {
 			plain(
 				f.images >= 1 || f.colors >= 2,
-				"the project has an image element, or at least two palette colours to work between",
-				"Bring a picture in (File, Import, Open Image) or add a second palette colour.",
+				&t("the project has an image element, or at least two palette colours to work between"),
+				&t("Bring a picture in (File, Import, Open Image) or add a second palette colour."),
 				&mut criteria,
 			);
-			gated("What are you improving?", "you have said what you are improving", &mut criteria);
+			gated(
+				&t("What are you improving?"),
+				&t("you have said what you are improving"),
+				&mut criteria,
+			);
 		}
 		GoalKind::Mixed => {
 			gated(
-				"How will it be presented?",
-				"you have said how it will be presented",
+				&t("How will it be presented?"),
+				&t("you have said how it will be presented"),
 				&mut criteria,
 			);
 			plain(
 				f.elements >= 1,
-				"the design has at least one element",
-				"Add the first element: Design, Add.",
+				&t("the design has at least one element"),
+				&t("Add the first element: Design, Add."),
 				&mut criteria,
 			);
 		}
 		GoalKind::AccessibilityReview => {
 			plain(
 				f.elements >= 1,
-				"the design has at least one element to review",
-				"Bring in or draw the design to review: File, Import, or Design, Add.",
+				&t("the design has at least one element to review"),
+				&t("Bring in or draw the design to review: File, Import, or Design, Add."),
 				&mut criteria,
 			);
 			plain(
 				f.unreadable_texts == 0,
-				"no text element is unreadable against the background",
-				"Raise the contrast of the unreadable words: Color, Text Readability names them.",
+				&t("no text element is unreadable against the background"),
+				&t("Raise the contrast of the unreadable words: Color, Text Readability names them."),
 				&mut criteria,
 			);
 			plain(
 				f.elements >= 1 && f.standout_elements >= 1,
-				"at least one element stands out from the background (contrast 3 to 1 or more)",
-				"Give one element a colour at least 3 to 1 against the background.",
+				&t("at least one element stands out from the background (contrast 3 to 1 or more)"),
+				&t("Give one element a colour at least 3 to 1 against the background."),
 				&mut criteria,
 			);
-			gated("What are you reviewing?", "you have said what you are reviewing", &mut criteria);
+			gated(
+				&t("What are you reviewing?"),
+				&t("you have said what you are reviewing"),
+				&mut criteria,
+			);
 		}
 		GoalKind::Conversion => {
 			plain(
 				f.elements >= 1,
-				"the design has at least one element (something arrived to convert)",
-				"Bring the source in: File, Import.",
+				&t("the design has at least one element (something arrived to convert)"),
+				&t("Bring the source in: File, Import."),
 				&mut criteria,
 			);
 			plain(
 				f.colors >= 1,
-				"the project has at least one palette colour",
-				"Add a colour by hex, or load the starter colours.",
+				&t("the project has at least one palette colour"),
+				&t("Add a colour by hex, or load the starter colours."),
 				&mut criteria,
 			);
-			gated("What should it become?", "you have said what it should become", &mut criteria);
+			gated(
+				&t("What should it become?"),
+				&t("you have said what it should become"),
+				&mut criteria,
+			);
 		}
 	}
 	let total = criteria.len() as u32;
@@ -448,7 +523,10 @@ pub fn goal_report(project: &Project) -> Option<GoalReport> {
 		goal_match_pct: pct(met_settled, settled),
 		creation_pct: pct(met, total),
 		lines: criteria.iter().map(|c| c.line.clone()).collect(),
-		suggestions: criteria.iter().filter_map(|c| c.suggestion.clone()).collect(),
+		suggestions: criteria
+			.iter()
+			.filter_map(|c| c.suggestion.clone())
+			.collect(),
 	})
 }
 
@@ -458,7 +536,11 @@ pub fn goal_report(project: &Project) -> Option<GoalReport> {
 /// contrast and layering — not a measurement of any real
 /// viewer's experience.
 pub fn recognizability_report(project: &Project) -> String {
-	let kind = project.goal.as_ref().map(|g| g.kind).unwrap_or(GoalKind::ImageCreation);
+	let kind = project
+		.goal
+		.as_ref()
+		.map(|g| g.kind)
+		.unwrap_or(GoalKind::ImageCreation);
 	let f = facts(project);
 	let d = &project.drawing;
 	let mut out = String::from(
@@ -469,7 +551,7 @@ pub fn recognizability_report(project: &Project) -> String {
 	match kind {
 		GoalKind::Writing => {
 			if f.texts == 0 {
-				out.push_str("There are no words in the design yet, so there is nothing for a reader to recognize.\n");
+				out.push_str(&t("There are no words in the design yet, so there is nothing for a reader to recognize.\n"));
 			} else {
 				let (mut large, mut faint) = (0, 0);
 				for layer in &d.layers {
@@ -489,78 +571,58 @@ pub fn recognizability_report(project: &Project) -> String {
 					}
 				}
 				if faint > 0 {
-					out.push_str(&format!(
-						"Some words would be hard to recognize: {faint} of {} text elements sit under 3 to 1 contrast against the background.\n",
-						f.texts
-					));
+					out.push_str(&t("Some words would be hard to recognize: %s of %s text elements sit under 3 to 1 contrast against the background.\n").replacen("%s", &(faint).to_string(), 1).replacen("%s", &(f.texts).to_string(), 1));
 				} else if large > 0 {
-					out.push_str(&format!(
-						"The words are recognizable; {large} of {} read best at large sizes (between 3 and 4.5 to 1 contrast), the rest stand out clearly.\n",
-						f.texts
-					));
+					out.push_str(&t("The words are recognizable; %s of %s read best at large sizes (between 3 and 4.5 to 1 contrast), the rest stand out clearly.\n").replacen("%s", &(large).to_string(), 1).replacen("%s", &(f.texts).to_string(), 1));
 				} else {
-					out.push_str(
-						"Every text element stands out clearly (4.5 to 1 contrast or more): a reader would recognize the words at once.\n",
-					);
+					out.push_str(&t("Every text element stands out clearly (4.5 to 1 contrast or more): a reader would recognize the words at once.\n"));
 				}
 			}
 		}
 		GoalKind::AccessibilityReview => {
 			if f.elements == 0 {
-				out.push_str("The design is empty: there is nothing here to recognize or review yet.\n");
-			} else {
-				out.push_str(&format!(
-					"{} of {} elements stand out from the background at 3 to 1 contrast or more.\n",
-					f.standout_elements, f.elements
+				out.push_str(&t(
+					"The design is empty: there is nothing here to recognize or review yet.\n",
 				));
+			} else {
+				out.push_str(&t("%s of %s elements stand out from the background at 3 to 1 contrast or more.\n").replacen("%s", &(f.standout_elements).to_string(), 1).replacen("%s", &(f.elements).to_string(), 1));
 				if f.texts == 0 {
-					out.push_str("There are no text elements, so word recognition has nothing to check.\n");
-				} else if f.unreadable_texts == 0 {
-					out.push_str("Every text element is readable against the background (3 to 1 or more).\n");
-				} else {
-					out.push_str(&format!(
-						"{} of {} text elements are unreadable against the background (under 3 to 1).\n",
-						f.unreadable_texts, f.texts
+					out.push_str(&t(
+						"There are no text elements, so word recognition has nothing to check.\n",
 					));
+				} else if f.unreadable_texts == 0 {
+					out.push_str(&t(
+						"Every text element is readable against the background (3 to 1 or more).\n",
+					));
+				} else {
+					out.push_str(&t("%s of %s text elements are unreadable against the background (under 3 to 1).\n").replacen("%s", &(f.unreadable_texts).to_string(), 1).replacen("%s", &(f.texts).to_string(), 1));
 				}
 			}
 		}
 		_ => {
 			if f.elements == 0 {
-				out.push_str("The canvas is empty: there is nothing to recognize yet.\n");
+				out.push_str(&t(
+					"The canvas is empty: there is nothing to recognize yet.\n",
+				));
 			} else {
 				if f.elements <= 2 {
-					out.push_str(&format!(
-						"Only {} element{} so far: a viewer would recognize the pieces, but they do not yet add up to a whole picture.\n",
-						f.elements,
-						if f.elements == 1 { "" } else { "s" }
-					));
+					out.push_str(&t("Only %s element%s so far: a viewer would recognize the pieces, but they do not yet add up to a whole picture.\n").replacen("%s", &(f.elements).to_string(), 1).replacen("%s", if f.elements == 1 { "" } else { "s" }, 1));
 				} else {
-					out.push_str(&format!(
-						"{} elements: enough pieces on the canvas to form a recognizable whole.\n",
-						f.elements
-					));
+					out.push_str(&t("%s elements: enough pieces on the canvas to form a recognizable whole.\n").replacen("%s", &(f.elements).to_string(), 1));
 				}
 				if f.standout_elements == 0 {
-					out.push_str(
-						"No element reaches 3 to 1 contrast against the background: the picture would read as a wash of similar tones.\n",
-					);
+					out.push_str(&t("No element reaches 3 to 1 contrast against the background: the picture would read as a wash of similar tones.\n"));
 				} else if f.standout_elements == f.elements {
-					out.push_str("Every element stands out from the background at 3 to 1 or more.\n");
-				} else {
-					out.push_str(&format!(
-						"{} of {} elements stand out from the background at 3 to 1 or more; the rest sit close to it in tone.\n",
-						f.standout_elements, f.elements
+					out.push_str(&t(
+						"Every element stands out from the background at 3 to 1 or more.\n",
 					));
+				} else {
+					out.push_str(&t("%s of %s elements stand out from the background at 3 to 1 or more; the rest sit close to it in tone.\n").replacen("%s", &(f.standout_elements).to_string(), 1).replacen("%s", &(f.elements).to_string(), 1));
 				}
 				if f.has_depth_layer {
-					out.push_str(
-						"Layers carry depth roles, which give a viewer near and far to read: the picture has structure.\n",
-					);
+					out.push_str(&t("Layers carry depth roles, which give a viewer near and far to read: the picture has structure.\n"));
 				} else {
-					out.push_str(
-						"No layer carries a depth role: the picture reads flat — fine for a pattern or a chart, harder for a scene.\n",
-					);
+					out.push_str(&t("No layer carries a depth role: the picture reads flat — fine for a pattern or a chart, harder for a scene.\n"));
 				}
 			}
 		}
@@ -682,8 +744,8 @@ pub fn default_slider_ids(kind: GoalKind) -> Vec<&'static str> {
 mod tests {
 	use super::*;
 	use crate::palette::PaletteColor;
-	use crate::sliders::AdjustTarget;
 	use crate::project::DEFAULT_PAGE_JUMP_PERCENT;
+	use crate::sliders::AdjustTarget;
 
 	fn project(drawing: Drawing, goal: Option<ProjectGoal>) -> Project {
 		Project {
@@ -719,7 +781,11 @@ mod tests {
 		// Empty design, question answered: all three criteria
 		// are settled; only the gated one is met (the saying of
 		// it), so both percentages are 1 of 3.
-		let goal = answered(GoalKind::Writing, "What will the writing be?", "A sign or label");
+		let goal = answered(
+			GoalKind::Writing,
+			"What will the writing be?",
+			"A sign or label",
+		);
 		let p = project(Drawing::new(800, 600, Srgb::WHITE), Some(goal));
 		let r = goal_report(&p).unwrap();
 		assert_eq!(r.goal_match_pct, 33); // 1 of 3 settled criteria met
@@ -727,8 +793,15 @@ mod tests {
 		assert_eq!(r.suggestions.len(), 2);
 		// Add clear black text: everything met.
 		let mut d = Drawing::new(800, 600, Srgb::WHITE);
-		d.add_shape(0, Shape::text("Hello", "Arial", 36, 40, 40, 300, 60, Srgb::BLACK));
-		let goal = answered(GoalKind::Writing, "What will the writing be?", "A sign or label");
+		d.add_shape(
+			0,
+			Shape::text("Hello", "Arial", 36, 40, 40, 300, 60, Srgb::BLACK),
+		);
+		let goal = answered(
+			GoalKind::Writing,
+			"What will the writing be?",
+			"A sign or label",
+		);
 		let p = project(d, Some(goal));
 		let r = goal_report(&p).unwrap();
 		assert_eq!(r.goal_match_pct, 100);
@@ -743,16 +816,24 @@ mod tests {
 		// settled criterion (elements) = 100; creation counts
 		// the open one as not yet = 1 of 2 = 50.
 		let mut d = Drawing::new(800, 600, Srgb::WHITE);
-		d.add_shape(0, Shape::new(ShapeKind::Rectangle, 10, 10, 50, 50, Srgb::BLACK));
+		d.add_shape(
+			0,
+			Shape::new(ShapeKind::Rectangle, 10, 10, 50, 50, Srgb::BLACK),
+		);
 		let p = project(d, Some(ProjectGoal::new(GoalKind::Mixed)));
 		let r = goal_report(&p).unwrap();
 		assert_eq!(r.goal_match_pct, 100, "{}", r.lines.join(" | "));
 		assert_eq!(r.creation_pct, 50);
 		assert!(r.lines.iter().any(|l| l.starts_with("Open:")));
-		assert!(r.full_text(p.goal.as_ref().unwrap()).contains("No fixed answer"));
+		assert!(r
+			.full_text(p.goal.as_ref().unwrap())
+			.contains("No fixed answer"));
 		// Answer it and both percentages agree.
 		let mut d = Drawing::new(800, 600, Srgb::WHITE);
-		d.add_shape(0, Shape::new(ShapeKind::Rectangle, 10, 10, 50, 50, Srgb::BLACK));
+		d.add_shape(
+			0,
+			Shape::new(ShapeKind::Rectangle, 10, 10, 50, 50, Srgb::BLACK),
+		);
 		let goal = answered(GoalKind::Mixed, "How will it be presented?", "As a picture");
 		let p = project(d, Some(goal));
 		let r = goal_report(&p).unwrap();
@@ -802,28 +883,46 @@ mod tests {
 		let mut d = Drawing::new(800, 600, Srgb::WHITE);
 		d.add_shape(
 			0,
-			Shape::text("Faint", "Arial", 36, 40, 40, 300, 60, Srgb::new(200, 200, 200)),
+			Shape::text(
+				"Faint",
+				"Arial",
+				36,
+				40,
+				40,
+				300,
+				60,
+				Srgb::new(200, 200, 200),
+			),
 		);
 		let p = project(d, Some(ProjectGoal::new(GoalKind::Writing)));
 		let text = recognizability_report(&p);
 		assert!(text.contains("hard to recognize"), "{text}");
 		// Writing with clear text.
 		let mut d = Drawing::new(800, 600, Srgb::WHITE);
-		d.add_shape(0, Shape::text("Clear", "Arial", 36, 40, 40, 300, 60, Srgb::BLACK));
+		d.add_shape(
+			0,
+			Shape::text("Clear", "Arial", 36, 40, 40, 300, 60, Srgb::BLACK),
+		);
 		let p = project(d, Some(ProjectGoal::new(GoalKind::Writing)));
 		assert!(recognizability_report(&p).contains("recognize the words at once"));
 		// Image with depth layering vs flat.
 		let mut d = Drawing::new(800, 600, Srgb::WHITE);
 		d.set_layer_depth(0, DepthRole::Background);
 		for i in 0..3 {
-			d.add_shape(0, Shape::new(ShapeKind::Rectangle, i * 60, 10, 50, 50, Srgb::BLACK));
+			d.add_shape(
+				0,
+				Shape::new(ShapeKind::Rectangle, i * 60, 10, 50, 50, Srgb::BLACK),
+			);
 		}
 		let p = project(d, Some(ProjectGoal::new(GoalKind::ImageCreation)));
 		let text = recognizability_report(&p);
 		assert!(text.contains("near and far to read"), "{text}");
 		let mut d = Drawing::new(800, 600, Srgb::WHITE);
 		for i in 0..3 {
-			d.add_shape(0, Shape::new(ShapeKind::Rectangle, i * 60, 10, 50, 50, Srgb::BLACK));
+			d.add_shape(
+				0,
+				Shape::new(ShapeKind::Rectangle, i * 60, 10, 50, 50, Srgb::BLACK),
+			);
 		}
 		let p = project(d, Some(ProjectGoal::new(GoalKind::ImageCreation)));
 		assert!(recognizability_report(&p).contains("reads flat"));

@@ -19,36 +19,41 @@ use chroma_core::brushes::{Brush, BrushLibrary, PATTERNS};
 use chroma_core::design::{css_for_colors, Heading, Shape, ShapeKind, TextAlign, TextStyle};
 use chroma_core::dictionary;
 use chroma_core::drawing::{DepthRole, Drawing, Event, TreatmentScope};
-use chroma_core::goals::{
-	default_slider_ids, goal_report, recognizability_report, seed_drawing, GoalKind,
-	ProjectGoal,
+use chroma_core::formats::{
+	blend, channel_values, channels as format_channels, color_from_channels, contrast_verdict,
+	frequency_to_color, gradient, random_color, rotate_hue_ryb, subtract, text_readability,
+	ChannelSet,
 };
-use chroma_core::viewability::DepthBand;
+use chroma_core::goals::{
+	default_slider_ids, goal_report, recognizability_report, seed_drawing, GoalKind, ProjectGoal,
+};
+use chroma_core::inspect::{inspect_color, inspect_layer, inspect_shape};
 use chroma_core::palette::{gray_ramp, starter_palette, PaletteColor, Provenance};
 use chroma_core::plain::{parse_color, parse_position, parse_size};
 use chroma_core::project::{InteractionMode, Project, ProjectStats, DEFAULT_PAGE_JUMP_PERCENT};
+use chroma_core::recognize::{recognize, Recognized};
+use chroma_core::search::{search_catalog, CatalogHit};
 use chroma_core::sliders::{
 	change_announcement, page_jump, slider_by_id, AdjustTarget, ColorAdjust, SliderDef,
 	SliderTarget, SLIDERS,
 };
-use chroma_core::formats::{
-	blend, channel_values, channels as format_channels, color_from_channels,
-	contrast_verdict, frequency_to_color, gradient, random_color, rotate_hue_ryb, subtract,
-	text_readability, ChannelSet,
-};
-use chroma_core::inspect::{inspect_color, inspect_layer, inspect_shape};
-use chroma_core::recognize::{recognize, Recognized};
-use chroma_core::variables;
-use chroma_core::search::{search_catalog, CatalogHit};
 use chroma_core::sound::{cue_at, cue_for_shape, tone_wav_at, Cue};
 use chroma_core::symbols;
 use chroma_core::tactile::{compare_images, tactile_grid};
 use chroma_core::templates;
 use chroma_core::textstudio::parse_feed_titles;
+use chroma_core::variables;
+use chroma_core::viewability::DepthBand;
 use chroma_core::web::{import_html, parse_css_colors};
 use chroma_core::{describe_in, extract_palette, ColorFormat, Oklch, Srgb};
+use patois::t;
 use quiet_list::{QuietList, Select};
 use wxdragon::prelude::*;
+
+// The compiled gettext catalogs from po/, baked in by patois-build,
+// plus wxWidgets' own stock-dialog translations on the same language.
+patois::embed_domain!();
+patois::embed_wx_translations!();
 
 const ID_OPEN_IMAGE: Id = 101;
 const ID_EXPORT_PNG: Id = 102;
@@ -293,7 +298,10 @@ const _: () = {
 	let mut i = 0;
 	while i < MENU_IDS.len() {
 		let id = MENU_IDS[i];
-		assert!(id > 0 && id <= ID_HIGHEST, "menu ID out of the valid wx range");
+		assert!(
+			id > 0 && id <= ID_HIGHEST,
+			"menu ID out of the valid wx range"
+		);
 		let mut j = i + 1;
 		while j < MENU_IDS.len() {
 			assert!(MENU_IDS[j] != id, "duplicate menu ID");
@@ -479,14 +487,14 @@ impl ShapePart {
 	];
 
 	/// The spoken name, the row's label and the slider's name.
-	fn name(self) -> &'static str {
+	fn name(self) -> String {
 		match self {
-			ShapePart::Across => "Across",
-			ShapePart::Down => "Down",
-			ShapePart::Width => "Width",
-			ShapePart::Height => "Height",
-			ShapePart::Rotation => "Rotation",
-			ShapePart::Roundedness => "Roundedness",
+			ShapePart::Across => t("Across"),
+			ShapePart::Down => t("Down"),
+			ShapePart::Width => t("Width"),
+			ShapePart::Height => t("Height"),
+			ShapePart::Rotation => t("Rotation"),
+			ShapePart::Roundedness => t("Roundedness"),
 		}
 	}
 
@@ -494,9 +502,9 @@ impl ShapePart {
 	/// "25 percent" — the readout's text and the announcement's.
 	fn words(self, value: i32) -> String {
 		match self {
-			ShapePart::Rotation => format!("{value} degrees"),
-			ShapePart::Roundedness => format!("{value} percent"),
-			_ => format!("{value} pixels"),
+			ShapePart::Rotation => t("%s degrees").replacen("%s", &(value).to_string(), 1),
+			ShapePart::Roundedness => t("%s percent").replacen("%s", &(value).to_string(), 1),
+			_ => t("%s pixels").replacen("%s", &(value).to_string(), 1),
 		}
 	}
 }
@@ -585,7 +593,6 @@ struct Win {
 }
 
 type Shared = Rc<RefCell<State>>;
-
 
 /// Escape cancels a dialog, the way a standard Cancel
 /// button would. These dialogs' buttons are closures, not
@@ -681,25 +688,29 @@ fn cue_for_last(state: &State) -> Option<Cue> {
 
 fn wcag(ratio: f32) -> String {
 	let verdict = |need: f32| if ratio >= need { "pass" } else { "fail" };
-	format!(
-		"contrast on the design background {:.1} to 1: AA normal text {}, AA large text {}, AAA normal text {}",
-		ratio,
-		verdict(4.5),
-		verdict(3.0),
-		verdict(7.0)
-	)
+	t("contrast on the design background %s to 1: AA normal text %s, AA large text %s, AAA normal text %s").replacen("%s", &format!("{:.1}", ratio), 1).replacen("%s", verdict(4.5), 1).replacen("%s", verdict(3.0), 1).replacen("%s", verdict(7.0), 1)
 }
 
 fn readout_text(state: &State, color: Srgb) -> String {
 	let o = color.to_oklch();
 	let comp = o.complementary().to_srgb();
-	format!(
-		"{}. Complementary: {} ({}). {}",
-		describe_in(color, state.color_format),
-		comp.format(state.color_format),
-		chroma_core::hue_family(comp.to_oklch().h),
-		wcag(color.contrast(state.drawing.background))
-	)
+	t("%s. Complementary: %s (%s). %s")
+		.replacen(
+			"%s",
+			&(describe_in(color, state.color_format)).to_string(),
+			1,
+		)
+		.replacen("%s", &(comp.format(state.color_format)).to_string(), 1)
+		.replacen(
+			"%s",
+			&(chroma_core::hue_family(comp.to_oklch().h)).to_string(),
+			1,
+		)
+		.replacen(
+			"%s",
+			&(wcag(color.contrast(state.drawing.background))).to_string(),
+			1,
+		)
 }
 
 /// The whole project as the core sees it: the state's pieces
@@ -748,8 +759,8 @@ fn save_design(win: &Win, shared: &Shared, path: Option<String>) -> bool {
 		Some(p) => Some(p),
 		None => file_dialog(
 			&frame,
-			"Save design",
-			"Blind Designer design (*.bdd)|*.bdd",
+			&t("Save design"),
+			&format!("{}|*.bdd", t("Blind Designer design (*.bdd)")),
 			true,
 		),
 	};
@@ -762,11 +773,14 @@ fn save_design(win: &Win, shared: &Shared, path: Option<String>) -> bool {
 			let fp = project_fingerprint(&state);
 			state.saved_fingerprint = fp;
 			drop(state);
-			frame.set_status_text(&format!("Saved design to {path}"), 0);
+			frame.set_status_text(
+				&t("Saved design to %s").replacen("%s", &(path).to_string(), 1),
+				0,
+			);
 			true
 		}
 		Err(e) => {
-			frame.set_status_text(&format!("Save failed: {e}"), 0);
+			frame.set_status_text(&t("Save failed: %s").replacen("%s", &(e).to_string(), 1), 0);
 			false
 		}
 	}
@@ -789,20 +803,18 @@ fn confirm_discard(win: &Rc<Win>, shared: &Shared, action: &str) -> bool {
 	}
 	let dialog = MessageDialog::builder(
 		&win.frame,
-		&format!(
-			"This project has unsaved changes. Save it before you {action}? \
-			 Choose Save to save it first, Don't Save to {action} and lose \
-			 the changes, or Cancel to stay with this project."
-		),
-		"Unsaved changes",
+		&t("This project has unsaved changes. Save it before you %s? \
+			 Choose Save to save it first, Don't Save to %s and lose \
+			 the changes, or Cancel to stay with this project.")
+		.replacen("%s", action, 1)
+		.replacen("%s", action, 1),
+		&t("Unsaved changes"),
 	)
 	.with_style(
-		MessageDialogStyle::YesNo
-			| MessageDialogStyle::Cancel
-			| MessageDialogStyle::IconQuestion,
+		MessageDialogStyle::YesNo | MessageDialogStyle::Cancel | MessageDialogStyle::IconQuestion,
 	)
 	.build();
-	dialog.set_yes_no_labels("Save", "Don't Save");
+	dialog.set_yes_no_labels(&t("Save"), &t("Don't Save"));
 	match dialog.show_modal() {
 		ID_YES => {
 			let path = shared
@@ -831,9 +843,14 @@ fn stats_line(state: &State) -> String {
 }
 
 fn refresh_lists(win: &Win, state: &State) {
-	win.palette_list.borrow().update_labelled(palette_rows(state), Select::Keep);
-	win.elements_list.borrow().update_labelled(element_rows(state), Select::Keep);
-	win.layers_list.update_labelled(layer_rows(state), Select::Keep);
+	win.palette_list
+		.borrow()
+		.update_labelled(palette_rows(state), Select::Keep);
+	win.elements_list
+		.borrow()
+		.update_labelled(element_rows(state), Select::Keep);
+	win.layers_list
+		.update_labelled(layer_rows(state), Select::Keep);
 	win.stats_text.set_label(&stats_line(state));
 	refresh_menu_states(win, state);
 	refresh_slider_values(win, state);
@@ -848,7 +865,9 @@ fn refresh_lists(win: &Win, state: &State) {
 /// description export needs at least one frame. Everything else
 /// works on any project, empty or not, and stays enabled.
 fn refresh_menu_states(win: &Win, state: &State) {
-	let Some(bar) = win.frame.get_menu_bar() else { return };
+	let Some(bar) = win.frame.get_menu_bar() else {
+		return;
+	};
 	let has_color = win.palette_list.borrow().selected().is_some();
 	let has_element = win.elements_list.borrow().selected().is_some();
 	for id in [
@@ -895,13 +914,18 @@ fn select_color(win: &Win, state: &State, color: Srgb) {
 	win.c_spin.set_value(o.c as f64);
 	win.h_spin.set_value(o.h as f64);
 	win.frame.set_status_text(
-		&format!("Selected: {}", describe_in(color, state.color_format)),
+		&t("Selected: %s").replacen(
+			"%s",
+			&(describe_in(color, state.color_format)).to_string(),
+			1,
+		),
 		0,
 	);
 }
 
 fn selected_color(win: &Win, state: &State) -> Option<Srgb> {
-	win.palette_list.borrow()
+	win.palette_list
+		.borrow()
 		.selected()
 		.and_then(|i| state.palette.get(i))
 		.map(|pc| pc.color)
@@ -928,13 +952,20 @@ fn load_starter_colors(win: &Win, state: &mut State) {
 		.filter(|pc| !state.palette.iter().any(|p| p.color == pc.color))
 		.collect();
 	if fresh.is_empty() {
-		win.frame.set_status_text("The starter colors are already in the palette.", 0);
+		win.frame
+			.set_status_text(&t("The starter colors are already in the palette."), 0);
 		return;
 	}
-	let names: Vec<String> = fresh.iter().map(|pc| pc.spoken(state.color_format)).collect();
+	let names: Vec<String> = fresh
+		.iter()
+		.map(|pc| pc.spoken(state.color_format))
+		.collect();
 	state.palette.extend(fresh);
 	refresh_lists(win, state);
-	win.frame.set_status_text(&format!("Loaded starter colors: {}", names.join("; ")), 0);
+	win.frame.set_status_text(
+		&t("Loaded starter colors: %s").replacen("%s", &(names.join("; ")).to_string(), 1),
+		0,
+	);
 }
 
 /// Read one slider's current value — or None when the slider has
@@ -951,14 +982,14 @@ fn read_slider_value(win: &Win, state: &State, def: &SliderDef) -> Option<i32> {
 		SliderTarget::ElementOpacity => {
 			selected_shape(state, win).map(|(_, _, s)| s.opacity as i32)
 		}
-		SliderTarget::ElementScale => selected_shape(state, win).map(|(li, si, s)| {
-			match state.scale_base {
+		SliderTarget::ElementScale => {
+			selected_shape(state, win).map(|(li, si, s)| match state.scale_base {
 				Some((bl, bs, bw, _)) if bl == li && bs == si && bw > 0 => {
 					(s.w as i32 * 100 / bw as i32).clamp(def.min, def.max)
 				}
 				_ => 100,
-			}
-		}),
+			})
+		}
 		SliderTarget::StrokeWidth => match selected_shape(state, win) {
 			Some((_, _, s)) if s.kind == ShapeKind::Stroke => Some(s.brush as i32),
 			_ => None,
@@ -967,9 +998,7 @@ fn read_slider_value(win: &Win, state: &State, def: &SliderDef) -> Option<i32> {
 			Some((_, _, s)) if s.kind == ShapeKind::Rectangle => Some(s.corner as i32),
 			_ => None,
 		},
-		SliderTarget::FrameDuration => {
-			state.drawing.frames.first().map(|f| f.duration_ms as i32)
-		}
+		SliderTarget::FrameDuration => state.drawing.frames.first().map(|f| f.duration_ms as i32),
 		SliderTarget::ExtractCount => Some(state.extract_count),
 		SliderTarget::TactileColumns => Some(state.tactile_cols),
 		SliderTarget::TactileRows => Some(state.tactile_rows),
@@ -980,13 +1009,13 @@ fn read_slider_value(win: &Win, state: &State, def: &SliderDef) -> Option<i32> {
 }
 
 /// The readout words for a slider with nothing to act on.
-fn slider_placeholder(def: &SliderDef) -> &'static str {
+fn slider_placeholder(def: &SliderDef) -> String {
 	match def.target {
-		SliderTarget::ElementOpacity | SliderTarget::ElementScale => "no element selected",
-		SliderTarget::StrokeWidth => "no stroke selected",
-		SliderTarget::ElementRoundedness => "no rectangle selected",
-		SliderTarget::FrameDuration => "no frames yet",
-		_ => "not available",
+		SliderTarget::ElementOpacity | SliderTarget::ElementScale => t("no element selected"),
+		SliderTarget::StrokeWidth => t("no stroke selected"),
+		SliderTarget::ElementRoundedness => t("no rectangle selected"),
+		SliderTarget::FrameDuration => t("no frames yet"),
+		_ => t("not available"),
 	}
 }
 
@@ -998,8 +1027,9 @@ fn slider_placeholder(def: &SliderDef) -> &'static str {
 fn channel_target(state: &State, win: &Win) -> Option<(ChannelTarget, Srgb)> {
 	match state.slider_target {
 		AdjustTarget::BaseColor => Some((ChannelTarget::Brush, state.brush.color)),
-		AdjustTarget::Element => selected_shape(state, win)
-			.map(|(li, si, s)| (ChannelTarget::Element(li, si), s.fill)),
+		AdjustTarget::Element => {
+			selected_shape(state, win).map(|(li, si, s)| (ChannelTarget::Element(li, si), s.fill))
+		}
 		_ => None,
 	}
 }
@@ -1007,18 +1037,17 @@ fn channel_target(state: &State, win: &Win) -> Option<(ChannelTarget, Srgb)> {
 /// Why the channel sliders cannot be edited right now, in words
 /// for the note under the group (and the status line, if a stray
 /// event reaches a disabled slider). Empty when they can.
-fn channel_note_text(state: &State, win: &Win) -> &'static str {
+fn channel_note_text(state: &State, win: &Win) -> String {
 	match state.slider_target {
-		AdjustTarget::BaseColor => "",
+		AdjustTarget::BaseColor => String::new(),
 		AdjustTarget::Element => {
 			if selected_shape(state, win).is_some() {
-				""
+				String::new()
 			} else {
-				"Select an element to edit its color channels."
+				t("Select an element to edit its color channels.")
 			}
 		}
-		_ => "Channel sliders edit one color at a time: set the color adjustments target \
-			to Current color or Selected element to use them.",
+		_ => t("Channel sliders edit one color at a time: set the color adjustments target to Current color or Selected element to use them."),
 	}
 }
 
@@ -1043,12 +1072,16 @@ fn refresh_channel_values(win: &Win, state: &State) {
 	if win.channel_rows.borrow().is_empty() {
 		return;
 	}
-	let ChannelSet::Sliders(defs) = format_channels(state.channel_format) else { return };
+	let ChannelSet::Sliders(defs) = format_channels(state.channel_format) else {
+		return;
+	};
 	let editable = channel_target(state, win).is_some();
 	let values = channel_display_values(win, state);
 	win.slider_refreshing.set(true);
 	for row in win.channel_rows.borrow().iter() {
-		let Some(def) = defs.get(row.index) else { continue };
+		let Some(def) = defs.get(row.index) else {
+			continue;
+		};
 		row.slider.enable(editable);
 		match values.as_ref().and_then(|v| v.get(row.index)) {
 			Some(v) => {
@@ -1060,7 +1093,7 @@ fn refresh_channel_values(win: &Win, state: &State) {
 	}
 	win.slider_refreshing.set(false);
 	if let Some(note) = win.channel_note.borrow().as_ref() {
-		note.set_label(channel_note_text(state, win));
+		note.set_label(&channel_note_text(state, win));
 	}
 }
 
@@ -1069,7 +1102,13 @@ fn refresh_channel_values(win: &Win, state: &State) {
 fn selected_shape<'a>(state: &'a State, win: &Win) -> Option<(usize, usize, &'a Shape)> {
 	let flat = win.elements_list.borrow().selected()?;
 	let (li, si) = locate(state, flat)?;
-	state.drawing.layers.get(li)?.shapes.get(si).map(|s| (li, si, s))
+	state
+		.drawing
+		.layers
+		.get(li)?
+		.shapes
+		.get(si)
+		.map(|s| (li, si, s))
 }
 
 /// Push the current values into the Sliders tab's controls and
@@ -1085,13 +1124,15 @@ fn refresh_slider_values(win: &Win, state: &State) {
 	}
 	win.slider_refreshing.set(true);
 	for row in win.slider_rows.borrow().iter() {
-		let Some(def) = slider_by_id(row.id) else { continue };
+		let Some(def) = slider_by_id(row.id) else {
+			continue;
+		};
 		match read_slider_value(win, state, def) {
 			Some(value) => {
 				row.slider.set_value(value);
 				row.readout.set_label(&def.format(value));
 			}
-			None => row.readout.set_label(slider_placeholder(def)),
+			None => row.readout.set_label(&slider_placeholder(def)),
 		}
 	}
 	win.slider_refreshing.set(false);
@@ -1126,21 +1167,33 @@ fn build_channel_group(
 ) {
 	let (format, values) = {
 		let state = shared.borrow();
-		let values =
-			channel_target(&state, win).map(|(_, color)| channel_values(state.channel_format, color));
+		let values = channel_target(&state, win)
+			.map(|(_, color)| channel_values(state.channel_format, color));
 		(state.channel_format, values)
 	};
-	let header = StaticText::builder(page).with_label("Color channels").build();
-	sizer.add(&header, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	let header = StaticText::builder(page)
+		.with_label(&t("Color channels"))
+		.build();
+	sizer.add(
+		&header,
+		0,
+		SizerFlag::Left | SizerFlag::Right | SizerFlag::Top,
+		5,
+	);
 	{
-		let label = StaticText::builder(page).with_label("Channel format").build();
+		let label = StaticText::builder(page)
+			.with_label(&t("Channel format"))
+			.build();
 		let choice = Choice::builder(page).build();
 		for f in ColorFormat::ALL {
-			choice.append(f.name());
+			choice.append(&f.name());
 		}
-		let at = ColorFormat::ALL.iter().position(|f| *f == format).unwrap_or(0);
+		let at = ColorFormat::ALL
+			.iter()
+			.position(|f| *f == format)
+			.unwrap_or(0);
 		choice.set_selection(at as u32);
-		choice.set_name("Channel format");
+		choice.set_name(&t("Channel format"));
 		let row = BoxSizer::builder(Orientation::Horizontal).build();
 		row.add(&label, 0, SizerFlag::All, 5);
 		row.add(&choice, 0, SizerFlag::All, 5);
@@ -1148,8 +1201,12 @@ fn build_channel_group(
 		{
 			let (w, s, choice) = (win.clone(), shared.clone(), choice.clone());
 			choice.on_selection_changed(move |_| {
-				let Some(sel) = choice.get_selection() else { return };
-				let Some(&format) = ColorFormat::ALL.get(sel as usize) else { return };
+				let Some(sel) = choice.get_selection() else {
+					return;
+				};
+				let Some(&format) = ColorFormat::ALL.get(sel as usize) else {
+					return;
+				};
 				{
 					let mut state = s.borrow_mut();
 					if state.channel_format == format {
@@ -1167,16 +1224,21 @@ fn build_channel_group(
 	}
 	match format_channels(format) {
 		ChannelSet::ReadoutOnly(reason) => {
-			let note = StaticText::builder(page).with_label(reason).build();
-			sizer.add(&note, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Bottom, 5);
+			let note = StaticText::builder(page).with_label(&t(reason)).build();
+			sizer.add(
+				&note,
+				0,
+				SizerFlag::Left | SizerFlag::Right | SizerFlag::Bottom,
+				5,
+			);
 			*note_out = Some(note);
 		}
 		ChannelSet::Sliders(defs) => {
 			for (index, def) in defs.iter().enumerate() {
-				let label_text = def.label();
+				let label_text = def.display_label();
 				let (value, text) = match values.as_ref().and_then(|v| v.get(index)) {
 					Some(v) => (*v, def.format_value(*v)),
-					None => (def.min, "no color to edit".to_string()),
+					None => (def.min, t("no color to edit")),
 				};
 				let label = StaticText::builder(page).with_label(&label_text).build();
 				let slider = Slider::builder(page)
@@ -1207,12 +1269,21 @@ fn build_channel_group(
 						channel_key(&w, &s, index, &data);
 					});
 				}
-				rows.push(ChannelRow { index, slider, readout });
+				rows.push(ChannelRow {
+					index,
+					slider,
+					readout,
+				});
 			}
 			let note = StaticText::builder(page)
-				.with_label(channel_note_text(&shared.borrow(), win))
+				.with_label(&channel_note_text(&shared.borrow(), win))
 				.build();
-			sizer.add(&note, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Bottom, 5);
+			sizer.add(
+				&note,
+				0,
+				SizerFlag::Left | SizerFlag::Right | SizerFlag::Bottom,
+				5,
+			);
 			*note_out = Some(note);
 		}
 	}
@@ -1240,7 +1311,11 @@ fn shape_part_state(win: &Win, state: &State, part: ShapePart) -> (Option<i32>, 
 		}
 		ShapePart::Width => {
 			if s.kind == ShapeKind::Stroke {
-				(Some(s.w as i32), "a stroke's size is its points".to_string(), false)
+				(
+					Some(s.w as i32),
+					"a stroke's size is its points".to_string(),
+					false,
+				)
 			} else {
 				let v = (s.w as i32).clamp(1, cw.max(1));
 				(Some(v), part.words(v), true)
@@ -1248,7 +1323,11 @@ fn shape_part_state(win: &Win, state: &State, part: ShapePart) -> (Option<i32>, 
 		}
 		ShapePart::Height => {
 			if s.kind == ShapeKind::Stroke {
-				(Some(s.h as i32), "a stroke's size is its points".to_string(), false)
+				(
+					Some(s.h as i32),
+					"a stroke's size is its points".to_string(),
+					false,
+				)
 			} else {
 				let v = (s.h as i32).clamp(1, ch.max(1));
 				(Some(v), part.words(v), true)
@@ -1263,7 +1342,11 @@ fn shape_part_state(win: &Win, state: &State, part: ShapePart) -> (Option<i32>, 
 				let v = s.corner as i32;
 				(Some(v), part.words(v), true)
 			} else {
-				(Some(s.corner as i32), "roundedness only affects rectangles".to_string(), false)
+				(
+					Some(s.corner as i32),
+					"roundedness only affects rectangles".to_string(),
+					false,
+				)
 			}
 		}
 	}
@@ -1288,9 +1371,14 @@ fn build_shape_group(
 	rows: &mut Vec<ShapeRow>,
 ) {
 	let header = StaticText::builder(page)
-		.with_label("Shape parts of the selected element")
+		.with_label(&t("Shape parts of the selected element"))
 		.build();
-	sizer.add(&header, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	sizer.add(
+		&header,
+		0,
+		SizerFlag::Left | SizerFlag::Right | SizerFlag::Top,
+		5,
+	);
 	let note = StaticText::builder(page)
 		.with_label(
 			"Roundedness only affects rectangles; a stroke's size is its points, so a stroke's width and height sliders stay off.",
@@ -1314,13 +1402,13 @@ fn build_shape_group(
 			let state = shared.borrow();
 			shape_part_state(win, &state, part)
 		};
-		let label = StaticText::builder(page).with_label(part.name()).build();
+		let label = StaticText::builder(page).with_label(&part.name()).build();
 		let slider = Slider::builder(page)
 			.with_min_value(min)
 			.with_max_value(max)
 			.with_value(value.unwrap_or(min).clamp(min, max))
 			.build();
-		slider.set_name(part.name());
+		slider.set_name(&part.name());
 		slider.enable(enabled);
 		let readout = StaticText::builder(page).with_label(&text).build();
 		let row_sizer = BoxSizer::builder(Orientation::Horizontal).build();
@@ -1343,7 +1431,13 @@ fn build_shape_group(
 				shape_key(&w, &s, part, &data);
 			});
 		}
-		rows.push(ShapeRow { part, min, max, slider, readout });
+		rows.push(ShapeRow {
+			part,
+			min,
+			max,
+			slider,
+			readout,
+		});
 	}
 }
 
@@ -1381,18 +1475,13 @@ fn apply_shape_part(win: &Win, shared: &Shared, part: ShapePart, value: i32) {
 		match selected_shape(&state, win).map(|(li, si, s)| (li, si, s.clone())) {
 			Some((li, si, s)) => {
 				let landed = match part {
-					ShapePart::Across => {
-						state.drawing.set_shape_position(li, si, value, s.y)
-					}
-					ShapePart::Down => {
-						state.drawing.set_shape_position(li, si, s.x, value)
-					}
+					ShapePart::Across => state.drawing.set_shape_position(li, si, value, s.y),
+					ShapePart::Down => state.drawing.set_shape_position(li, si, s.x, value),
 					ShapePart::Width => {
 						if s.kind == ShapeKind::Stroke {
-							note = Some(
-								"A stroke's size is its points; move it or add a new one."
-									.to_string(),
-							);
+							note = Some(t(
+								"A stroke's size is its points; move it or add a new one.",
+							));
 							false
 						} else {
 							state.drawing.resize_shape(li, si, value.max(1) as u32, s.h)
@@ -1400,18 +1489,15 @@ fn apply_shape_part(win: &Win, shared: &Shared, part: ShapePart, value: i32) {
 					}
 					ShapePart::Height => {
 						if s.kind == ShapeKind::Stroke {
-							note = Some(
-								"A stroke's size is its points; move it or add a new one."
-									.to_string(),
-							);
+							note = Some(t(
+								"A stroke's size is its points; move it or add a new one.",
+							));
 							false
 						} else {
 							state.drawing.resize_shape(li, si, s.w, value.max(1) as u32)
 						}
 					}
-					ShapePart::Rotation => {
-						state.drawing.rotate_shape(li, si, value as f64)
-					}
+					ShapePart::Rotation => state.drawing.rotate_shape(li, si, value as f64),
 					ShapePart::Roundedness => {
 						if s.kind == ShapeKind::Rectangle {
 							state.drawing.set_shape_corner(li, si, value as u8)
@@ -1428,7 +1514,7 @@ fn apply_shape_part(win: &Win, shared: &Shared, part: ShapePart, value: i32) {
 					refresh_lists(win, &state);
 				}
 			}
-			None => note = Some("Select an element first.".to_string()),
+			None => note = Some(t("Select an element first.")),
 		}
 	}
 	match note {
@@ -1438,7 +1524,7 @@ fn apply_shape_part(win: &Win, shared: &Shared, part: ShapePart, value: i32) {
 			let words = format!("{} {}", part.name(), part.words(value));
 			win.frame.set_status_text(
 				&if announce_on {
-					format!("{words}. Everything else unchanged.")
+					t("%s. Everything else unchanged.").replacen("%s", &(words).to_string(), 1)
 				} else {
 					format!("{words}.")
 				},
@@ -1509,15 +1595,13 @@ fn shape_key(win: &Rc<Win>, shared: &Shared, part: ShapePart, data: &WindowEvent
 /// plainly instead of guessing.
 fn recognize_selected(win: &Rc<Win>, shared: &Shared) {
 	let mut state = shared.borrow_mut();
-	let Some((li, si, old)) =
-		selected_shape(&state, win).map(|(li, si, s)| (li, si, s.clone()))
+	let Some((li, si, old)) = selected_shape(&state, win).map(|(li, si, s)| (li, si, s.clone()))
 	else {
-		win.frame.set_status_text("Select a stroke first.", 0);
+		win.frame.set_status_text(&t("Select a stroke first."), 0);
 		return;
 	};
 	if old.kind != ShapeKind::Stroke {
-		win.frame.set_status_text(
-			"Recognize Shape works on a selected stroke: draw one with the pointer, or add a stroke by its points.",
+		win.frame.set_status_text(&t("Recognize Shape works on a selected stroke: draw one with the pointer, or add a stroke by its points."),
 			0,
 		);
 		return;
@@ -1525,29 +1609,29 @@ fn recognize_selected(win: &Rc<Win>, shared: &Shared) {
 	let mut clean = match recognize(&old.points) {
 		Recognized::Line { from, to } => {
 			let mut s = Shape::stroke(vec![from, to], old.brush, old.fill);
-			s.caption = Some("Recognized line".to_string());
+			s.caption = Some(t("Recognized line"));
 			s
 		}
 		Recognized::Rectangle { x, y, w, h } => {
 			let mut s = Shape::new(ShapeKind::Rectangle, x, y, w, h, old.fill);
-			s.caption = Some("Recognized rectangle".to_string());
+			s.caption = Some(t("Recognized rectangle"));
 			s
 		}
 		Recognized::Ellipse { x, y, w, h } => {
 			let mut s = Shape::new(ShapeKind::Ellipse, x, y, w, h, old.fill);
-			s.caption = Some("Recognized ellipse".to_string());
+			s.caption = Some(t("Recognized ellipse"));
 			s
 		}
 		Recognized::Triangle { corners } => {
 			let mut pts = corners.to_vec();
 			pts.push(corners[0]);
 			let mut s = Shape::stroke(pts, old.brush, old.fill);
-			s.caption = Some("Recognized triangle".to_string());
+			s.caption = Some(t("Recognized triangle"));
 			s
 		}
 		Recognized::Unknown => {
 			win.frame.set_status_text(
-				"That stroke was not recognized as a known shape; it stays exactly as drawn.",
+				&t("That stroke was not recognized as a known shape; it stays exactly as drawn."),
 				0,
 			);
 			return;
@@ -1579,7 +1663,7 @@ fn recognize_selected(win: &Rc<Win>, shared: &Shared) {
 /// Side layout, so a fixed index would remove the wrong page.
 fn sliders_page_index(win: &Win) -> Option<usize> {
 	(0..win.notebook.get_page_count())
-		.find(|&i| win.notebook.get_page_text(i).as_deref() == Some("Sliders"))
+		.find(|&i| win.notebook.get_page_text(i) == Some(t("Sliders")))
 }
 
 /// Take the Sliders page out of the notebook and forget its
@@ -1715,7 +1799,12 @@ fn build_sliders_tab(win: &Rc<Win>, shared: &Shared) {
 				"Showing every slider: this project pins none of its own. Pin a set in Design, Project Options and only those stay; clear the pins and every slider shows again.",
 			)
 			.build();
-		sizer.add(&note, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+		sizer.add(
+			&note,
+			0,
+			SizerFlag::Left | SizerFlag::Right | SizerFlag::Top,
+			5,
+		);
 	}
 	{
 		// The adjustments target picker always shows now: the
@@ -1723,13 +1812,17 @@ fn build_sliders_tab(win: &Rc<Win>, shared: &Shared) {
 		// the page, and the picker names the one color the
 		// channels (and any pinned adjustments) act on.
 		{
-			let label =
-				StaticText::builder(&page).with_label("Color adjustments act on").build();
+			let label = StaticText::builder(&page)
+				.with_label(&t("Color adjustments act on"))
+				.build();
 			let choice = Choice::builder(&page).build();
 			for t in AdjustTarget::ALL {
-				choice.append(t.name());
+				choice.append(&t.name());
 			}
-			let at = AdjustTarget::ALL.iter().position(|t| *t == target).unwrap_or(0);
+			let at = AdjustTarget::ALL
+				.iter()
+				.position(|t| *t == target)
+				.unwrap_or(0);
 			choice.set_selection(at as u32);
 			let row = BoxSizer::builder(Orientation::Horizontal).build();
 			row.add(&label, 0, SizerFlag::All, 5);
@@ -1738,7 +1831,9 @@ fn build_sliders_tab(win: &Rc<Win>, shared: &Shared) {
 			{
 				let (w, s, choice) = (win.clone(), shared.clone(), choice.clone());
 				choice.on_selection_changed(move |_| {
-					let Some(sel) = choice.get_selection() else { return };
+					let Some(sel) = choice.get_selection() else {
+						return;
+					};
 					let mut state = s.borrow_mut();
 					if let Some(t) = AdjustTarget::ALL.get(sel as usize) {
 						if *t != state.slider_target {
@@ -1755,7 +1850,9 @@ fn build_sliders_tab(win: &Rc<Win>, shared: &Shared) {
 		}
 		let state = shared.borrow();
 		for id in &pins {
-			let Some(def) = slider_by_id(id) else { continue };
+			let Some(def) = slider_by_id(id) else {
+				continue;
+			};
 			if def.target == SliderTarget::ColorChannels {
 				// The channels group is permanent — it is built
 				// after this loop, pins or no pins.
@@ -1765,13 +1862,15 @@ fn build_sliders_tab(win: &Rc<Win>, shared: &Shared) {
 				Some(v) => (v, def.format(v)),
 				None => (def.min, slider_placeholder(def).to_string()),
 			};
-			let label = StaticText::builder(&page).with_label(def.name).build();
+			let label = StaticText::builder(&page)
+				.with_label(&def.display_name())
+				.build();
 			let slider = Slider::builder(&page)
 				.with_min_value(def.min)
 				.with_max_value(def.max)
 				.with_value(value)
 				.build();
-			slider.set_name(def.name);
+			slider.set_name(&def.display_name());
 			let readout = StaticText::builder(&page).with_label(&text).build();
 			let row_sizer = BoxSizer::builder(Orientation::Horizontal).build();
 			row_sizer.add(&label, 0, SizerFlag::All, 5);
@@ -1794,7 +1893,11 @@ fn build_sliders_tab(win: &Rc<Win>, shared: &Shared) {
 					slider_key(&w, &s, row_index, &data);
 				});
 			}
-			rows.push(SliderRow { id: def.id, slider, readout });
+			rows.push(SliderRow {
+				id: def.id,
+				slider,
+				readout,
+			});
 		}
 	}
 	// The two per-part groups close the page, always: the
@@ -1809,7 +1912,7 @@ fn build_sliders_tab(win: &Rc<Win>, shared: &Shared) {
 	);
 	build_shape_group(win, shared, &page, &sizer, &mut shape_rows);
 	page.set_sizer(sizer, true);
-	win.notebook.add_page(&page, "Sliders", false, None);
+	win.notebook.add_page(&page, &t("Sliders"), false, None);
 	{
 		// The page's context menu (right-click, Applications key):
 		// the pins live in Project Options, one step from here.
@@ -1833,7 +1936,12 @@ fn list_panel(parent: &dyn WxWidget, name: &str) -> (Panel, QuietList<usize>) {
 	let label = StaticText::builder(&panel).with_label(name).build();
 	let list = QuietList::new(&panel, name);
 	let sizer = BoxSizer::builder(Orientation::Vertical).build();
-	sizer.add(&label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	sizer.add(
+		&label,
+		0,
+		SizerFlag::Left | SizerFlag::Right | SizerFlag::Top,
+		5,
+	);
 	sizer.add(&list, 1, SizerFlag::Expand | SizerFlag::All, 5);
 	panel.set_sizer(sizer, true);
 	(panel, list)
@@ -1858,14 +1966,16 @@ fn wire_palette_list(win: &Rc<Win>, shared: &Shared) {
 	{
 		let (w, s) = (win.clone(), shared.clone());
 		win.palette_list.borrow().on_key_down(move |data| {
-			let WindowEventData::Keyboard(kb) = data else { return false };
+			let WindowEventData::Keyboard(kb) = data else {
+				return false;
+			};
 			if kb.get_key_code() != Some(WXK_RETURN) {
 				return false;
 			}
 			if let Some(i) = w.palette_list.borrow().selected() {
 				let state = s.borrow();
 				if let Some(text) = inspect_color(&state.drawing, &state.palette, i) {
-					report_dialog(&w, "Inspector: color", "Color inspector", &text);
+					report_dialog(&w, &t("Inspector: color"), &t("Color inspector"), &text);
 				}
 			}
 			true
@@ -1873,7 +1983,9 @@ fn wire_palette_list(win: &Rc<Win>, shared: &Shared) {
 	}
 	{
 		let w = win.clone();
-		win.palette_list.borrow().on_context_menu(move || show_palette_context(&w));
+		win.palette_list
+			.borrow()
+			.on_context_menu(move || show_palette_context(&w));
 	}
 }
 
@@ -1900,7 +2012,9 @@ fn wire_elements_list(win: &Rc<Win>, shared: &Shared) {
 	{
 		let (w, s) = (win.clone(), shared.clone());
 		win.elements_list.borrow().on_key_down(move |data| {
-			let WindowEventData::Keyboard(kb) = data else { return false };
+			let WindowEventData::Keyboard(kb) = data else {
+				return false;
+			};
 			if kb.get_key_code() != Some(WXK_RETURN) {
 				return false;
 			}
@@ -1910,7 +2024,9 @@ fn wire_elements_list(win: &Rc<Win>, shared: &Shared) {
 	}
 	{
 		let w = win.clone();
-		win.elements_list.borrow().on_context_menu(move || show_elements_context(&w));
+		win.elements_list
+			.borrow()
+			.on_context_menu(move || show_elements_context(&w));
 	}
 }
 
@@ -1934,21 +2050,23 @@ fn rebuild_list_pages(win: &Rc<Win>, shared: &Shared) {
 	if shared.borrow().lists_side_by_side {
 		let page = Panel::builder(&win.notebook).build();
 		let splitter = SplitterWindow::builder(&page).build();
-		let (palette_panel, palette_list) = list_panel(&splitter, "Palette");
-		let (elements_panel, elements_list) = list_panel(&splitter, "Elements");
+		let (palette_panel, palette_list) = list_panel(&splitter, &t("Palette"));
+		let (elements_panel, elements_list) = list_panel(&splitter, &t("Elements"));
 		splitter.split_vertically(&palette_panel, &elements_panel, 380);
 		let sizer = BoxSizer::builder(Orientation::Vertical).build();
 		sizer.add(&splitter, 1, SizerFlag::Expand | SizerFlag::All, 5);
 		page.set_sizer(sizer, true);
-		win.notebook.insert_page(0, &page, "Lists", true, None);
+		win.notebook.insert_page(0, &page, &t("Lists"), true, None);
 		pages.push(page);
 		*win.palette_list.borrow_mut() = palette_list;
 		*win.elements_list.borrow_mut() = elements_list;
 	} else {
-		let (palette_page, palette_list) = list_panel(&win.notebook, "Palette");
-		let (elements_page, elements_list) = list_panel(&win.notebook, "Elements");
-		win.notebook.insert_page(0, &elements_page, "Elements", false, None);
-		win.notebook.insert_page(0, &palette_page, "Palette", true, None);
+		let (palette_page, palette_list) = list_panel(&win.notebook, &t("Palette"));
+		let (elements_page, elements_list) = list_panel(&win.notebook, &t("Elements"));
+		win.notebook
+			.insert_page(0, &elements_page, &t("Elements"), false, None);
+		win.notebook
+			.insert_page(0, &palette_page, &t("Palette"), true, None);
 		pages.push(palette_page);
 		pages.push(elements_page);
 		*win.palette_list.borrow_mut() = palette_list;
@@ -2039,9 +2157,7 @@ fn apply_slider(win: &Win, shared: &Shared, id: &'static str, value: i32) {
 				// The width lives on for the next stroke; strokes
 				// already drawn are elements (Stroke width slider).
 			}
-			SliderTarget::ColorRed
-			| SliderTarget::ColorGreen
-			| SliderTarget::ColorBlue => {
+			SliderTarget::ColorRed | SliderTarget::ColorGreen | SliderTarget::ColorBlue => {
 				// A channel edit is absolute: it becomes the color
 				// any later adjustment starts from, so the current
 				// adjustment run ends here.
@@ -2061,14 +2177,12 @@ fn apply_slider(win: &Win, shared: &Shared, id: &'static str, value: i32) {
 						refresh_lists(win, &state);
 					}
 				}
-				None => note = Some("Select an element first.".to_string()),
+				None => note = Some(t("Select an element first.")),
 			},
 			SliderTarget::ElementScale => match selected_shape(&state, win) {
 				Some((li, si, s)) => {
 					if s.kind == ShapeKind::Stroke {
-						note = Some(
-							"A stroke's size is its points; it does not scale.".to_string(),
-						);
+						note = Some(t("A stroke's size is its points; it does not scale."));
 					} else {
 						if state.scale_base.map(|(bl, bs, _, _)| (bl, bs)) != Some((li, si)) {
 							state.scale_base = Some((li, si, s.w, s.h));
@@ -2079,7 +2193,7 @@ fn apply_slider(win: &Win, shared: &Shared, id: &'static str, value: i32) {
 						refresh_lists(win, &state);
 					}
 				}
-				None => note = Some("Select an element first.".to_string()),
+				None => note = Some(t("Select an element first.")),
 			},
 			SliderTarget::StrokeWidth => match selected_shape(&state, win) {
 				Some((li, si, s)) => {
@@ -2088,10 +2202,10 @@ fn apply_slider(win: &Win, shared: &Shared, id: &'static str, value: i32) {
 							refresh_lists(win, &state);
 						}
 					} else {
-						note = Some("Stroke width acts on a selected stroke.".to_string());
+						note = Some(t("Stroke width acts on a selected stroke."));
 					}
 				}
-				None => note = Some("Select a stroke first.".to_string()),
+				None => note = Some(t("Select a stroke first.")),
 			},
 			SliderTarget::ElementRoundedness => match selected_shape(&state, win) {
 				Some((li, si, s)) => {
@@ -2106,13 +2220,11 @@ fn apply_slider(win: &Win, shared: &Shared, id: &'static str, value: i32) {
 						);
 					}
 				}
-				None => note = Some("Select a rectangle first.".to_string()),
+				None => note = Some(t("Select a rectangle first.")),
 			},
 			SliderTarget::FrameDuration => {
 				if state.drawing.frames.is_empty() {
-					note = Some(
-						"No animation frames yet: add one in Design, Animation.".to_string(),
-					);
+					note = Some(t("No animation frames yet: add one in Design, Animation."));
 				} else {
 					state.drawing.set_all_frame_durations(value as u32);
 					refresh_lists(win, &state);
@@ -2137,10 +2249,17 @@ fn apply_slider(win: &Win, shared: &Shared, id: &'static str, value: i32) {
 		None => {
 			let announce_on = shared.borrow().announce_sliders;
 			if announce_on {
-				win.frame.set_status_text(&change_announcement(def, value), 0);
-			} else {
 				win.frame
-					.set_status_text(&format!("{} {}.", def.name, def.format(value)), 0);
+					.set_status_text(&change_announcement(def, value), 0);
+			} else {
+				win.frame.set_status_text(
+					&t("%s %s.").replacen("%s", &def.display_name(), 1).replacen(
+						"%s",
+						&def.format(value),
+						1,
+					),
+					0,
+				);
 			}
 		}
 	}
@@ -2220,13 +2339,18 @@ fn apply_channel(win: &Win, shared: &Shared, index: usize, value: i32) {
 	let announcement: Option<String> = {
 		let mut state = shared.borrow_mut();
 		let format = state.channel_format;
-		let ChannelSet::Sliders(defs) = format_channels(format) else { return };
-		let Some(def) = defs.get(index).copied() else { return };
+		let ChannelSet::Sliders(defs) = format_channels(format) else {
+			return;
+		};
+		let Some(def) = defs.get(index).copied() else {
+			return;
+		};
 		let value = def.clamp(value);
 		let Some((target_id, base_color)) = channel_target(&state, win) else {
 			// The sliders sit greyed out in this state; a stray
 			// event still gets the straight answer.
-			win.frame.set_status_text(channel_note_text(&state, win), 0);
+			win.frame
+				.set_status_text(&channel_note_text(&state, win), 0);
 			return;
 		};
 		let continuing = state
@@ -2274,7 +2398,7 @@ fn apply_channel(win: &Win, shared: &Shared, index: usize, value: i32) {
 					state.adjust_base = None;
 					refresh_lists(win, &state);
 				} else {
-					note = Some("That element is gone.".to_string());
+					note = Some(t("That element is gone."));
 				}
 			}
 		}
@@ -2284,9 +2408,9 @@ fn apply_channel(win: &Win, shared: &Shared, index: usize, value: i32) {
 				row.slider.set_value(applied);
 			}
 		}
-		let words = format!("{} {}", def.label(), def.format_value(applied));
+		let words = format!("{} {}", def.display_label(), def.format_value(applied));
 		Some(if state.announce_sliders {
-			format!("{words}. Everything else unchanged.")
+			t("%s. Everything else unchanged.").replacen("%s", &(words).to_string(), 1)
 		} else {
 			format!("{words}.")
 		})
@@ -2305,12 +2429,7 @@ fn apply_channel(win: &Win, shared: &Shared, index: usize, value: i32) {
 /// re-apply the whole adjustment from the base captured when the
 /// run began (a different target, element or layer starts a new
 /// run). Returns a status note when there is nothing to act on.
-fn apply_adjustment(
-	win: &Win,
-	state: &mut State,
-	def: &SliderDef,
-	value: i32,
-) -> Option<String> {
+fn apply_adjustment(win: &Win, state: &mut State, def: &SliderDef, value: i32) -> Option<String> {
 	let matches_base = match (&state.adjust_base, state.slider_target) {
 		(Some(AdjustBase::Brush(_)), AdjustTarget::BaseColor) => true,
 		(Some(AdjustBase::Element(li, si, _)), AdjustTarget::Element) => {
@@ -2352,35 +2471,38 @@ fn apply_adjustment(
 	};
 	if !matches_base {
 		state.adjust = ColorAdjust::default();
-		state.adjust_base = match state.slider_target {
-			AdjustTarget::BaseColor => Some(AdjustBase::Brush(state.brush.color)),
-			AdjustTarget::Element => {
-				selected_shape(state, win).map(|(li, si, s)| AdjustBase::Element(li, si, s.fill))
-			}
-			AdjustTarget::Layer => state.drawing.layers.get(state.layer).map(|l| {
-				AdjustBase::Layer(state.layer, l.shapes.iter().map(|s| s.fill).collect())
-			}),
-			target => target.depth_role().map(|role| {
-				let bases: Vec<(usize, usize, Srgb)> = state
-					.drawing
-					.layers
-					.iter()
-					.enumerate()
-					.filter(|(_, l)| l.depth == role)
-					.flat_map(|(li, l)| {
-						l.shapes.iter().enumerate().map(move |(si, s)| (li, si, s.fill))
-					})
-					.collect();
-				AdjustBase::Depth(role, bases)
-			}),
-		};
+		state.adjust_base =
+			match state.slider_target {
+				AdjustTarget::BaseColor => Some(AdjustBase::Brush(state.brush.color)),
+				AdjustTarget::Element => selected_shape(state, win)
+					.map(|(li, si, s)| AdjustBase::Element(li, si, s.fill)),
+				AdjustTarget::Layer => state.drawing.layers.get(state.layer).map(|l| {
+					AdjustBase::Layer(state.layer, l.shapes.iter().map(|s| s.fill).collect())
+				}),
+				target => target.depth_role().map(|role| {
+					let bases: Vec<(usize, usize, Srgb)> = state
+						.drawing
+						.layers
+						.iter()
+						.enumerate()
+						.filter(|(_, l)| l.depth == role)
+						.flat_map(|(li, l)| {
+							l.shapes
+								.iter()
+								.enumerate()
+								.map(move |(si, s)| (li, si, s.fill))
+						})
+						.collect();
+					AdjustBase::Depth(role, bases)
+				}),
+			};
 	}
 	if state.adjust_base.is_none() {
 		return Some(match state.slider_target {
-			AdjustTarget::Element => "Select an element to adjust first.".to_string(),
-			AdjustTarget::Layer => "This project has no current layer.".to_string(),
-			AdjustTarget::BaseColor => "Nothing to adjust.".to_string(),
-			_ => "Nothing to adjust.".to_string(),
+			AdjustTarget::Element => t("Select an element to adjust first."),
+			AdjustTarget::Layer => t("This project has no current layer."),
+			AdjustTarget::BaseColor => t("Nothing to adjust."),
+			_ => t("Nothing to adjust."),
 		});
 	}
 	state.adjust.set(def.target, value);
@@ -2398,31 +2520,37 @@ fn apply_adjustment(
 				refresh_lists(win, state);
 				None
 			} else {
-				Some("That element is gone.".to_string())
+				Some(t("That element is gone."))
 			}
 		}
 		Some(AdjustBase::Layer(li, bases)) => {
 			let (li, bases) = (*li, bases.clone());
 			let adjust = state.adjust;
 			if bases.is_empty() {
-				Some("The current layer has no elements to adjust.".to_string())
+				Some(t("The current layer has no elements to adjust."))
 			} else {
 				let outcome = state.drawing.adjust_layer_colors(li, &bases, adjust);
 				if outcome.changed > 0 {
 					refresh_lists(win, state);
-					Some(format!(
-						"{} element{} changed{}.",
-						outcome.changed,
-						if outcome.changed == 1 { "" } else { "s" },
-						locked_suffix(outcome.locked)
-					))
+					Some(
+						t("%s element%s changed%s.")
+							.replacen("%s", &(outcome.changed).to_string(), 1)
+							.replacen(
+								"%s",
+								if outcome.changed == 1 { "" } else { "s" },
+								1,
+							)
+							.replacen("%s", &(locked_suffix(outcome.locked)).to_string(), 1),
+					)
 				} else if outcome.locked > 0 {
-					Some(format!(
-						"Every element the adjustment reached is locked; nothing changed{}",
-						locked_suffix(outcome.locked)
-					))
+					Some(
+						t("Every element the adjustment reached is locked; nothing changed%s")
+							.replacen("%s", &(locked_suffix(outcome.locked)).to_string(), 1),
+					)
 				} else {
-					Some("That layer changed under the adjustment; move the slider to start again.".to_string())
+					Some(t(
+						"That layer changed under the adjustment; move the slider to start again.",
+					))
 				}
 			}
 		}
@@ -2430,32 +2558,39 @@ fn apply_adjustment(
 			let (role, bases) = (*role, bases.clone());
 			let adjust = state.adjust;
 			if bases.is_empty() {
-				Some(format!(
-					"No layer is tagged {} yet: tag one in Design, Layers.",
-					role.name()
-				))
+				Some(
+					t("No layer is tagged %s yet: tag one in Design, Layers.").replacen(
+						"%s",
+						&(role.name()).to_string(),
+						1,
+					),
+				)
 			} else {
 				let outcome = state.drawing.adjust_depth_colors(role, &bases, adjust);
 				if outcome.changed > 0 {
 					refresh_lists(win, state);
-					Some(format!(
-						"{} element{} changed across the {} layers{}.",
-						outcome.changed,
-						if outcome.changed == 1 { "" } else { "s" },
-						role.name(),
-						locked_suffix(outcome.locked)
-					))
+					Some(
+						t("%s element%s changed across the %s layers%s.")
+							.replacen("%s", &(outcome.changed).to_string(), 1)
+							.replacen(
+								"%s",
+								if outcome.changed == 1 { "" } else { "s" },
+								1,
+							)
+							.replacen("%s", &(role.name()).to_string(), 1)
+							.replacen("%s", &(locked_suffix(outcome.locked)).to_string(), 1),
+					)
 				} else if outcome.locked > 0 {
-					Some(format!(
-						"Every element the adjustment reached is locked; nothing changed{}",
-						locked_suffix(outcome.locked)
-					))
+					Some(
+						t("Every element the adjustment reached is locked; nothing changed%s")
+							.replacen("%s", &(locked_suffix(outcome.locked)).to_string(), 1),
+					)
 				} else {
-					Some("Those layers changed under the adjustment; move the slider to start again.".to_string())
+					Some(t("Those layers changed under the adjustment; move the slider to start again."))
 				}
 			}
 		}
-		None => Some("Nothing to adjust.".to_string()),
+		None => Some(t("Nothing to adjust.")),
 	}
 }
 
@@ -2467,7 +2602,7 @@ fn locked_suffix(locked: usize) -> String {
 	if locked == 0 {
 		String::new()
 	} else {
-		format!(", {locked} locked stayed the same")
+		t(", %s locked stayed the same").replacen("%s", &(locked).to_string(), 1)
 	}
 }
 
@@ -2480,16 +2615,23 @@ fn locked_suffix(locked: usize) -> String {
 /// dialog is modal and closing it returns to the main window.
 fn project_options_dialog(win: &Rc<Win>, shared: &Shared) {
 	let frame = win.frame;
-	let dialog = Dialog::builder(&frame, "Project Options").with_size(560, 640).build();
+	let dialog = Dialog::builder(&frame, &t("Project Options"))
+		.with_size(560, 640)
+		.build();
 	bind_escape_cancel(dialog);
 	let sizer = BoxSizer::builder(Orientation::Vertical).build();
 	let pins_label = StaticText::builder(&dialog)
-		.with_label("Sliders pinned to this project's Sliders tab (check the ones to keep; with none checked, the tab shows every slider)")
+		.with_label(&t("Sliders pinned to this project's Sliders tab (check the ones to keep; with none checked, the tab shows every slider)"))
 		.build();
-	sizer.add(&pins_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	sizer.add(
+		&pins_label,
+		0,
+		SizerFlag::Left | SizerFlag::Right | SizerFlag::Top,
+		5,
+	);
 	let checks = CheckListBox::builder(&dialog).build();
 	for def in SLIDERS {
-		checks.append(def.name);
+		checks.append(&def.display_name());
 	}
 	{
 		let state = shared.borrow();
@@ -2500,16 +2642,25 @@ fn project_options_dialog(win: &Rc<Win>, shared: &Shared) {
 		}
 	}
 	sizer.add(&checks, 1, SizerFlag::Expand | SizerFlag::All, 5);
-	let target_label =
-		StaticText::builder(&dialog).with_label("Color adjustments act on").build();
-	sizer.add(&target_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	let target_label = StaticText::builder(&dialog)
+		.with_label(&t("Color adjustments act on"))
+		.build();
+	sizer.add(
+		&target_label,
+		0,
+		SizerFlag::Left | SizerFlag::Right | SizerFlag::Top,
+		5,
+	);
 	let target_choice = Choice::builder(&dialog).build();
 	for t in AdjustTarget::ALL {
-		target_choice.append(t.name());
+		target_choice.append(&t.name());
 	}
 	{
 		let state = shared.borrow();
-		let at = AdjustTarget::ALL.iter().position(|t| *t == state.slider_target).unwrap_or(0);
+		let at = AdjustTarget::ALL
+			.iter()
+			.position(|t| *t == state.slider_target)
+			.unwrap_or(0);
 		target_choice.set_selection(at as u32);
 	}
 	sizer.add(&target_choice, 0, SizerFlag::Expand | SizerFlag::All, 5);
@@ -2517,12 +2668,19 @@ fn project_options_dialog(win: &Rc<Win>, shared: &Shared) {
 	// place the project's surface is switched — Draw, Slide
 	// or Type, only one of them on screen at a time.
 	let mode_label = StaticText::builder(&dialog)
-		.with_label("Interaction mode (one surface at a time: Draw, Slide or Type)")
+		.with_label(&t(
+			"Interaction mode (one surface at a time: Draw, Slide or Type)",
+		))
 		.build();
-	sizer.add(&mode_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	sizer.add(
+		&mode_label,
+		0,
+		SizerFlag::Left | SizerFlag::Right | SizerFlag::Top,
+		5,
+	);
 	let mode_choice = Choice::builder(&dialog).build();
 	for m in InteractionMode::ALL {
-		mode_choice.append(m.name());
+		mode_choice.append(&m.name());
 	}
 	{
 		let state = shared.borrow();
@@ -2535,11 +2693,18 @@ fn project_options_dialog(win: &Rc<Win>, shared: &Shared) {
 	sizer.add(&mode_choice, 0, SizerFlag::Expand | SizerFlag::All, 5);
 	let jump_now = shared.borrow().page_jump_percent;
 	let jump_label = StaticText::builder(&dialog)
-		.with_label("Page Up and Page Down jump, percent of each slider's range")
+		.with_label(&t(
+			"Page Up and Page Down jump, percent of each slider's range",
+		))
 		.build();
 	let jump_spin = SpinCtrl::builder(&dialog).with_range(1, 100).build();
 	jump_spin.set_value(jump_now as i32);
-	sizer.add(&jump_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	sizer.add(
+		&jump_label,
+		0,
+		SizerFlag::Left | SizerFlag::Right | SizerFlag::Top,
+		5,
+	);
 	sizer.add(&jump_spin, 0, SizerFlag::Expand | SizerFlag::All, 5);
 	// Grayscale start: build the design in grayscale first —
 	// form and legibility before colour — then give parts,
@@ -2547,16 +2712,22 @@ fn project_options_dialog(win: &Rc<Win>, shared: &Shared) {
 	// ready (Design, Apply Colour Treatment). The gray ramp is
 	// the palette that mode works from.
 	let gray_check = CheckBox::builder(&dialog)
-		.with_label("Grayscale start (build in grayscale; colours come later, per part, layer or depth)")
+		.with_label(&t(
+			"Grayscale start (build in grayscale; colours come later, per part, layer or depth)",
+		))
 		.build();
 	gray_check.set_value(shared.borrow().grayscale_start);
 	sizer.add(&gray_check, 0, SizerFlag::All, 5);
-	let gray_btn = Button::builder(&dialog).with_label("Load Gray Ramp").build();
+	let gray_btn = Button::builder(&dialog)
+		.with_label(&t("Load Gray Ramp"))
+		.build();
 	sizer.add(&gray_btn, 0, SizerFlag::All, 5);
-	let starter_btn = Button::builder(&dialog).with_label("Load Starter Colors").build();
+	let starter_btn = Button::builder(&dialog)
+		.with_label(&t("Load Starter Colors"))
+		.build();
 	sizer.add(&starter_btn, 0, SizerFlag::All, 5);
-	let ok = Button::builder(&dialog).with_label("OK").build();
-	let cancel = Button::builder(&dialog).with_label("Cancel").build();
+	let ok = Button::builder(&dialog).with_label(&t("OK")).build();
+	let cancel = Button::builder(&dialog).with_label(&t("Cancel")).build();
 	let buttons = BoxSizer::builder(Orientation::Horizontal).build();
 	buttons.add(&ok, 0, SizerFlag::All, 5);
 	buttons.add(&cancel, 0, SizerFlag::All, 5);
@@ -2578,16 +2749,16 @@ fn project_options_dialog(win: &Rc<Win>, shared: &Shared) {
 				.filter(|pc| !state.palette.iter().any(|p| p.color == pc.color))
 				.collect();
 			if fresh.is_empty() {
-				w.frame.set_status_text("The gray ramp is already in the palette.", 0);
+				w.frame
+					.set_status_text(&t("The gray ramp is already in the palette."), 0);
 				return;
 			}
 			let count = fresh.len();
 			state.palette.extend(fresh);
 			refresh_lists(&w, &state);
 			w.frame.set_status_text(
-				&format!(
-					"Loaded the gray ramp: {count} grays, near-black to near-white, for grayscale work."
-				),
+				&t("Loaded the gray ramp: %s grays, near-black to near-white, for grayscale work.")
+					.replacen("%s", &(count).to_string(), 1),
 				0,
 			);
 		});
@@ -2640,20 +2811,28 @@ fn project_options_dialog(win: &Rc<Win>, shared: &Shared) {
 		drop(state);
 		apply_interaction_mode(win, shared, true);
 		frame.set_status_text(
-			&format!(
-				"Project options saved: {count} slider{} pinned to the Sliders tab.{}{}{mode_note}",
-				if count == 1 { "" } else { "s" },
-				if count == 0 {
-					" With none pinned, the tab shows every slider."
-				} else {
-					""
-				},
-				if grayscale {
-					" Grayscale start is on: colors come later, per part, layer, or depth."
-				} else {
-					""
-				}
-			),
+			&t("Project options saved: %s slider%s pinned to the Sliders tab.%s%s%s")
+				.replacen("%s", &(count).to_string(), 1)
+				.replacen("%s", if count == 1 { "" } else { "s" }, 1)
+				.replacen(
+					"%s",
+					if count == 0 {
+						" With none pinned, the tab shows every slider."
+					} else {
+						""
+					},
+					1,
+				)
+				.replacen(
+					"%s",
+					if grayscale {
+						" Grayscale start is on: colors come later, per part, layer, or depth."
+					} else {
+						""
+					},
+					1,
+				)
+				.replacen("%s", mode_note, 1),
 			0,
 		);
 	}
@@ -2663,13 +2842,20 @@ fn project_options_dialog(win: &Rc<Win>, shared: &Shared) {
 /// say what was added.
 fn add_colors(win: &Win, state: &mut State, colors: &[Srgb], what: &str, provenance: &Provenance) {
 	for c in colors {
-		state.palette.push(PaletteColor::new(*c, provenance.clone()));
+		state
+			.palette
+			.push(PaletteColor::new(*c, provenance.clone()));
 	}
 	refresh_lists(win, state);
-	let names: Vec<String> =
-		colors.iter().map(|c| describe_in(*c, state.color_format)).collect();
+	let names: Vec<String> = colors
+		.iter()
+		.map(|c| describe_in(*c, state.color_format))
+		.collect();
 	win.frame.set_status_text(
-		&format!("Added {} ({}): {}", what, colors.len(), names.join("; ")),
+		&t("Added %s (%s): %s")
+			.replacen("%s", what, 1)
+			.replacen("%s", &(colors.len()).to_string(), 1)
+			.replacen("%s", &(names.join("; ")).to_string(), 1),
 		0,
 	);
 }
@@ -2677,7 +2863,7 @@ fn add_colors(win: &Win, state: &mut State, colors: &[Srgb], what: &str, provena
 fn numbers_dialog(
 	parent: &Frame,
 	title: &str,
-	fields: &[(&str, i32, i32, i32)],
+	fields: &[(String, i32, i32, i32)],
 ) -> Option<Vec<i32>> {
 	let dialog = Dialog::builder(parent, title).build();
 	bind_escape_cancel(dialog);
@@ -2687,12 +2873,17 @@ fn numbers_dialog(
 		let text = StaticText::builder(&dialog).with_label(label).build();
 		let spin = SpinCtrl::builder(&dialog).with_range(*min, *max).build();
 		spin.set_value(*value);
-		sizer.add(&text, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+		sizer.add(
+			&text,
+			0,
+			SizerFlag::Left | SizerFlag::Right | SizerFlag::Top,
+			5,
+		);
 		sizer.add(&spin, 0, SizerFlag::Expand | SizerFlag::All, 5);
 		spins.push(spin);
 	}
-	let ok = Button::builder(&dialog).with_label("OK").build();
-	let cancel = Button::builder(&dialog).with_label("Cancel").build();
+	let ok = Button::builder(&dialog).with_label(&t("OK")).build();
+	let cancel = Button::builder(&dialog).with_label(&t("Cancel")).build();
 	let buttons = BoxSizer::builder(Orientation::Horizontal).build();
 	buttons.add(&ok, 0, SizerFlag::All, 5);
 	buttons.add(&cancel, 0, SizerFlag::All, 5);
@@ -2735,10 +2926,15 @@ fn text_dialog(parent: &Frame, title: &str, label: &str, value: &str) -> Option<
 	let text = StaticText::builder(&dialog).with_label(label).build();
 	let field = TextCtrl::builder(&dialog).build();
 	field.set_value(value);
-	sizer.add(&text, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	sizer.add(
+		&text,
+		0,
+		SizerFlag::Left | SizerFlag::Right | SizerFlag::Top,
+		5,
+	);
 	sizer.add(&field, 0, SizerFlag::Expand | SizerFlag::All, 5);
-	let ok = Button::builder(&dialog).with_label("OK").build();
-	let cancel = Button::builder(&dialog).with_label("Cancel").build();
+	let ok = Button::builder(&dialog).with_label(&t("OK")).build();
+	let cancel = Button::builder(&dialog).with_label(&t("Cancel")).build();
 	let buttons = BoxSizer::builder(Orientation::Horizontal).build();
 	buttons.add(&ok, 0, SizerFlag::All, 5);
 	buttons.add(&cancel, 0, SizerFlag::All, 5);
@@ -2759,11 +2955,7 @@ fn text_dialog(parent: &Frame, title: &str, label: &str, value: &str) -> Option<
 /// prefilled. Returns the field values in order, `None` on cancel.
 /// The labels are the fields' accessible names: each label says what
 /// the field accepts, in numbers or words.
-fn fields_dialog(
-	parent: &Frame,
-	title: &str,
-	fields: &[(&str, &str)],
-) -> Option<Vec<String>> {
+fn fields_dialog(parent: &Frame, title: &str, fields: &[(String, &str)]) -> Option<Vec<String>> {
 	let dialog = Dialog::builder(parent, title).build();
 	bind_escape_cancel(dialog);
 	let sizer = BoxSizer::builder(Orientation::Vertical).build();
@@ -2772,12 +2964,17 @@ fn fields_dialog(
 		let text = StaticText::builder(&dialog).with_label(label).build();
 		let field = TextCtrl::builder(&dialog).build();
 		field.set_value(value);
-		sizer.add(&text, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+		sizer.add(
+			&text,
+			0,
+			SizerFlag::Left | SizerFlag::Right | SizerFlag::Top,
+			5,
+		);
 		sizer.add(&field, 0, SizerFlag::Expand | SizerFlag::All, 5);
 		inputs.push(field);
 	}
-	let ok = Button::builder(&dialog).with_label("OK").build();
-	let cancel = Button::builder(&dialog).with_label("Cancel").build();
+	let ok = Button::builder(&dialog).with_label(&t("OK")).build();
+	let cancel = Button::builder(&dialog).with_label(&t("Cancel")).build();
 	let buttons = BoxSizer::builder(Orientation::Horizontal).build();
 	buttons.add(&ok, 0, SizerFlag::All, 5);
 	buttons.add(&cancel, 0, SizerFlag::All, 5);
@@ -2815,33 +3012,35 @@ fn place_dialog(
 		title,
 		&[
 			(
-				"Position: numbers like 120, 80, or words like top left, center, a bit right",
+				t("Position: numbers like 120, 80, or words like top left, center, a bit right"),
 				&format!("{}, {}", current_pos.0, current_pos.1),
 			),
 			(
-				"Size: numbers like 200 by 100, or words like a bit wider, a bit taller",
-				&format!("{} by {}", current_size.0, current_size.1),
+				t("Size: numbers like 200 by 100, or words like a bit wider, a bit taller"),
+				&t("%s by %s")
+					.replacen("%s", &(current_size.0).to_string(), 1)
+					.replacen("%s", &(current_size.1).to_string(), 1),
 			),
-			("Color: a name like sky blue, or a hex code", &default_color.to_hex()),
+			(
+				t("Color: a name like sky blue, or a hex code"),
+				&default_color.to_hex(),
+			),
 		],
 	)?;
 	let Some((x, y)) = parse_position(&v[0], canvas.0, canvas.1, Some(current_pos)) else {
-		frame.set_status_text(
-			"I could not understand that position. Use numbers like 120, 80, or words like top left, center, a bit right.",
+		frame.set_status_text(&t("I could not understand that position. Use numbers like 120, 80, or words like top left, center, a bit right."),
 			0,
 		);
 		return None;
 	};
 	let Some((w, h)) = parse_size(&v[1], Some(current_size)) else {
-		frame.set_status_text(
-			"I could not understand that size. Use numbers like 200 by 100, or words like a bit wider.",
+		frame.set_status_text(&t("I could not understand that size. Use numbers like 200 by 100, or words like a bit wider."),
 			0,
 		);
 		return None;
 	};
 	let Some(color) = parse_color(&v[2]) else {
-		frame.set_status_text(
-			"I could not understand that color. Use a name like sky blue, or a hex code like 87CEEB.",
+		frame.set_status_text(&t("I could not understand that color. Use a name like sky blue, or a hex code like 87CEEB."),
 			0,
 		);
 		return None;
@@ -2852,13 +3051,17 @@ fn place_dialog(
 /// Speak a freshly added shape with its automatic plain-language
 /// description (item: auto-describe on creation), and sound its cue.
 fn speak_added(win: &Win, state: &State, layer: usize, index: usize) {
-	let Some(shape) =
-		state.drawing.layers.get(layer).and_then(|l| l.shapes.get(index)).cloned()
+	let Some(shape) = state
+		.drawing
+		.layers
+		.get(layer)
+		.and_then(|l| l.shapes.get(index))
+		.cloned()
 	else {
 		return;
 	};
 	win.frame.set_status_text(
-		&format!("Added {}.", state.drawing.plain_of(&shape)),
+		&t("Added %s.").replacen("%s", &(state.drawing.plain_of(&shape)).to_string(), 1),
 		0,
 	);
 	if state.sound_cues {
@@ -2887,7 +3090,10 @@ fn load_brushes() -> BrushLibrary {
 
 fn persist_brushes(win: &Win, state: &State) {
 	if let Err(e) = std::fs::write(brush_file_path(), state.brushes.to_text()) {
-		win.frame.set_status_text(&format!("The brush library could not be saved: {e}"), 0);
+		win.frame.set_status_text(
+			&t("The brush library could not be saved: %s").replacen("%s", &(e).to_string(), 1),
+			0,
+		);
 	}
 }
 
@@ -2940,11 +3146,15 @@ fn layer_rows(state: &State) -> Vec<(usize, String)> {
 		.iter()
 		.enumerate()
 		.map(|(i, l)| {
-			let mut label = format!("Layer {}", i + 1);
+			let mut label = t("Layer %s").replacen("%s", &(i + 1).to_string(), 1);
 			if l.depth != DepthRole::Unassigned {
 				label.push_str(&format!(", {}", l.depth.name()));
 			}
-			label.push_str(&format!(": {} ({} shapes)", l.name, l.shapes.len()));
+			label.push_str(
+				&t(": %s (%s shapes)")
+					.replacen("%s", &(l.name).to_string(), 1)
+					.replacen("%s", &(l.shapes.len()).to_string(), 1),
+			);
 			if i == state.layer {
 				label.push_str(" — current");
 			}
@@ -2962,31 +3172,46 @@ fn layer_rows(state: &State) -> Vec<(usize, String)> {
 /// The dialog is modal; the caller refreshes the main lists on return.
 fn layers_dialog(win: &Win, shared: &Shared) {
 	let frame = win.frame;
-	let dialog = Dialog::builder(&frame, "Layers").build();
+	let dialog = Dialog::builder(&frame, &t("Layers")).build();
 	bind_escape_cancel(dialog);
 	let sizer = BoxSizer::builder(Orientation::Vertical).build();
-	let list = QuietList::new(&dialog, "Layers");
+	let list = QuietList::new(&dialog, &t("Layers"));
 	sizer.add(&list, 1, SizerFlag::Expand | SizerFlag::All, 5);
 	// The selected layer's depth role: the choice follows the
 	// list selection, and choosing a role sets it at once (the
 	// change lands in the log like every other layer edit).
-	let depth_label =
-		StaticText::builder(&dialog).with_label("Depth role of the selected layer").build();
+	let depth_label = StaticText::builder(&dialog)
+		.with_label(&t("Depth role of the selected layer"))
+		.build();
 	let depth_choice = Choice::builder(&dialog).build();
-	for label in ["No depth role", "Background", "Midground", "Foreground", "Sideground"] {
-		depth_choice.append(label);
+	for label in [
+		t("No depth role"),
+		t("Background"),
+		t("Midground"),
+		t("Foreground"),
+		t("Sideground"),
+	] {
+		depth_choice.append(&label);
 	}
-	depth_choice.set_name("Depth role of the selected layer");
+	depth_choice.set_name(&t("Depth role of the selected layer"));
 	let depth_row = BoxSizer::builder(Orientation::Horizontal).build();
 	depth_row.add(&depth_label, 0, SizerFlag::All, 5);
 	depth_row.add(&depth_choice, 0, SizerFlag::All, 5);
 	sizer.add_sizer(&depth_row, 0, SizerFlag::All, 5);
-	let add = Button::builder(&dialog).with_label("Add Layer\u{2026}").build();
-	let rename = Button::builder(&dialog).with_label("Rename\u{2026}").build();
-	let remove = Button::builder(&dialog).with_label("Remove").build();
-	let toggle = Button::builder(&dialog).with_label("Show / Hide").build();
-	let current = Button::builder(&dialog).with_label("Set Current").build();
-	let close = Button::builder(&dialog).with_label("Close").build();
+	let add = Button::builder(&dialog)
+		.with_label(&t("Add Layer\u{2026}"))
+		.build();
+	let rename = Button::builder(&dialog)
+		.with_label(&t("Rename\u{2026}"))
+		.build();
+	let remove = Button::builder(&dialog).with_label(&t("Remove")).build();
+	let toggle = Button::builder(&dialog)
+		.with_label(&t("Show / Hide"))
+		.build();
+	let current = Button::builder(&dialog)
+		.with_label(&t("Set Current"))
+		.build();
+	let close = Button::builder(&dialog).with_label(&t("Close")).build();
 	let buttons = BoxSizer::builder(Orientation::Horizontal).build();
 	for b in [&add, &rename, &remove, &toggle, &current, &close] {
 		buttons.add(b, 0, SizerFlag::All, 5);
@@ -3001,14 +3226,15 @@ fn layers_dialog(win: &Win, shared: &Shared) {
 	}
 	// Point the depth choice at the selected layer's role.
 	let sync_depth = {
-		let (list, shared, depth_choice) =
-			(list.clone(), shared.clone(), depth_choice.clone());
+		let (list, shared, depth_choice) = (list.clone(), shared.clone(), depth_choice.clone());
 		move || {
 			let state = shared.borrow();
 			if let Some(i) = list.selected() {
 				if let Some(layer) = state.drawing.layers.get(i) {
-					let at =
-						DepthRole::ALL.iter().position(|r| *r == layer.depth).unwrap_or(0);
+					let at = DepthRole::ALL
+						.iter()
+						.position(|r| *r == layer.depth)
+						.unwrap_or(0);
 					depth_choice.set_selection(at as u32);
 				}
 			}
@@ -3023,8 +3249,12 @@ fn layers_dialog(win: &Win, shared: &Shared) {
 	let grey = grey_with_selection(&list, &[rename, remove, toggle, current]);
 	// Refresh the dialog list and speak the newest log entry.
 	let sync = {
-		let (list, shared, grey, sync_depth) =
-			(list.clone(), shared.clone(), grey.clone(), sync_depth.clone());
+		let (list, shared, grey, sync_depth) = (
+			list.clone(),
+			shared.clone(),
+			grey.clone(),
+			sync_depth.clone(),
+		);
 		move || {
 			let state = shared.borrow();
 			list.update_labelled(layer_rows(&state), Select::Keep);
@@ -3038,12 +3268,20 @@ fn layers_dialog(win: &Win, shared: &Shared) {
 	};
 	let sync = Rc::new(sync);
 	{
-		let (list, shared, sync, depth_choice) =
-			(list.clone(), shared.clone(), sync.clone(), depth_choice.clone());
+		let (list, shared, sync, depth_choice) = (
+			list.clone(),
+			shared.clone(),
+			sync.clone(),
+			depth_choice.clone(),
+		);
 		(*depth_choice).clone().on_selection_changed(move |_| {
 			let Some(i) = list.selected() else { return };
-			let Some(sel) = depth_choice.get_selection() else { return };
-			let Some(role) = DepthRole::ALL.get(sel as usize) else { return };
+			let Some(sel) = depth_choice.get_selection() else {
+				return;
+			};
+			let Some(role) = DepthRole::ALL.get(sel as usize) else {
+				return;
+			};
 			let mut state = shared.borrow_mut();
 			if state.drawing.layers.get(i).map(|l| l.depth) != Some(*role) {
 				state.drawing.set_layer_depth(i, *role);
@@ -3056,9 +3294,12 @@ fn layers_dialog(win: &Win, shared: &Shared) {
 		let (shared, sync) = (shared.clone(), sync.clone());
 		add.on_click(move |_| {
 			let next = shared.borrow().drawing.layers.len() + 1;
-			if let Some(name) =
-				text_dialog(&frame, "Add layer", "Layer name", &format!("Layer {next}"))
-			{
+			if let Some(name) = text_dialog(
+				&frame,
+				&t("Add layer"),
+				&t("Layer name"),
+				&t("Layer %s").replacen("%s", &(next).to_string(), 1),
+			) {
 				let mut state = shared.borrow_mut();
 				state.layer = state.drawing.add_layer(name.trim());
 				drop(state);
@@ -3071,7 +3312,7 @@ fn layers_dialog(win: &Win, shared: &Shared) {
 		rename.on_click(move |_| {
 			let Some(i) = list.selected() else { return };
 			let old = shared.borrow().drawing.layers[i].name.clone();
-			if let Some(name) = text_dialog(&frame, "Rename layer", "Layer name", &old) {
+			if let Some(name) = text_dialog(&frame, &t("Rename layer"), &t("Layer name"), &old) {
 				shared.borrow_mut().drawing.rename_layer(i, name.trim());
 				sync();
 			}
@@ -3089,7 +3330,7 @@ fn layers_dialog(win: &Win, shared: &Shared) {
 				drop(state);
 				sync();
 			} else {
-				frame.set_status_text("A drawing always keeps one layer.", 0);
+				frame.set_status_text(&t("A drawing always keeps one layer."), 0);
 			}
 		});
 	}
@@ -3112,7 +3353,10 @@ fn layers_dialog(win: &Win, shared: &Shared) {
 			state.layer = i;
 			let name = state.drawing.layers[i].name.clone();
 			drop(state);
-			frame.set_status_text(&format!("New shapes now land on layer \"{name}\"."), 0);
+			frame.set_status_text(
+				&t("New shapes now land on layer \"%s\".").replacen("%s", &(name).to_string(), 1),
+				0,
+			);
 			let state = shared.borrow();
 			list.update_labelled(layer_rows(&state), Select::Keep);
 		});
@@ -3137,12 +3381,18 @@ fn frame_rows(state: &State) -> Vec<(usize, String)> {
 		.map(|(i, f)| {
 			(
 				i,
-				format!(
-					"Frame {}: {} milliseconds. {}",
-					i + 1,
-					f.duration_ms,
-					state.drawing.frame_change_description(i).unwrap_or_default()
-				),
+				t("Frame %s: %s milliseconds. %s")
+					.replacen("%s", &(i + 1).to_string(), 1)
+					.replacen("%s", &(f.duration_ms).to_string(), 1)
+					.replacen(
+						"%s",
+						&(state
+							.drawing
+							.frame_change_description(i)
+							.unwrap_or_default())
+						.to_string(),
+						1,
+					),
 			)
 		})
 		.collect()
@@ -3158,22 +3408,32 @@ fn frame_rows(state: &State) -> Vec<(usize, String)> {
 /// dialog is modal and closing it returns to the main window.
 fn animation_dialog(win: &Win, shared: &Shared) {
 	let frame = win.frame;
-	let dialog = Dialog::builder(&frame, "Animation").build();
+	let dialog = Dialog::builder(&frame, &t("Animation")).build();
 	bind_escape_cancel(dialog);
 	let sizer = BoxSizer::builder(Orientation::Vertical).build();
-	let list = QuietList::new(&dialog, "Animation frames");
+	let list = QuietList::new(&dialog, &t("Animation frames"));
 	sizer.add(&list, 1, SizerFlag::Expand | SizerFlag::All, 5);
-	let add = Button::builder(&dialog).with_label("Add Frame (Copy of Canvas)").build();
-	let duplicate = Button::builder(&dialog).with_label("Duplicate").build();
-	let remove = Button::builder(&dialog).with_label("Delete").build();
-	let up = Button::builder(&dialog).with_label("Move Up").build();
-	let down = Button::builder(&dialog).with_label("Move Down").build();
-	let duration = Button::builder(&dialog).with_label("Set Duration\u{2026}").build();
-	let load = Button::builder(&dialog).with_label("Load into Canvas").build();
-	let replace = Button::builder(&dialog).with_label("Replace with Canvas").build();
-	let close = Button::builder(&dialog).with_label("Close").build();
+	let add = Button::builder(&dialog)
+		.with_label(&t("Add Frame (Copy of Canvas)"))
+		.build();
+	let duplicate = Button::builder(&dialog).with_label(&t("Duplicate")).build();
+	let remove = Button::builder(&dialog).with_label(&t("Delete")).build();
+	let up = Button::builder(&dialog).with_label(&t("Move Up")).build();
+	let down = Button::builder(&dialog).with_label(&t("Move Down")).build();
+	let duration = Button::builder(&dialog)
+		.with_label(&t("Set Duration\u{2026}"))
+		.build();
+	let load = Button::builder(&dialog)
+		.with_label(&t("Load into Canvas"))
+		.build();
+	let replace = Button::builder(&dialog)
+		.with_label(&t("Replace with Canvas"))
+		.build();
+	let close = Button::builder(&dialog).with_label(&t("Close")).build();
 	let buttons = BoxSizer::builder(Orientation::Horizontal).build();
-	for b in [&add, &duplicate, &remove, &up, &down, &duration, &load, &replace, &close] {
+	for b in [
+		&add, &duplicate, &remove, &up, &down, &duration, &load, &replace, &close,
+	] {
 		buttons.add(b, 0, SizerFlag::All, 5);
 	}
 	sizer.add_sizer(&buttons, 0, SizerFlag::All, 5);
@@ -3183,14 +3443,15 @@ fn animation_dialog(win: &Win, shared: &Shared) {
 		let state = shared.borrow();
 		list.update_labelled(frame_rows(&state), Select::Start);
 		if state.drawing.frames.is_empty() {
-			frame.set_status_text(
-				"No animation frames yet. Add Frame captures the canvas as frame 1; change the canvas and capture again to build the film.",
+			frame.set_status_text(&t("No animation frames yet. Add Frame captures the canvas as frame 1; change the canvas and capture again to build the film."),
 				0,
 			);
 		}
 	}
-	let grey =
-		grey_with_selection(&list, &[duplicate, remove, up, down, duration, load, replace]);
+	let grey = grey_with_selection(
+		&list,
+		&[duplicate, remove, up, down, duration, load, replace],
+	);
 	// Refresh the dialog list and speak the newest log entry.
 	let sync = {
 		let (list, shared, grey) = (list.clone(), shared.clone(), grey.clone());
@@ -3235,7 +3496,7 @@ fn animation_dialog(win: &Win, shared: &Shared) {
 			if shared.borrow_mut().drawing.move_frame(i, true) {
 				sync();
 			} else {
-				frame.set_status_text("That frame is already first.", 0);
+				frame.set_status_text(&t("That frame is already first."), 0);
 			}
 		});
 	}
@@ -3246,7 +3507,7 @@ fn animation_dialog(win: &Win, shared: &Shared) {
 			if shared.borrow_mut().drawing.move_frame(i, false) {
 				sync();
 			} else {
-				frame.set_status_text("That frame is already last.", 0);
+				frame.set_status_text(&t("That frame is already last."), 0);
 			}
 		});
 	}
@@ -3256,20 +3517,29 @@ fn animation_dialog(win: &Win, shared: &Shared) {
 			let Some(i) = list.selected() else { return };
 			let current = {
 				let state = shared.borrow();
-				let Some(f) = state.drawing.frames.get(i) else { return };
+				let Some(f) = state.drawing.frames.get(i) else {
+					return;
+				};
 				f.duration_ms
 			};
 			// The range comes from the frame-duration slider
 			// definition — the dialog and the Sliders tab agree
 			// because there is only one source for it.
-			let dur_def =
-				slider_by_id("frame-duration").expect("the frame-duration slider exists");
+			let dur_def = slider_by_id("frame-duration").expect("the frame-duration slider exists");
 			if let Some(v) = numbers_dialog(
 				&frame,
-				"Frame duration",
-				&[("Duration in milliseconds", dur_def.min, dur_def.max, current as i32)],
+				&t("Frame duration"),
+				&[(
+					t("Duration in milliseconds"),
+					dur_def.min,
+					dur_def.max,
+					current as i32,
+				)],
 			) {
-				shared.borrow_mut().drawing.set_frame_duration(i, v[0] as u32);
+				shared
+					.borrow_mut()
+					.drawing
+					.set_frame_duration(i, v[0] as u32);
 				sync();
 			}
 		});
@@ -3316,7 +3586,7 @@ fn element_rows(state: &State) -> Vec<(usize, String)> {
 		for s in &layer.shapes {
 			let mut label = format!("{}: {}", layer.name, state.drawing.plain_of(s));
 			if let Some(c) = &s.caption {
-				label.push_str(&format!(" Caption: {c}"));
+				label.push_str(&t(" Caption: %s").replacen("%s", &(c).to_string(), 1));
 			}
 			if s.locked {
 				label.push_str(". Locked: bulk changes skip it.");
@@ -3339,20 +3609,36 @@ fn element_rows(state: &State) -> Vec<(usize, String)> {
 /// drawing, so it is logged and announced like everywhere else.
 fn elements_dialog(win: &Win, shared: &Shared) {
 	let frame = win.frame;
-	let dialog = Dialog::builder(&frame, "Elements").build();
+	let dialog = Dialog::builder(&frame, &t("Elements")).build();
 	bind_escape_cancel(dialog);
 	let sizer = BoxSizer::builder(Orientation::Vertical).build();
-	let list = QuietList::new(&dialog, "Elements");
+	let list = QuietList::new(&dialog, &t("Elements"));
 	sizer.add(&list, 1, SizerFlag::Expand | SizerFlag::All, 5);
-	let caption_btn = Button::builder(&dialog).with_label("Rename Caption\u{2026}").build();
-	let describe_btn = Button::builder(&dialog).with_label("Describe").build();
-	let move_btn = Button::builder(&dialog).with_label("Move\u{2026}").build();
-	let resize_btn = Button::builder(&dialog).with_label("Resize\u{2026}").build();
-	let recolor_btn = Button::builder(&dialog).with_label("Recolor\u{2026}").build();
-	let delete_btn = Button::builder(&dialog).with_label("Delete").build();
-	let close = Button::builder(&dialog).with_label("Close").build();
+	let caption_btn = Button::builder(&dialog)
+		.with_label(&t("Rename Caption\u{2026}"))
+		.build();
+	let describe_btn = Button::builder(&dialog).with_label(&t("Describe")).build();
+	let move_btn = Button::builder(&dialog)
+		.with_label(&t("Move\u{2026}"))
+		.build();
+	let resize_btn = Button::builder(&dialog)
+		.with_label(&t("Resize\u{2026}"))
+		.build();
+	let recolor_btn = Button::builder(&dialog)
+		.with_label(&t("Recolor\u{2026}"))
+		.build();
+	let delete_btn = Button::builder(&dialog).with_label(&t("Delete")).build();
+	let close = Button::builder(&dialog).with_label(&t("Close")).build();
 	let buttons = BoxSizer::builder(Orientation::Horizontal).build();
-	for b in [&caption_btn, &describe_btn, &move_btn, &resize_btn, &recolor_btn, &delete_btn, &close] {
+	for b in [
+		&caption_btn,
+		&describe_btn,
+		&move_btn,
+		&resize_btn,
+		&recolor_btn,
+		&delete_btn,
+		&close,
+	] {
 		buttons.add(b, 0, SizerFlag::All, 5);
 	}
 	sizer.add_sizer(&buttons, 0, SizerFlag::All, 5);
@@ -3364,7 +3650,14 @@ fn elements_dialog(win: &Win, shared: &Shared) {
 	}
 	let grey = grey_with_selection(
 		&list,
-		&[caption_btn, describe_btn, move_btn, resize_btn, recolor_btn, delete_btn],
+		&[
+			caption_btn,
+			describe_btn,
+			move_btn,
+			resize_btn,
+			recolor_btn,
+			delete_btn,
+		],
 	);
 	// Refresh the list and speak the newest log entry.
 	let sync = {
@@ -3397,17 +3690,23 @@ fn elements_dialog(win: &Win, shared: &Shared) {
 				.caption
 				.clone()
 				.unwrap_or_default();
-			if let Some(text) =
-				text_dialog(&frame, "Rename caption", "Caption for this element", &now)
-			{
+			if let Some(text) = text_dialog(
+				&frame,
+				&t("Rename caption"),
+				&t("Caption for this element"),
+				&now,
+			) {
 				if text.trim().is_empty() {
 					frame.set_status_text(
-						"Caption unchanged: an empty caption keeps the automatic description.",
+						&t("Caption unchanged: an empty caption keeps the automatic description."),
 						0,
 					);
 					return;
 				}
-				shared.borrow_mut().drawing.caption_shape(li, si, text.trim().to_string());
+				shared
+					.borrow_mut()
+					.drawing
+					.caption_shape(li, si, text.trim().to_string());
 				sync();
 			}
 		});
@@ -3419,11 +3718,9 @@ fn elements_dialog(win: &Win, shared: &Shared) {
 			let state = shared.borrow();
 			let shape = &state.drawing.layers[li].shapes[si];
 			frame.set_status_text(
-				&format!(
-					"{}. Full description: {}",
-					state.drawing.plain_of(shape),
-					state.drawing.description_of(shape)
-				),
+				&t("%s. Full description: %s")
+					.replacen("%s", &(state.drawing.plain_of(shape)).to_string(), 1)
+					.replacen("%s", &(state.drawing.description_of(shape)).to_string(), 1),
 				0,
 			);
 		});
@@ -3439,9 +3736,8 @@ fn elements_dialog(win: &Win, shared: &Shared) {
 			};
 			let Some(v) = fields_dialog(
 				&frame,
-				"Move element",
-				&[(
-					"New position: numbers like 120, 80, or words like top left, center, a bit right",
+				&t("Move element"),
+				&[(t("New position: numbers like 120, 80, or words like top left, center, a bit right"),
 					&format!("{}, {}", cur.0, cur.1),
 				)],
 			) else {
@@ -3452,8 +3748,7 @@ fn elements_dialog(win: &Win, shared: &Shared) {
 					shared.borrow_mut().drawing.shift_shape(li, si, nx - cur.0, ny - cur.1);
 					sync();
 				}
-				None => frame.set_status_text(
-					"I could not understand that position. Use numbers like 120, 80, or words like top left, center, a bit right.",
+				None => frame.set_status_text(&t("I could not understand that position. Use numbers like 120, 80, or words like top left, center, a bit right."),
 					0,
 				),
 			}
@@ -3467,8 +3762,7 @@ fn elements_dialog(win: &Win, shared: &Shared) {
 				let state = shared.borrow();
 				let s = &state.drawing.layers[li].shapes[si];
 				if s.kind == ShapeKind::Stroke {
-					frame.set_status_text(
-						"A stroke's size is its points; move it or add a new one.",
+					frame.set_status_text(&t("A stroke's size is its points; move it or add a new one."),
 						0,
 					);
 					return;
@@ -3479,23 +3773,22 @@ fn elements_dialog(win: &Win, shared: &Shared) {
 				((s.w, s.h), corner)
 			};
 			let size_field = (
-				"New size: numbers like 200 by 100, or words like a bit wider, a bit taller",
-				format!("{} by {}", cur.0, cur.1),
+				t("New size: numbers like 200 by 100, or words like a bit wider, a bit taller"),
+				t("%s by %s").replacen("%s", &(cur.0).to_string(), 1).replacen("%s", &(cur.1).to_string(), 1),
 			);
 			let corner_field = (
-				"Corners: 0 is sharp, 50 is fully rounded",
+				t("Corners: 0 is sharp, 50 is fully rounded"),
 				corner.map(|c| c.to_string()).unwrap_or_default(),
 			);
-			let mut fields: Vec<(&str, &str)> = vec![(size_field.0, &size_field.1)];
+			let mut fields: Vec<(String, &str)> = vec![(size_field.0, &size_field.1)];
 			if corner.is_some() {
 				fields.push((corner_field.0, &corner_field.1));
 			}
-			let Some(v) = fields_dialog(&frame, "Resize element", &fields) else {
+			let Some(v) = fields_dialog(&frame, &t("Resize element"), &fields) else {
 				return;
 			};
 			let Some((w, h)) = parse_size(&v[0], Some(cur)) else {
-				frame.set_status_text(
-					"I could not understand that size. Use numbers like 200 by 100, or words like a bit wider.",
+				frame.set_status_text(&t("I could not understand that size. Use numbers like 200 by 100, or words like a bit wider."),
 					0,
 				);
 				return;
@@ -3504,8 +3797,7 @@ fn elements_dialog(win: &Win, shared: &Shared) {
 				match v[1].trim().parse::<u8>() {
 					Ok(c) => Some(c.min(50)),
 					Err(_) => {
-						frame.set_status_text(
-							"Corners take a number from 0 (sharp) to 50 (fully rounded); nothing was changed.",
+						frame.set_status_text(&t("Corners take a number from 0 (sharp) to 50 (fully rounded); nothing was changed."),
 							0,
 						);
 						return;
@@ -3530,8 +3822,8 @@ fn elements_dialog(win: &Win, shared: &Shared) {
 			let now = shared.borrow().drawing.layers[li].shapes[si].fill;
 			let Some(v) = fields_dialog(
 				&frame,
-				"Recolor element",
-				&[("New color: a name like sky blue, or a hex code", &now.to_hex())],
+				&t("Recolor element"),
+				&[(t("New color: a name like sky blue, or a hex code"), &now.to_hex())],
 			) else {
 				return;
 			};
@@ -3540,8 +3832,7 @@ fn elements_dialog(win: &Win, shared: &Shared) {
 					shared.borrow_mut().drawing.recolor_shape(li, si, color);
 					sync();
 				}
-				None => frame.set_status_text(
-					"I could not understand that color. Use a name like sky blue, or a hex code like 87CEEB.",
+				None => frame.set_status_text(&t("I could not understand that color. Use a name like sky blue, or a hex code like 87CEEB."),
 					0,
 				),
 			}
@@ -3568,14 +3859,14 @@ fn elements_dialog(win: &Win, shared: &Shared) {
 /// removes it from the library file.
 fn brushes_dialog(win: &Win, shared: &Shared) {
 	let frame = win.frame;
-	let dialog = Dialog::builder(&frame, "Brush Library").build();
+	let dialog = Dialog::builder(&frame, &t("Brush Library")).build();
 	bind_escape_cancel(dialog);
 	let sizer = BoxSizer::builder(Orientation::Vertical).build();
-	let list = QuietList::new(&dialog, "Brush library");
+	let list = QuietList::new(&dialog, &t("Brush library"));
 	sizer.add(&list, 1, SizerFlag::Expand | SizerFlag::All, 5);
-	let apply = Button::builder(&dialog).with_label("Apply").build();
-	let delete = Button::builder(&dialog).with_label("Delete").build();
-	let close = Button::builder(&dialog).with_label("Close").build();
+	let apply = Button::builder(&dialog).with_label(&t("Apply")).build();
+	let delete = Button::builder(&dialog).with_label(&t("Delete")).build();
+	let close = Button::builder(&dialog).with_label(&t("Close")).build();
 	let buttons = BoxSizer::builder(Orientation::Horizontal).build();
 	for b in [&apply, &delete, &close] {
 		buttons.add(b, 0, SizerFlag::All, 5);
@@ -3584,7 +3875,13 @@ fn brushes_dialog(win: &Win, shared: &Shared) {
 	dialog.set_sizer(sizer, true);
 	let list = Rc::new(list);
 	let rows = |state: &State| -> Vec<(usize, String)> {
-		state.brushes.brushes.iter().enumerate().map(|(i, b)| (i, b.spoken())).collect()
+		state
+			.brushes
+			.brushes
+			.iter()
+			.enumerate()
+			.map(|(i, b)| (i, b.spoken()))
+			.collect()
 	};
 	{
 		let state = shared.borrow();
@@ -3596,11 +3893,17 @@ fn brushes_dialog(win: &Win, shared: &Shared) {
 		apply.on_click(move |_| {
 			let Some(i) = list.selected() else { return };
 			let mut state = shared.borrow_mut();
-			let Some(brush) = state.brushes.brushes.get(i).cloned() else { return };
+			let Some(brush) = state.brushes.brushes.get(i).cloned() else {
+				return;
+			};
 			let spoken = brush.spoken();
 			state.brush = brush;
 			frame.set_status_text(
-				&format!("Brush applied: {spoken}. New strokes will use it."),
+				&t("Brush applied: %s. New strokes will use it.").replacen(
+					"%s",
+					&(spoken).to_string(),
+					1,
+				),
 				0,
 			);
 		});
@@ -3610,14 +3913,25 @@ fn brushes_dialog(win: &Win, shared: &Shared) {
 		delete.on_click(move |_| {
 			let Some(i) = list.selected() else { return };
 			let mut state = shared.borrow_mut();
-			let Some(brush) = state.brushes.brushes.get(i).cloned() else { return };
+			let Some(brush) = state.brushes.brushes.get(i).cloned() else {
+				return;
+			};
 			let name = brush.name.clone();
 			state.brushes.remove(&name);
 			if let Err(e) = std::fs::write(brush_file_path(), state.brushes.to_text()) {
-				frame.set_status_text(&format!("The brush library could not be saved: {e}"), 0);
+				frame.set_status_text(
+					&t("The brush library could not be saved: %s").replacen(
+						"%s",
+						&(e).to_string(),
+						1,
+					),
+					0,
+				);
 				return;
 			}
-			let rows_now = state.brushes.brushes
+			let rows_now = state
+				.brushes
+				.brushes
 				.iter()
 				.enumerate()
 				.map(|(j, b)| (j, b.spoken()))
@@ -3625,7 +3939,10 @@ fn brushes_dialog(win: &Win, shared: &Shared) {
 			drop(state);
 			list.update_labelled(rows_now, Select::Keep);
 			grey();
-			frame.set_status_text(&format!("Deleted brush \"{name}\" from the library."), 0);
+			frame.set_status_text(
+				&t("Deleted brush \"%s\" from the library.").replacen("%s", &(name).to_string(), 1),
+				0,
+			);
 		});
 	}
 	{
@@ -3642,29 +3959,47 @@ fn brushes_dialog(win: &Win, shared: &Shared) {
 /// anywhere else, and closing returns to the main window.
 fn dictionary_dialog(win: &Win) {
 	let frame = win.frame;
-	let dialog = Dialog::builder(&frame, "Design Terms Dictionary").with_size(560, 480).build();
+	let dialog = Dialog::builder(&frame, &t("Design Terms Dictionary"))
+		.with_size(560, 480)
+		.build();
 	bind_escape_cancel(dialog);
 	let sizer = BoxSizer::builder(Orientation::Vertical).build();
-	let search_label = StaticText::builder(&dialog).with_label("Search terms").build();
+	let search_label = StaticText::builder(&dialog)
+		.with_label(&t("Search terms"))
+		.build();
 	let search_field = TextCtrl::builder(&dialog).build();
-	let search_button = Button::builder(&dialog).with_label("Search").build();
+	let search_button = Button::builder(&dialog).with_label(&t("Search")).build();
 	let search_row = BoxSizer::builder(Orientation::Horizontal).build();
 	search_row.add(&search_label, 0, SizerFlag::All, 5);
 	search_row.add(&search_field, 1, SizerFlag::All, 5);
 	search_row.add(&search_button, 0, SizerFlag::All, 5);
 	sizer.add_sizer(&search_row, 0, SizerFlag::Expand, 0);
-	let list_label = StaticText::builder(&dialog).with_label("Dictionary terms").build();
-	sizer.add(&list_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
-	let list = QuietList::<usize>::new(&dialog, "Dictionary terms");
+	let list_label = StaticText::builder(&dialog)
+		.with_label(&t("Dictionary terms"))
+		.build();
+	sizer.add(
+		&list_label,
+		0,
+		SizerFlag::Left | SizerFlag::Right | SizerFlag::Top,
+		5,
+	);
+	let list = QuietList::<usize>::new(&dialog, &t("Dictionary terms"));
 	sizer.add(&list, 1, SizerFlag::Expand | SizerFlag::All, 5);
 	let list = Rc::new(list);
-	let def_label = StaticText::builder(&dialog).with_label("Definition").build();
-	sizer.add(&def_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	let def_label = StaticText::builder(&dialog)
+		.with_label(&t("Definition"))
+		.build();
+	sizer.add(
+		&def_label,
+		0,
+		SizerFlag::Left | SizerFlag::Right | SizerFlag::Top,
+		5,
+	);
 	let definition = TextCtrl::builder(&dialog)
 		.with_style(TextCtrlStyle::MultiLine | TextCtrlStyle::ReadOnly)
 		.build();
 	sizer.add(&definition, 1, SizerFlag::Expand | SizerFlag::All, 5);
-	let close = Button::builder(&dialog).with_label("Close").build();
+	let close = Button::builder(&dialog).with_label(&t("Close")).build();
 	sizer.add(&close, 0, SizerFlag::All, 5);
 	dialog.set_sizer(sizer, true);
 
@@ -3672,7 +4007,7 @@ fn dictionary_dialog(win: &Win) {
 		dictionary::search(query)
 			.iter()
 			.enumerate()
-			.map(|(i, en)| (i, en.term.to_string()))
+			.map(|(i, en)| (i, en.display_term()))
 			.collect()
 	};
 	let show_selected = {
@@ -3682,7 +4017,11 @@ fn dictionary_dialog(win: &Win) {
 			let hits = dictionary::search(&search_field.get_value());
 			if let Some(i) = list.selected() {
 				if let Some(en) = hits.get(i) {
-					definition.set_value(&format!("{}: {}", en.term, en.definition));
+					definition.set_value(&format!(
+						"{}: {}",
+						en.display_term(),
+						en.display_definition()
+					));
 				}
 			}
 		}
@@ -3703,15 +4042,23 @@ fn dictionary_dialog(win: &Win) {
 			list.update_labelled(rows(&query), Select::Start);
 			match hits.first() {
 				Some(en) => {
-					definition.set_value(&format!("{}: {}", en.term, en.definition));
+					definition.set_value(&format!(
+						"{}: {}",
+						en.display_term(),
+						en.display_definition()
+					));
 					frame.set_status_text(
-						&format!("{} dictionary terms match.", hits.len()),
+						&t("%s dictionary terms match.").replacen(
+							"%s",
+							&(hits.len()).to_string(),
+							1,
+						),
 						0,
 					);
 				}
 				None => {
-					definition.set_value("No term matches that search.");
-					frame.set_status_text("No dictionary term matches that search.", 0);
+					definition.set_value(&t("No term matches that search."));
+					frame.set_status_text(&t("No dictionary term matches that search."), 0);
 				}
 			}
 		});
@@ -3728,17 +4075,26 @@ fn dictionary_dialog(win: &Win) {
 /// reviewable text field labelled "Help and worked examples".
 fn help_dialog(win: &Win) {
 	let frame = win.frame;
-	let dialog = Dialog::builder(&frame, "Help and Worked Examples").with_size(640, 520).build();
+	let dialog = Dialog::builder(&frame, &t("Help and Worked Examples"))
+		.with_size(640, 520)
+		.build();
 	bind_escape_cancel(dialog);
 	let sizer = BoxSizer::builder(Orientation::Vertical).build();
-	let label = StaticText::builder(&dialog).with_label("Help and worked examples").build();
-	sizer.add(&label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	let label = StaticText::builder(&dialog)
+		.with_label(&t("Help and worked examples"))
+		.build();
+	sizer.add(
+		&label,
+		0,
+		SizerFlag::Left | SizerFlag::Right | SizerFlag::Top,
+		5,
+	);
 	let text = TextCtrl::builder(&dialog)
 		.with_style(TextCtrlStyle::MultiLine | TextCtrlStyle::ReadOnly)
 		.build();
 	text.set_value(HELP_TEXT);
 	sizer.add(&text, 1, SizerFlag::Expand | SizerFlag::All, 5);
-	let close = Button::builder(&dialog).with_label("Close").build();
+	let close = Button::builder(&dialog).with_label(&t("Close")).build();
 	sizer.add(&close, 0, SizerFlag::All, 5);
 	dialog.set_sizer(sizer, true);
 	{
@@ -3759,13 +4115,18 @@ fn report_dialog(win: &Win, title: &str, label: &str, text: &str) {
 	bind_escape_cancel(dialog);
 	let sizer = BoxSizer::builder(Orientation::Vertical).build();
 	let caption = StaticText::builder(&dialog).with_label(label).build();
-	sizer.add(&caption, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	sizer.add(
+		&caption,
+		0,
+		SizerFlag::Left | SizerFlag::Right | SizerFlag::Top,
+		5,
+	);
 	let body = TextCtrl::builder(&dialog)
 		.with_style(TextCtrlStyle::MultiLine | TextCtrlStyle::ReadOnly)
 		.build();
 	body.set_value(text);
 	sizer.add(&body, 1, SizerFlag::Expand | SizerFlag::All, 5);
-	let close = Button::builder(&dialog).with_label("Close").build();
+	let close = Button::builder(&dialog).with_label(&t("Close")).build();
 	sizer.add(&close, 0, SizerFlag::All, 5);
 	dialog.set_sizer(sizer, true);
 	{
@@ -3788,10 +4149,17 @@ fn selected_element_locate(win: &Win, shared: &Shared) -> Option<(usize, usize)>
 /// report from the drawing itself, the app shows it in the
 /// standard report dialog.
 fn inspect_selected(win: &Rc<Win>, shared: &Shared) {
-	let Some(flat) = win.elements_list.borrow().selected() else { return };
+	let Some(flat) = win.elements_list.borrow().selected() else {
+		return;
+	};
 	let state = shared.borrow();
 	if let Some(text) = inspect_shape(&state.drawing, flat) {
-		report_dialog(win, "Inspector: element", "Element inspector", &text);
+		report_dialog(
+			win,
+			&t("Inspector: element"),
+			&t("Element inspector"),
+			&text,
+		);
 	}
 }
 
@@ -3809,14 +4177,14 @@ fn ctx(menu: &Menu, id: Id, text: &str) {
 fn show_palette_context(win: &Rc<Win>) {
 	let mut menu = Menu::builder().build();
 	if win.palette_list.borrow().selected().is_some() {
-		ctx(&menu, ID_INSPECT_COLOR, "Inspect Color…");
-		ctx(&menu, ID_SET_BACKGROUND, "Set as Background");
-		ctx(&menu, ID_REMOVE_COLOR, "Remove Color");
+		ctx(&menu, ID_INSPECT_COLOR, &t("Inspect Color…"));
+		ctx(&menu, ID_SET_BACKGROUND, &t("Set as Background"));
+		ctx(&menu, ID_REMOVE_COLOR, &t("Remove Color"));
 		menu.append_separator();
 	}
-	ctx(&menu, ID_ADD_COLOR, "Add Color by Hex…");
-	ctx(&menu, ID_LOAD_STARTER, "Load Starter Colors");
-	ctx(&menu, ID_OPEN_IMAGE, "Extract from Image…");
+	ctx(&menu, ID_ADD_COLOR, &t("Add Color by Hex…"));
+	ctx(&menu, ID_LOAD_STARTER, &t("Load Starter Colors"));
+	ctx(&menu, ID_OPEN_IMAGE, &t("Extract from Image…"));
 	win.palette_list.borrow().popup_menu(&mut menu);
 }
 
@@ -3827,22 +4195,22 @@ fn show_palette_context(win: &Rc<Win>) {
 fn show_elements_context(win: &Rc<Win>) {
 	let mut menu = Menu::builder().build();
 	if win.elements_list.borrow().selected().is_some() {
-		ctx(&menu, ID_INSPECT, "Inspect Selected…");
-		ctx(&menu, ID_ELEMENT_WIZARD, "Element Wizard…");
-		ctx(&menu, ID_LOCK_TOGGLE, "Lock/Unlock Selected");
-		ctx(&menu, ID_MOVE_SHAPE, "Move…");
-		ctx(&menu, ID_ROTATE_SHAPE, "Rotate…");
-		ctx(&menu, ID_RESIZE_SHAPE, "Resize…");
-		ctx(&menu, ID_RECOLOR_SHAPE, "Set to Palette Color");
-		ctx(&menu, ID_REMOVE_SHAPE, "Remove Shape");
+		ctx(&menu, ID_INSPECT, &t("Inspect Selected…"));
+		ctx(&menu, ID_ELEMENT_WIZARD, &t("Element Wizard…"));
+		ctx(&menu, ID_LOCK_TOGGLE, &t("Lock/Unlock Selected"));
+		ctx(&menu, ID_MOVE_SHAPE, &t("Move…"));
+		ctx(&menu, ID_ROTATE_SHAPE, &t("Rotate…"));
+		ctx(&menu, ID_RESIZE_SHAPE, &t("Resize…"));
+		ctx(&menu, ID_RECOLOR_SHAPE, &t("Set to Palette Color"));
+		ctx(&menu, ID_REMOVE_SHAPE, &t("Remove Shape"));
 		menu.append_separator();
 	}
-	ctx(&menu, ID_ADD_RECT, "Add Rectangle…");
-	ctx(&menu, ID_ADD_ELLIPSE, "Add Ellipse…");
-	ctx(&menu, ID_ADD_STROKE, "Add Stroke…");
-	ctx(&menu, ID_ADD_TEXT, "Add Text…");
-	ctx(&menu, ID_ADD_IMAGE, "Add Image…");
-	ctx(&menu, ID_ADD_SYMBOL, "Add Symbol…");
+	ctx(&menu, ID_ADD_RECT, &t("Add Rectangle…"));
+	ctx(&menu, ID_ADD_ELLIPSE, &t("Add Ellipse…"));
+	ctx(&menu, ID_ADD_STROKE, &t("Add Stroke…"));
+	ctx(&menu, ID_ADD_TEXT, &t("Add Text…"));
+	ctx(&menu, ID_ADD_IMAGE, &t("Add Image…"));
+	ctx(&menu, ID_ADD_SYMBOL, &t("Add Symbol…"));
 	win.elements_list.borrow().popup_menu(&mut menu);
 }
 
@@ -3853,9 +4221,9 @@ fn show_elements_context(win: &Rc<Win>) {
 fn show_layers_context(win: &Rc<Win>) {
 	let mut menu = Menu::builder().build();
 	if win.layers_list.selected().is_some() {
-		ctx(&menu, ID_INSPECT_LAYER, "Inspect Layer…");
+		ctx(&menu, ID_INSPECT_LAYER, &t("Inspect Layer…"));
 	}
-	ctx(&menu, ID_LAYERS, "Layers…");
+	ctx(&menu, ID_LAYERS, &t("Layers…"));
 	win.layers_list.popup_menu(&mut menu);
 }
 
@@ -3864,7 +4232,11 @@ fn show_layers_context(win: &Rc<Win>) {
 /// from the area they would appear in.
 fn show_sliders_context(win: &Rc<Win>) {
 	let mut menu = Menu::builder().build();
-	ctx(&menu, ID_PROJECT_OPTIONS, "Project Options… (choose pinned sliders)");
+	ctx(
+		&menu,
+		ID_PROJECT_OPTIONS,
+		&t("Project Options… (choose pinned sliders)"),
+	);
 	if let Some(page) = win.slider_page.borrow().as_ref() {
 		page.popup_menu(&mut menu, None);
 	}
@@ -3888,16 +4260,21 @@ fn insert_hit(win: &Rc<Win>, shared: &Shared, hit: &CatalogHit) -> Option<String
 			let format = state.color_format;
 			drop(state);
 			shared.borrow_mut().brush.color = color;
-			Some(format!(
-				"{} is now the brush color: the next element drawn uses it.",
-				describe_in(color, format)
-			))
+			Some(
+				t("%s is now the brush color: the next element drawn uses it.").replacen(
+					"%s",
+					&(describe_in(color, format)).to_string(),
+					1,
+				),
+			)
 		}
 		CatalogHit::StarterColor { color, .. } => {
 			let mut state = shared.borrow_mut();
 			let already = state.palette.iter().any(|pc| pc.color == *color);
 			if !already {
-				state.palette.push(PaletteColor::new(*color, Provenance::Starter));
+				state
+					.palette
+					.push(PaletteColor::new(*color, Provenance::Starter));
 			}
 			state.brush.color = *color;
 			let format = state.color_format;
@@ -3905,15 +4282,29 @@ fn insert_hit(win: &Rc<Win>, shared: &Shared, hit: &CatalogHit) -> Option<String
 			let state = shared.borrow();
 			refresh_lists(win, &state);
 			select_color(win, &state, *color);
-			Some(format!(
-				"{} {} the palette and is now the brush color.",
-				describe_in(*color, format),
-				if already { "was already in" } else { "was added to" }
-			))
+			Some(
+				t("%s %s the palette and is now the brush color.")
+					.replacen("%s", &(describe_in(*color, format)).to_string(), 1)
+					.replacen(
+						"%s",
+						if already {
+							"was already in"
+						} else {
+							"was added to"
+						},
+						1,
+					),
+			)
 		}
 		CatalogHit::Element { layer, index, .. } => {
 			let mut state = shared.borrow_mut();
-			let source = state.drawing.layers.get(*layer)?.shapes.get(*index)?.clone();
+			let source = state
+				.drawing
+				.layers
+				.get(*layer)?
+				.shapes
+				.get(*index)?
+				.clone();
 			let words = state.drawing.plain_of(&source);
 			// The landing spot: after the selected element (in
 			// its layer, offset a step so the copy is findable),
@@ -3926,13 +4317,16 @@ fn insert_hit(win: &Rc<Win>, shared: &Shared, hit: &CatalogHit) -> Option<String
 			let note = match selected {
 				Some((sli, ssi)) => {
 					let mut copy = source;
-					copy.x = (copy.x + 10)
-						.min((state.drawing.width as i32 - copy.w as i32).max(0));
-					copy.y = (copy.y + 10)
-						.min((state.drawing.height as i32 - copy.h as i32).max(0));
+					copy.x = (copy.x + 10).min((state.drawing.width as i32 - copy.w as i32).max(0));
+					copy.y =
+						(copy.y + 10).min((state.drawing.height as i32 - copy.h as i32).max(0));
 					let layer_name = state.drawing.layers[sli].name.clone();
 					state.drawing.insert_shape(sli, ssi + 1, copy);
-					format!("on layer \"{layer_name}\", right after the selected element")
+					t("on layer \"%s\", right after the selected element").replacen(
+						"%s",
+						&(layer_name).to_string(),
+						1,
+					)
 				}
 				None => {
 					let mut copy = source;
@@ -3941,13 +4335,21 @@ fn insert_hit(win: &Rc<Win>, shared: &Shared, hit: &CatalogHit) -> Option<String
 					let li = state.layer.min(state.drawing.layers.len() - 1);
 					let layer_name = state.drawing.layers[li].name.clone();
 					state.drawing.add_shape(li, copy);
-					format!("at the centre of the canvas on layer \"{layer_name}\"")
+					t("at the centre of the canvas on layer \"%s\"").replacen(
+						"%s",
+						&(layer_name).to_string(),
+						1,
+					)
 				}
 			};
 			drop(state);
 			let state = shared.borrow();
 			refresh_lists(win, &state);
-			Some(format!("Copied the {words} {note}."))
+			Some(
+				t("Copied the %s %s.")
+					.replacen("%s", &(words).to_string(), 1)
+					.replacen("%s", &(note).to_string(), 1),
+			)
 		}
 		CatalogHit::Symbol { name, .. } => {
 			let mut state = shared.borrow_mut();
@@ -3964,15 +4366,13 @@ fn insert_hit(win: &Rc<Win>, shared: &Shared, hit: &CatalogHit) -> Option<String
 			for path in paths {
 				let mut shape = Shape::stroke(path, 3, color);
 				shape.opacity = opacity;
-				shape.caption = Some(format!("{name} symbol"));
+				shape.caption = Some(t("%s symbol").replacen("%s", (name).as_ref(), 1));
 				state.drawing.add_shape(li, shape);
 			}
 			drop(state);
 			let state = shared.borrow();
 			refresh_lists(win, &state);
-			Some(format!(
-				"The {name} symbol was stamped at the centre of the canvas on layer \"{layer_name}\", in the brush color."
-			))
+			Some(t("The %s symbol was stamped at the centre of the canvas on layer \"%s\", in the brush color.").replacen("%s", (name).as_ref(), 1).replacen("%s", &(layer_name).to_string(), 1))
 		}
 		CatalogHit::Template { name, .. } => {
 			let design = templates::template(name)?;
@@ -3988,9 +4388,7 @@ fn insert_hit(win: &Rc<Win>, shared: &Shared, hit: &CatalogHit) -> Option<String
 			apply_interaction_mode(win, shared, true);
 			let state = shared.borrow();
 			refresh_lists(win, &state);
-			Some(format!(
-				"The design is now the {name} template. It is a normal design now: edit it, then Save Design to keep it."
-			))
+			Some(t("The design is now the %s template. It is a normal design now: edit it, then Save Design to keep it.").replacen("%s", (name).as_ref(), 1))
 		}
 		CatalogHit::Pattern { .. } => None,
 	}
@@ -4004,24 +4402,34 @@ fn insert_hit(win: &Rc<Win>, shared: &Shared, hit: &CatalogHit) -> Option<String
 /// on the Dictionary dialog: type, press Search, choose, insert.
 fn search_dialog(win: &Rc<Win>, shared: &Shared) {
 	let frame = win.frame;
-	let dialog =
-		Dialog::builder(&frame, "Search and Insert").with_size(620, 560).build();
+	let dialog = Dialog::builder(&frame, &t("Search and Insert"))
+		.with_size(620, 560)
+		.build();
 	bind_escape_cancel(dialog);
 	let sizer = BoxSizer::builder(Orientation::Vertical).build();
-	let search_label = StaticText::builder(&dialog).with_label("Search for").build();
+	let search_label = StaticText::builder(&dialog)
+		.with_label(&t("Search for"))
+		.build();
 	let field = TextCtrl::builder(&dialog).build();
-	let search_button = Button::builder(&dialog).with_label("Search").build();
+	let search_button = Button::builder(&dialog).with_label(&t("Search")).build();
 	let search_row = BoxSizer::builder(Orientation::Horizontal).build();
 	search_row.add(&search_label, 0, SizerFlag::All, 5);
 	search_row.add(&field, 1, SizerFlag::All, 5);
 	search_row.add(&search_button, 0, SizerFlag::All, 5);
 	sizer.add_sizer(&search_row, 0, SizerFlag::Expand, 0);
-	let list_label = StaticText::builder(&dialog).with_label("Results").build();
-	sizer.add(&list_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
-	let list = QuietList::<usize>::new(&dialog, "Results");
+	let list_label = StaticText::builder(&dialog)
+		.with_label(&t("Results"))
+		.build();
+	sizer.add(
+		&list_label,
+		0,
+		SizerFlag::Left | SizerFlag::Right | SizerFlag::Top,
+		5,
+	);
+	let list = QuietList::<usize>::new(&dialog, &t("Results"));
 	sizer.add(&list, 1, SizerFlag::Expand | SizerFlag::All, 5);
-	let insert = Button::builder(&dialog).with_label("Insert").build();
-	let close = Button::builder(&dialog).with_label("Close").build();
+	let insert = Button::builder(&dialog).with_label(&t("Insert")).build();
+	let close = Button::builder(&dialog).with_label(&t("Close")).build();
 	let buttons = BoxSizer::builder(Orientation::Horizontal).build();
 	buttons.add(&insert, 0, SizerFlag::All, 5);
 	buttons.add(&close, 0, SizerFlag::All, 5);
@@ -4054,8 +4462,13 @@ fn search_dialog(win: &Rc<Win>, shared: &Shared) {
 		search_button.on_click(move |_| run());
 	}
 	let do_insert = {
-		let (list, hits, dialog, win, shared) =
-			(list.clone(), hits.clone(), dialog.clone(), win.clone(), shared.clone());
+		let (list, hits, dialog, win, shared) = (
+			list.clone(),
+			hits.clone(),
+			dialog.clone(),
+			win.clone(),
+			shared.clone(),
+		);
 		move || {
 			let Some(i) = list.selected() else { return };
 			let hit = hits.borrow().get(i).cloned();
@@ -4071,7 +4484,7 @@ fn search_dialog(win: &Rc<Win>, shared: &Shared) {
 			}
 			if let Some(note) = insert_hit(&win, &shared, &hit) {
 				dialog.end_modal(ID_OK);
-				report_dialog(&win, "Inserted", "What was inserted", &note);
+				report_dialog(&win, &t("Inserted"), &t("What was inserted"), &note);
 			}
 		}
 	};
@@ -4083,7 +4496,9 @@ fn search_dialog(win: &Rc<Win>, shared: &Shared) {
 	{
 		let go = do_insert.clone();
 		list.on_key_down(move |data| {
-			let WindowEventData::Keyboard(kb) = data else { return false };
+			let WindowEventData::Keyboard(kb) = data else {
+				return false;
+			};
 			if kb.get_key_code() == Some(WXK_RETURN) {
 				go();
 				true
@@ -4109,14 +4524,17 @@ fn pattern_dialog(win: &Rc<Win>, shared: &Shared, preselect: Option<&str>) {
 	let (names, colors) = {
 		let state = shared.borrow();
 		if state.palette.is_empty() {
-			frame.set_status_text(
-				"A pattern is woven from two palette colors, and this project has none yet: add a color or load the starter colors first.",
+			frame.set_status_text(&t("A pattern is woven from two palette colors, and this project has none yet: add a color or load the starter colors first."),
 				0,
 			);
 			return;
 		}
 		(
-			state.palette.iter().map(|pc| pc.spoken(state.color_format)).collect::<Vec<_>>(),
+			state
+				.palette
+				.iter()
+				.map(|pc| pc.spoken(state.color_format))
+				.collect::<Vec<_>>(),
 			state.palette.iter().map(|pc| pc.color).collect::<Vec<_>>(),
 		)
 	};
@@ -4127,14 +4545,21 @@ fn pattern_dialog(win: &Rc<Win>, shared: &Shared, preselect: Option<&str>) {
 		.iter()
 		.position(|c| *c == background)
 		.unwrap_or(if colors.len() > 1 { 1 } else { 0 });
-	let dialog = Dialog::builder(&frame, "New from Pattern").build();
+	let dialog = Dialog::builder(&frame, &t("New from Pattern")).build();
 	bind_escape_cancel(dialog);
 	let sizer = BoxSizer::builder(Orientation::Vertical).build();
-	let kind_label = StaticText::builder(&dialog).with_label("Pattern").build();
-	sizer.add(&kind_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	let kind_label = StaticText::builder(&dialog)
+		.with_label(&t("Pattern"))
+		.build();
+	sizer.add(
+		&kind_label,
+		0,
+		SizerFlag::Left | SizerFlag::Right | SizerFlag::Top,
+		5,
+	);
 	let kinds = Choice::builder(&dialog).build();
 	for name in templates::PATTERN_NAMES {
-		kinds.append(name);
+		kinds.append(&t(name));
 	}
 	kinds.set_selection(
 		preselect
@@ -4142,26 +4567,40 @@ fn pattern_dialog(win: &Rc<Win>, shared: &Shared, preselect: Option<&str>) {
 			.unwrap_or(0) as u32,
 	);
 	sizer.add(&kinds, 0, SizerFlag::Expand | SizerFlag::All, 5);
-	let first_label =
-		StaticText::builder(&dialog).with_label("First color (the marks)").build();
-	sizer.add(&first_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	let first_label = StaticText::builder(&dialog)
+		.with_label(&t("First color (the marks)"))
+		.build();
+	sizer.add(
+		&first_label,
+		0,
+		SizerFlag::Left | SizerFlag::Right | SizerFlag::Top,
+		5,
+	);
 	let first = Choice::builder(&dialog).build();
 	for row in &names {
 		first.append(row);
 	}
 	first.set_selection(0);
 	sizer.add(&first, 0, SizerFlag::Expand | SizerFlag::All, 5);
-	let second_label =
-		StaticText::builder(&dialog).with_label("Second color (the ground)").build();
-	sizer.add(&second_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	let second_label = StaticText::builder(&dialog)
+		.with_label(&t("Second color (the ground)"))
+		.build();
+	sizer.add(
+		&second_label,
+		0,
+		SizerFlag::Left | SizerFlag::Right | SizerFlag::Top,
+		5,
+	);
 	let second = Choice::builder(&dialog).build();
 	for row in &names {
 		second.append(row);
 	}
 	second.set_selection(ground_default as u32);
 	sizer.add(&second, 0, SizerFlag::Expand | SizerFlag::All, 5);
-	let start = Button::builder(&dialog).with_label("Start Pattern Design").build();
-	let close = Button::builder(&dialog).with_label("Close").build();
+	let start = Button::builder(&dialog)
+		.with_label(&t("Start Pattern Design"))
+		.build();
+	let close = Button::builder(&dialog).with_label(&t("Close")).build();
 	let buttons = BoxSizer::builder(Orientation::Horizontal).build();
 	buttons.add(&start, 0, SizerFlag::All, 5);
 	buttons.add(&close, 0, SizerFlag::All, 5);
@@ -4197,7 +4636,7 @@ fn pattern_dialog(win: &Rc<Win>, shared: &Shared, preselect: Option<&str>) {
 			drop(state);
 			apply_interaction_mode(&w, &shared, true);
 			frame.set_status_text(
-				&format!("Started a new {kind} design from the two colors. It is a normal design now: edit it, then Save Design to keep it."),
+				&t("Started a new %s design from the two colors. It is a normal design now: edit it, then Save Design to keep it.").replacen("%s", kind, 1),
 				0,
 			);
 			dialog.end_modal(ID_OK);
@@ -4220,27 +4659,41 @@ fn pattern_dialog(win: &Rc<Win>, shared: &Shared, preselect: Option<&str>) {
 /// word labels, like every dialog in the app.
 fn viewability_dialog(win: &Win, shared: &Shared) {
 	let frame = win.frame;
-	let dialog = Dialog::builder(&frame, "Viewability").build();
+	let dialog = Dialog::builder(&frame, &t("Viewability")).build();
 	bind_escape_cancel(dialog);
 	let sizer = BoxSizer::builder(Orientation::Vertical).build();
 	let angle_label = StaticText::builder(&dialog)
-		.with_label("Viewing angle in degrees (0 is straight on from the front)")
+		.with_label(&t(
+			"Viewing angle in degrees (0 is straight on from the front)",
+		))
 		.build();
 	let angle_spin = SpinCtrl::builder(&dialog).with_range(0, 359).build();
 	angle_spin.set_value(0);
-	sizer.add(&angle_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	sizer.add(
+		&angle_label,
+		0,
+		SizerFlag::Left | SizerFlag::Right | SizerFlag::Top,
+		5,
+	);
 	sizer.add(&angle_spin, 0, SizerFlag::Expand | SizerFlag::All, 5);
-	let band_label = StaticText::builder(&dialog).with_label("Depth to judge").build();
+	let band_label = StaticText::builder(&dialog)
+		.with_label(&t("Depth to judge"))
+		.build();
 	let band_choice = Choice::builder(&dialog).build();
 	for band in DepthBand::ALL {
-		band_choice.append(band.name());
+		band_choice.append(&band.name());
 	}
 	band_choice.set_selection(0);
-	band_choice.set_name("Depth to judge");
-	sizer.add(&band_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	band_choice.set_name(&t("Depth to judge"));
+	sizer.add(
+		&band_label,
+		0,
+		SizerFlag::Left | SizerFlag::Right | SizerFlag::Top,
+		5,
+	);
 	sizer.add(&band_choice, 0, SizerFlag::Expand | SizerFlag::All, 5);
-	let ok = Button::builder(&dialog).with_label("OK").build();
-	let cancel = Button::builder(&dialog).with_label("Cancel").build();
+	let ok = Button::builder(&dialog).with_label(&t("OK")).build();
+	let cancel = Button::builder(&dialog).with_label(&t("Cancel")).build();
 	let buttons = BoxSizer::builder(Orientation::Horizontal).build();
 	buttons.add(&ok, 0, SizerFlag::All, 5);
 	buttons.add(&cancel, 0, SizerFlag::All, 5);
@@ -4263,8 +4716,8 @@ fn viewability_dialog(win: &Win, shared: &Shared) {
 		let state = shared.borrow();
 		report_dialog(
 			win,
-			"Viewability",
-			&format!("How the design reads from {angle} degrees"),
+			&t("Viewability"),
+			&t("How the design reads from %s degrees").replacen("%s", &(angle).to_string(), 1),
 			&state.drawing.viewability_report(angle as f64, band),
 		);
 	}
@@ -4304,12 +4757,19 @@ impl Wizard {
 		let dialog = Dialog::builder(frame, title).with_size(680, 560).build();
 		bind_escape_cancel(dialog);
 		let sizer = BoxSizer::builder(Orientation::Vertical).build();
-		let header = StaticText::builder(&dialog).with_label("Step 1 of 1").build();
-		sizer.add(&header, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
-		let back_btn = Button::builder(&dialog).with_label("Back").build();
-		let next_btn = Button::builder(&dialog).with_label("Next").build();
-		let finish_btn = Button::builder(&dialog).with_label("Finish").build();
-		let cancel_btn = Button::builder(&dialog).with_label("Cancel").build();
+		let header = StaticText::builder(&dialog)
+			.with_label(&t("Step 1 of 1"))
+			.build();
+		sizer.add(
+			&header,
+			0,
+			SizerFlag::Left | SizerFlag::Right | SizerFlag::Top,
+			5,
+		);
+		let back_btn = Button::builder(&dialog).with_label(&t("Back")).build();
+		let next_btn = Button::builder(&dialog).with_label(&t("Next")).build();
+		let finish_btn = Button::builder(&dialog).with_label(&t("Finish")).build();
+		let cancel_btn = Button::builder(&dialog).with_label(&t("Cancel")).build();
 		let buttons = BoxSizer::builder(Orientation::Horizontal).build();
 		buttons.add(&back_btn, 0, SizerFlag::All, 5);
 		buttons.add(&next_btn, 0, SizerFlag::All, 5);
@@ -4363,7 +4823,8 @@ impl Wizard {
 	fn add_step(self: &Rc<Self>, title: &str) -> Panel {
 		let panel = Panel::builder(&self.dialog).build();
 		let first = self.steps.borrow().is_empty();
-		self.sizer.add(&panel, 1, SizerFlag::Expand | SizerFlag::All, 5);
+		self.sizer
+			.add(&panel, 1, SizerFlag::Expand | SizerFlag::All, 5);
 		panel.show(first);
 		self.steps.borrow_mut().push((title.to_string(), panel));
 		self.refresh_chrome();
@@ -4383,8 +4844,12 @@ impl Wizard {
 			return;
 		}
 		let i = self.current.get().min(steps.len() - 1);
-		self.header
-			.set_label(&format!("Step {} of {}: {}", i + 1, steps.len(), steps[i].0));
+		self.header.set_label(
+			&t("Step %s of %s: %s")
+				.replacen("%s", &(i + 1).to_string(), 1)
+				.replacen("%s", &(steps.len()).to_string(), 1)
+				.replacen("%s", &(steps[i].0).to_string(), 1),
+		);
 		self.back_btn.enable(i > 0);
 		self.next_btn.enable(i + 1 < steps.len());
 	}
@@ -4446,16 +4911,25 @@ fn setup_wizard(win: &Rc<Win>, shared: &Shared, new_project: bool) {
 	let frame = win.frame;
 	let wiz = Wizard::new(
 		&frame,
-		if new_project { "New Project Wizard" } else { "Setup Wizard" },
+		&(if new_project {
+			t("New Project Wizard")
+		} else {
+			t("Setup Wizard")
+		}),
 	);
 	// Step 1: the kind.
-	let p1 = wiz.add_step("What do you want to create or build?");
+	let p1 = wiz.add_step(&t("What do you want to create or build?"));
 	let s1 = step_sizer(&p1);
 	let kind_label = StaticText::builder(&p1)
-		.with_label("What do you want to create or build?")
+		.with_label(&t("What do you want to create or build?"))
 		.build();
-	s1.add(&kind_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
-	let kind_list = QuietList::<usize>::new(&p1, "What do you want to create or build");
+	s1.add(
+		&kind_label,
+		0,
+		SizerFlag::Left | SizerFlag::Right | SizerFlag::Top,
+		5,
+	);
+	let kind_list = QuietList::<usize>::new(&p1, &t("What do you want to create or build"));
 	s1.add(&kind_list, 1, SizerFlag::Expand | SizerFlag::All, 5);
 	let mode_note = StaticText::builder(&p1)
 		.with_label(if new_project {
@@ -4464,7 +4938,12 @@ fn setup_wizard(win: &Rc<Win>, shared: &Shared, new_project: bool) {
 			"This project's interaction mode — Draw, Slide or Type, one surface at a time — is switched in Design, Project Options."
 		})
 		.build();
-	s1.add(&mode_note, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	s1.add(
+		&mode_note,
+		0,
+		SizerFlag::Left | SizerFlag::Right | SizerFlag::Top,
+		5,
+	);
 	let kind_list = Rc::new(kind_list);
 	kind_list.update_labelled(
 		GoalKind::ALL
@@ -4475,7 +4954,12 @@ fn setup_wizard(win: &Rc<Win>, shared: &Shared, new_project: bool) {
 		Select::Start,
 	);
 	let kind_sel = Rc::new(std::cell::Cell::new(
-		shared.borrow().goal.as_ref().map(|g| g.kind).unwrap_or(GoalKind::Writing),
+		shared
+			.borrow()
+			.goal
+			.as_ref()
+			.map(|g| g.kind)
+			.unwrap_or(GoalKind::Writing),
 	));
 	// Preselect the current goal's kind when restating one.
 	if !new_project {
@@ -4502,24 +4986,27 @@ fn setup_wizard(win: &Rc<Win>, shared: &Shared, new_project: bool) {
 	// Step 2: the focus questions of the chosen kind — up to
 	// four rows, relabelled each time the step is shown, each
 	// answer a choice whose last entry is "No fixed answer".
-	let p2 = wiz.add_step("Focus questions");
+	let p2 = wiz.add_step(&t("Focus questions"));
 	let s2 = step_sizer(&p2);
 	let mut q_labels: Vec<StaticText> = Vec::new();
 	let mut q_choices: Vec<Choice> = Vec::new();
 	for _ in 0..4 {
-		let label = StaticText::builder(&p2).with_label("").build();
+		let label = StaticText::builder(&p2).with_label(&t("")).build();
 		let choice = Choice::builder(&p2).build();
-		s2.add(&label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+		s2.add(
+			&label,
+			0,
+			SizerFlag::Left | SizerFlag::Right | SizerFlag::Top,
+			5,
+		);
 		s2.add(&choice, 0, SizerFlag::Expand | SizerFlag::All, 5);
 		q_labels.push(label);
 		q_choices.push(choice);
 	}
 	// The answers being built: one slot per question row, and
 	// the kind they belong to (changing kind restarts them).
-	let answers: Rc<RefCell<Vec<Option<String>>>> =
-		Rc::new(RefCell::new(vec![None; 4]));
-	let answers_kind: Rc<std::cell::Cell<Option<GoalKind>>> =
-		Rc::new(std::cell::Cell::new(None));
+	let answers: Rc<RefCell<Vec<Option<String>>>> = Rc::new(RefCell::new(vec![None; 4]));
+	let answers_kind: Rc<std::cell::Cell<Option<GoalKind>>> = Rc::new(std::cell::Cell::new(None));
 	// Preload a restated goal's answers on its first showing.
 	if !new_project {
 		if let Some(goal) = &shared.borrow().goal {
@@ -4548,16 +5035,21 @@ fn setup_wizard(win: &Rc<Win>, shared: &Shared, new_project: bool) {
 				}
 				slot[i] = choice
 					.get_selection()
-					.and_then(|sel| q.options.get(sel as usize).copied())
+					.and_then(|sel| q.options.get(sel as usize).cloned())
 					.map(|s| s.to_string());
 			}
 		})
 	};
 	// Step 3: the goal, confirmed — the report preview.
-	let p3 = wiz.add_step("Your goal");
+	let p3 = wiz.add_step(&t("Your goal"));
 	let s3 = step_sizer(&p3);
-	let goal_label = StaticText::builder(&p3).with_label("Your goal").build();
-	s3.add(&goal_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	let goal_label = StaticText::builder(&p3).with_label(&t("Your goal")).build();
+	s3.add(
+		&goal_label,
+		0,
+		SizerFlag::Left | SizerFlag::Right | SizerFlag::Top,
+		5,
+	);
 	let goal_body = TextCtrl::builder(&p3)
 		.with_style(TextCtrlStyle::MultiLine | TextCtrlStyle::ReadOnly)
 		.build();
@@ -4581,7 +5073,11 @@ fn setup_wizard(win: &Rc<Win>, shared: &Shared, new_project: bool) {
 					.map(|(i, q)| {
 						(
 							q.question.to_string(),
-							if usable { slot.get(i).cloned().flatten() } else { None },
+							if usable {
+								slot.get(i).cloned().flatten()
+							} else {
+								None
+							},
 						)
 					})
 					.collect(),
@@ -4599,75 +5095,69 @@ fn setup_wizard(win: &Rc<Win>, shared: &Shared, new_project: bool) {
 		);
 		let (goal_body, build_goal, shared) =
 			(goal_body.clone(), build_goal.clone(), shared.clone());
-		wiz.set_on_show(move |step| {
-			match step {
-				1 => {
-					let kind = kind_sel.get();
-					if answers_kind.get() != Some(kind) {
-						*answers.borrow_mut() = vec![None; 4];
-						answers_kind.set(Some(kind));
-					}
-					let slot = answers.borrow();
-					for (i, (label, choice)) in
-						q_labels.iter().zip(q_choices.iter()).enumerate()
-					{
-						match kind.questions().get(i) {
-							Some(q) => {
-								label.set_label(q.question);
-								label.show(true);
-								choice.show(true);
-								choice.clear();
-								for opt in q.options {
-									choice.append(opt);
-								}
-								choice.append("No fixed answer");
-								let sel = slot
-									.get(i)
-									.cloned()
-									.flatten()
-									.and_then(|a| {
-										q.options.iter().position(|o| *o == a)
-									})
-									.unwrap_or(q.options.len());
-								choice.set_selection(sel as u32);
-								choice.set_name(q.question);
+		wiz.set_on_show(move |step| match step {
+			1 => {
+				let kind = kind_sel.get();
+				if answers_kind.get() != Some(kind) {
+					*answers.borrow_mut() = vec![None; 4];
+					answers_kind.set(Some(kind));
+				}
+				let slot = answers.borrow();
+				for (i, (label, choice)) in q_labels.iter().zip(q_choices.iter()).enumerate() {
+					match kind.questions().get(i) {
+						Some(q) => {
+							label.set_label(&q.question);
+							label.show(true);
+							choice.show(true);
+							choice.clear();
+							for opt in &q.options {
+								choice.append(opt);
 							}
-							None => {
-								label.set_label("");
-								label.show(false);
-								choice.show(false);
-							}
+							choice.append(&t("No fixed answer"));
+							let sel = slot
+								.get(i)
+								.cloned()
+								.flatten()
+								.and_then(|a| q.options.iter().position(|o| *o == a))
+								.unwrap_or(q.options.len());
+							choice.set_selection(sel as u32);
+							choice.set_name(&q.question);
+						}
+						None => {
+							label.set_label("");
+							label.show(false);
+							choice.show(false);
 						}
 					}
 				}
-				2 => {
-					collect();
-					let goal = build_goal();
-					let preview = {
-						let state = shared.borrow();
-						let mut project = if new_project {
-							let mut p = current_project(&state);
-							p.drawing = seed_drawing(goal.kind);
-							p.palette = if goal.kind == GoalKind::ImageCosmetic {
-								gray_ramp()
-							} else {
-								Vec::new()
-							};
-							p
-						} else {
-							current_project(&state)
-						};
-						project.goal = Some(goal.clone());
-						project
-					};
-					let text = match goal_report(&preview) {
-						Some(rep) => rep.full_text(&goal),
-						None => "No goal to report.".to_string(),
-					};
-					goal_body.set_value(&text);
-				}
-				_ => {}
 			}
+			2 => {
+				collect();
+				let goal = build_goal();
+				let preview = {
+					let state = shared.borrow();
+					let mut project = if new_project {
+						let mut p = current_project(&state);
+						p.drawing = seed_drawing(goal.kind);
+						p.palette = if goal.kind == GoalKind::ImageCosmetic {
+							gray_ramp()
+						} else {
+							Vec::new()
+						};
+						p
+					} else {
+						current_project(&state)
+					};
+					project.goal = Some(goal.clone());
+					project
+				};
+				let text = match goal_report(&preview) {
+					Some(rep) => rep.full_text(&goal),
+					None => t("No goal to report."),
+				};
+				goal_body.set_value(&text);
+			}
+			_ => {}
 		});
 	}
 	if !wiz.run() {
@@ -4688,8 +5178,10 @@ fn setup_wizard(win: &Rc<Win>, shared: &Shared, new_project: bool) {
 		// new project starts with the sliders its kind of work
 		// reaches for first (see `default_slider_ids`), default
 		// target and jump, grayscale start on.
-		state.pinned_sliders =
-			default_slider_ids(goal.kind).iter().map(|s| s.to_string()).collect();
+		state.pinned_sliders = default_slider_ids(goal.kind)
+			.iter()
+			.map(|s| s.to_string())
+			.collect();
 		state.slider_target = AdjustTarget::BaseColor;
 		state.page_jump_percent = DEFAULT_PAGE_JUMP_PERCENT;
 		state.grayscale_start = true;
@@ -4724,21 +5216,13 @@ fn setup_wizard(win: &Rc<Win>, shared: &Shared, new_project: bool) {
 	let state = shared.borrow();
 	refresh_lists(win, &state);
 	frame.set_status_text(
-		&format!(
-			"{}: goal set — {}.{} {pinned_count} slider{} pinned for this kind of project.{}{}",
-			if new_project { "New project" } else { "Setup wizard" },
-			goal.kind.name(),
-			report.map(|r| format!(" {}", r.one_line())).unwrap_or_default(),
-			if pinned_count == 1 { "" } else { "s" },
-			if new_project { " Canvas seeded for the kind." } else { "" },
-			if new_project && goal.kind == GoalKind::ImageCosmetic {
+		&t("%s: goal set — %s.%s %s slider%s pinned for this kind of project.%s%s").replacen("%s", if new_project { "New project" } else { "Setup wizard" }, 1).replacen("%s", &(goal.kind.name()).to_string(), 1).replacen("%s", &(report.map(|r| format!(" {}", r.one_line())).unwrap_or_default()).to_string(), 1).replacen("%s", &(pinned_count).to_string(), 1).replacen("%s", if pinned_count == 1 { "" } else { "s" }, 1).replacen("%s", if new_project { " Canvas seeded for the kind." } else { "" }, 1).replacen("%s", if new_project && goal.kind == GoalKind::ImageCosmetic {
 				" Cosmetic work starts from a picture: File, Import, Open Image — the gray ramp is in the palette for the shading work."
 			} else if new_project {
 				" Grayscale start is on: colors come later, per part, layer, or depth."
 			} else {
 				""
-			},
-		),
+			}, 1),
 		0,
 	);
 }
@@ -4754,12 +5238,16 @@ fn setup_wizard(win: &Rc<Win>, shared: &Shared, new_project: bool) {
 fn element_wizard(win: &Rc<Win>, shared: &Shared) {
 	let frame = win.frame;
 	let Some((li, si)) = selected_element_locate(win, shared) else {
-		frame.set_status_text("Select an element first.", 0);
+		frame.set_status_text(&t("Select an element first."), 0);
 		return;
 	};
 	let flat = {
 		let state = shared.borrow();
-		state.drawing.layers[..li].iter().map(|l| l.shapes.len()).sum::<usize>() + si
+		state.drawing.layers[..li]
+			.iter()
+			.map(|l| l.shapes.len())
+			.sum::<usize>()
+			+ si
 	};
 	let (stack_text, kind, opacity, corner) = {
 		let state = shared.borrow();
@@ -4771,12 +5259,17 @@ fn element_wizard(win: &Rc<Win>, shared: &Shared) {
 			shape.corner,
 		)
 	};
-	let wiz = Wizard::new(&frame, "Element Wizard");
+	let wiz = Wizard::new(&frame, &t("Element Wizard"));
 	// Step 1: the stack.
-	let p1 = wiz.add_step("Stack: what sits on what");
+	let p1 = wiz.add_step(&t("Stack: what sits on what"));
 	let s1 = step_sizer(&p1);
-	let stack_label = StaticText::builder(&p1).with_label("The stack").build();
-	s1.add(&stack_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	let stack_label = StaticText::builder(&p1).with_label(&t("The stack")).build();
+	s1.add(
+		&stack_label,
+		0,
+		SizerFlag::Left | SizerFlag::Right | SizerFlag::Top,
+		5,
+	);
 	let stack_body = TextCtrl::builder(&p1)
 		.with_style(TextCtrlStyle::MultiLine | TextCtrlStyle::ReadOnly)
 		.build();
@@ -4785,21 +5278,26 @@ fn element_wizard(win: &Rc<Win>, shared: &Shared) {
 	// Step 2: edit with sliders. The sliders hold pending
 	// values; they are applied when the review step is reached
 	// or the wizard is finished, never mid-wizard on Cancel.
-	let p2 = wiz.add_step("Edit");
+	let p2 = wiz.add_step(&t("Edit"));
 	let s2 = step_sizer(&p2);
 	let pending_opacity = Rc::new(std::cell::Cell::new(opacity));
 	let pending_corner = Rc::new(std::cell::Cell::new(corner));
-	let op_label = StaticText::builder(&p2).with_label("Opacity").build();
+	let op_label = StaticText::builder(&p2).with_label(&t("Opacity")).build();
 	let op_slider = Slider::builder(&p2)
 		.with_min_value(0)
 		.with_max_value(100)
 		.with_value(opacity as i32)
 		.build();
-	op_slider.set_name("Opacity");
+	op_slider.set_name(&t("Opacity"));
 	let op_readout = StaticText::builder(&p2)
-		.with_label(&format!("{opacity} percent opaque"))
+		.with_label(&t("%s percent opaque").replacen("%s", &(opacity).to_string(), 1))
 		.build();
-	s2.add(&op_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	s2.add(
+		&op_label,
+		0,
+		SizerFlag::Left | SizerFlag::Right | SizerFlag::Top,
+		5,
+	);
 	let op_row = BoxSizer::builder(Orientation::Horizontal).build();
 	op_row.add(&op_slider, 1, SizerFlag::Expand | SizerFlag::All, 5);
 	op_row.add(&op_readout, 0, SizerFlag::All, 5);
@@ -4808,21 +5306,32 @@ fn element_wizard(win: &Rc<Win>, shared: &Shared) {
 		let (pending, readout) = (pending_opacity.clone(), op_readout.clone());
 		op_slider.on_slider(move |e| {
 			pending.set(e.get_value().clamp(0, 100) as u8);
-			readout.set_label(&format!("{} percent opaque", pending.get()));
+			readout.set_label(&t("%s percent opaque").replacen(
+				"%s",
+				&(pending.get()).to_string(),
+				1,
+			));
 		});
 	}
 	if kind == ShapeKind::Rectangle {
-		let c_label = StaticText::builder(&p2).with_label("Roundedness").build();
+		let c_label = StaticText::builder(&p2)
+			.with_label(&t("Roundedness"))
+			.build();
 		let c_slider = Slider::builder(&p2)
 			.with_min_value(0)
 			.with_max_value(50)
 			.with_value(corner as i32)
 			.build();
-		c_slider.set_name("Roundedness");
+		c_slider.set_name(&t("Roundedness"));
 		let c_readout = StaticText::builder(&p2)
-			.with_label(&format!("corners {corner} percent"))
+			.with_label(&t("corners %s percent").replacen("%s", &(corner).to_string(), 1))
 			.build();
-		s2.add(&c_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+		s2.add(
+			&c_label,
+			0,
+			SizerFlag::Left | SizerFlag::Right | SizerFlag::Top,
+			5,
+		);
 		let c_row = BoxSizer::builder(Orientation::Horizontal).build();
 		c_row.add(&c_slider, 1, SizerFlag::Expand | SizerFlag::All, 5);
 		c_row.add(&c_readout, 0, SizerFlag::All, 5);
@@ -4830,22 +5339,28 @@ fn element_wizard(win: &Rc<Win>, shared: &Shared) {
 		let (pending, readout) = (pending_corner.clone(), c_readout.clone());
 		c_slider.on_slider(move |e| {
 			pending.set(e.get_value().clamp(0, 50) as u8);
-			readout.set_label(&format!("corners {} percent", pending.get()));
+			readout.set_label(&t("corners %s percent").replacen(
+				"%s",
+				&(pending.get()).to_string(),
+				1,
+			));
 		});
 	} else {
 		let note = StaticText::builder(&p2)
-			.with_label(&format!(
-				"Roundedness applies to rectangles; this is a {}, so opacity is its only slider here.",
-				kind.name()
-			))
+			.with_label(&t("Roundedness applies to rectangles; this is a %s, so opacity is its only slider here.").replacen("%s", &(kind.name()).to_string(), 1))
 			.build();
 		s2.add(&note, 0, SizerFlag::All, 5);
 	}
 	// Step 3: review with the inspector.
-	let p3 = wiz.add_step("Review");
+	let p3 = wiz.add_step(&t("Review"));
 	let s3 = step_sizer(&p3);
-	let review_label = StaticText::builder(&p3).with_label("Review").build();
-	s3.add(&review_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	let review_label = StaticText::builder(&p3).with_label(&t("Review")).build();
+	s3.add(
+		&review_label,
+		0,
+		SizerFlag::Left | SizerFlag::Right | SizerFlag::Top,
+		5,
+	);
 	let review_body = TextCtrl::builder(&p3)
 		.with_style(TextCtrlStyle::MultiLine | TextCtrlStyle::ReadOnly)
 		.build();
@@ -4853,8 +5368,11 @@ fn element_wizard(win: &Rc<Win>, shared: &Shared) {
 	let applied = Rc::new(std::cell::Cell::new(false));
 	let apply_edits: Rc<dyn Fn()> = {
 		let (shared, win) = (shared.clone(), win.clone());
-		let (po, pc, applied) =
-			(pending_opacity.clone(), pending_corner.clone(), applied.clone());
+		let (po, pc, applied) = (
+			pending_opacity.clone(),
+			pending_corner.clone(),
+			applied.clone(),
+		);
 		Rc::new(move || {
 			if applied.get() {
 				return;
@@ -4892,15 +5410,18 @@ fn element_wizard(win: &Rc<Win>, shared: &Shared) {
 	if wiz.run() {
 		apply_edits();
 		frame.set_status_text(
-			&format!(
-				"Element wizard finished: the element's opacity is now {} percent opaque{}.",
-				pending_opacity.get(),
-				if kind == ShapeKind::Rectangle {
-					format!(", its roundedness {} percent", pending_corner.get())
-				} else {
-					String::new()
-				},
-			),
+			&t("Element wizard finished: the element's opacity is now %s percent opaque%s.")
+				.replacen("%s", &(pending_opacity.get()).to_string(), 1)
+				.replacen(
+					"%s",
+					&(if kind == ShapeKind::Rectangle {
+						format!(", its roundedness {} percent", pending_corner.get())
+					} else {
+						String::new()
+					})
+					.to_string(),
+					1,
+				),
 			0,
 		);
 	}
@@ -4918,28 +5439,39 @@ fn element_wizard(win: &Rc<Win>, shared: &Shared) {
 /// says so.
 fn export_wizard(win: &Rc<Win>, shared: &Shared) {
 	let frame = win.frame;
-	const FORMATS: [&str; 5] = [
-		"PNG picture",
-		"HTML page",
-		"Raised-line SVG",
-		"Description (recreation file)",
-		"Animated GIF",
+	let formats: [String; 5] = [
+		t("PNG picture"),
+		t("HTML page"),
+		t("Raised-line SVG"),
+		t("Description (recreation file)"),
+		t("Animated GIF"),
 	];
-	const EMBEDS: [&str; 3] = [
-		"A separate file on its own",
-		"Inline in an HTML page",
-		"With caption text alongside",
+	let embeds: [String; 3] = [
+		t("A separate file on its own"),
+		t("Inline in an HTML page"),
+		t("With caption text alongside"),
 	];
-	let wiz = Wizard::new(&frame, "Export Wizard");
-	let p1 = wiz.add_step("Format");
+	let wiz = Wizard::new(&frame, &t("Export Wizard"));
+	let p1 = wiz.add_step(&t("Format"));
 	let s1 = step_sizer(&p1);
-	let f_label = StaticText::builder(&p1).with_label("Export format").build();
-	s1.add(&f_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
-	let f_list = QuietList::<usize>::new(&p1, "Export format");
+	let f_label = StaticText::builder(&p1)
+		.with_label(&t("Export format"))
+		.build();
+	s1.add(
+		&f_label,
+		0,
+		SizerFlag::Left | SizerFlag::Right | SizerFlag::Top,
+		5,
+	);
+	let f_list = QuietList::<usize>::new(&p1, &t("Export format"));
 	s1.add(&f_list, 1, SizerFlag::Expand | SizerFlag::All, 5);
 	let f_list = Rc::new(f_list);
 	f_list.update_labelled(
-		FORMATS.iter().enumerate().map(|(i, n)| (i, n.to_string())).collect(),
+		formats
+			.iter()
+			.enumerate()
+			.map(|(i, n)| (i, n.to_string()))
+			.collect(),
 		Select::Start,
 	);
 	let format_sel = Rc::new(std::cell::Cell::new(0usize));
@@ -4951,17 +5483,26 @@ fn export_wizard(win: &Rc<Win>, shared: &Shared) {
 			}
 		});
 	}
-	let p2 = wiz.add_step("Embedding");
+	let p2 = wiz.add_step(&t("Embedding"));
 	let s2 = step_sizer(&p2);
 	let e_label = StaticText::builder(&p2)
-		.with_label("How it will be embedded or accompanied")
+		.with_label(&t("How it will be embedded or accompanied"))
 		.build();
-	s2.add(&e_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
-	let e_list = QuietList::<usize>::new(&p2, "Embedding");
+	s2.add(
+		&e_label,
+		0,
+		SizerFlag::Left | SizerFlag::Right | SizerFlag::Top,
+		5,
+	);
+	let e_list = QuietList::<usize>::new(&p2, &t("Embedding"));
 	s2.add(&e_list, 1, SizerFlag::Expand | SizerFlag::All, 5);
 	let e_list = Rc::new(e_list);
 	e_list.update_labelled(
-		EMBEDS.iter().enumerate().map(|(i, n)| (i, n.to_string())).collect(),
+		embeds
+			.iter()
+			.enumerate()
+			.map(|(i, n)| (i, n.to_string()))
+			.collect(),
 		Select::Start,
 	);
 	let embed_sel = Rc::new(std::cell::Cell::new(0usize));
@@ -4973,10 +5514,17 @@ fn export_wizard(win: &Rc<Win>, shared: &Shared) {
 			}
 		});
 	}
-	let p3 = wiz.add_step("Confirm");
+	let p3 = wiz.add_step(&t("Confirm"));
 	let s3 = step_sizer(&p3);
-	let c_label = StaticText::builder(&p3).with_label("Confirm the export").build();
-	s3.add(&c_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	let c_label = StaticText::builder(&p3)
+		.with_label(&t("Confirm the export"))
+		.build();
+	s3.add(
+		&c_label,
+		0,
+		SizerFlag::Left | SizerFlag::Right | SizerFlag::Top,
+		5,
+	);
 	let c_body = TextCtrl::builder(&p3)
 		.with_style(TextCtrlStyle::MultiLine | TextCtrlStyle::ReadOnly)
 		.build();
@@ -4991,25 +5539,22 @@ fn export_wizard(win: &Rc<Win>, shared: &Shared) {
 			let (f, e) = (format_sel.get(), embed_sel.get());
 			let embed_line = match (f, e) {
 				(3, _) => {
-					"A description is words already: embedding changes nothing, and only the description file is written."
+					t("A description is words already: embedding changes nothing, and only the description file is written.")
 				}
-				(_, 0) => "One file, on its own.",
+				(_, 0) => t("One file, on its own."),
 				(1, 1) => {
-					"An HTML page is inline by nature: the design's shapes are the page. Only the page is written."
+					t("An HTML page is inline by nature: the design's shapes are the page. Only the page is written.")
 				}
 				(2, 1) => {
-					"SVG is a text format pages embed as it is: only the SVG file is written."
+					t("SVG is a text format pages embed as it is: only the SVG file is written.")
 				}
 				(_, 1) => {
-					"The picture file, plus an HTML page beside it that shows the picture inline."
+					t("The picture file, plus an HTML page beside it that shows the picture inline.")
 				}
-				(_, 2) => "The main file, plus the caption sheet as a text file beside it.",
-				_ => "",
+				(_, 2) => t("The main file, plus the caption sheet as a text file beside it."),
+				_ => String::new(),
 			};
-			c_body.set_value(&format!(
-				"Format: {}.\nEmbedding: {}.\n{}\nPress Finish to choose the file name and write it.",
-				FORMATS[f], EMBEDS[e], embed_line
-			));
+			c_body.set_value(&t("Format: %s.\nEmbedding: %s.\n%s\nPress Finish to choose the file name and write it.").replacen("%s", &(formats[f]).to_string(), 1).replacen("%s", &(embeds[e]).to_string(), 1).replacen("%s", &(embed_line).to_string(), 1));
 		});
 	}
 	if !wiz.run() {
@@ -5033,26 +5578,41 @@ fn export_wizard(win: &Rc<Win>, shared: &Shared) {
 			_ => name,
 		}
 	};
-	let write_side = |path: &str, what: &str, text: &str| {
-		match std::fs::write(path, text) {
-			Ok(()) => frame.set_status_text(&format!("Exported {what} to {path}"), 0),
-			Err(err) => {
-				frame.set_status_text(&format!("Export of {what} failed: {err}"), 0)
-			}
-		}
+	let write_side = |path: &str, what: &str, text: &str| match std::fs::write(path, text) {
+		Ok(()) => frame.set_status_text(
+			&t("Exported %s to %s")
+				.replacen("%s", what, 1)
+				.replacen("%s", path, 1),
+			0,
+		),
+		Err(err) => frame.set_status_text(
+			&t("Export of %s failed: %s")
+				.replacen("%s", what, 1)
+				.replacen("%s", &(err).to_string(), 1),
+			0,
+		),
 	};
 	let state = shared.borrow();
 	match f {
 		0 => {
-			let Some(path) =
-				file_dialog(&frame, "Export wizard: PNG picture", "PNG image (*.png)|*.png", true)
-			else {
+			let Some(path) = file_dialog(
+				&frame,
+				&t("Export wizard: PNG picture"),
+				&format!("{}|*.png", t("PNG image (*.png)")),
+				true,
+			) else {
 				return;
 			};
 			match state.drawing.flatten().render().save(&path) {
-				Ok(()) => frame.set_status_text(&format!("Exported PNG to {path}"), 0),
+				Ok(()) => frame.set_status_text(
+					&t("Exported PNG to %s").replacen("%s", &(path).to_string(), 1),
+					0,
+				),
 				Err(err) => {
-					frame.set_status_text(&format!("Export failed: {err}"), 0);
+					frame.set_status_text(
+						&t("Export failed: %s").replacen("%s", &(err).to_string(), 1),
+						0,
+					);
 					return;
 				}
 			}
@@ -5062,77 +5622,88 @@ fn export_wizard(win: &Rc<Win>, shared: &Shared) {
 					.and_then(|n| n.to_str())
 					.unwrap_or("design.png")
 					.to_string();
-				let html = format!(
-					"<!DOCTYPE html>\n<html lang=\"en\">\n<head><meta charset=\"utf-8\"><title>Blind Designer design</title></head>\n<body>\n<img src=\"{name}\" alt=\"A design exported from Blind Designer\">\n</body>\n</html>\n"
-				);
-				write_side(&sibling(&path, "html", ""), "inline page", &html);
+				let html = t("<!DOCTYPE html>\n<html lang=\"en\">\n<head><meta charset=\"utf-8\"><title>Blind Designer design</title></head>\n<body>\n<img src=\"%s\" alt=\"A design exported from Blind Designer\">\n</body>\n</html>\n").replacen("%s", &(name).to_string(), 1);
+				write_side(&sibling(&path, "html", ""), &t("inline page"), &html);
 			} else if e == 2 {
 				let sheet = state.drawing.flatten().caption_sheet();
-				write_side(&sibling(&path, "txt", "captions"), "captions", &sheet);
+				write_side(&sibling(&path, "txt", "captions"), &t("captions"), &sheet);
 			}
 		}
 		1 => {
 			let Some(path) = file_dialog(
 				&frame,
-				"Export wizard: HTML page",
-				"HTML page (*.html)|*.html",
+				&t("Export wizard: HTML page"),
+				&format!("{}|*.html", t("HTML page (*.html)")),
 				true,
 			) else {
 				return;
 			};
-			write_side(&path, "HTML page", &state.drawing.flatten().to_html("Blind Designer design"));
+			write_side(
+				&path,
+				&t("HTML page"),
+				&state.drawing.flatten().to_html(&t("Blind Designer design")),
+			);
 			if e == 2 {
 				let sheet = state.drawing.flatten().caption_sheet();
-				write_side(&sibling(&path, "txt", "captions"), "captions", &sheet);
+				write_side(&sibling(&path, "txt", "captions"), &t("captions"), &sheet);
 			}
 		}
 		2 => {
 			let Some(path) = file_dialog(
 				&frame,
-				"Export wizard: raised-line SVG",
-				"SVG drawing (*.svg)|*.svg",
+				&t("Export wizard: raised-line SVG"),
+				&format!("{}|*.svg", t("SVG drawing (*.svg)")),
 				true,
 			) else {
 				return;
 			};
 			let svg = state.drawing.to_tactile_svg();
-			write_side(&path, "raised-line SVG", &svg);
+			write_side(&path, &t("raised-line SVG"), &svg);
 			if e == 2 {
 				let sheet = state.drawing.flatten().caption_sheet();
-				write_side(&sibling(&path, "txt", "captions"), "captions", &sheet);
+				write_side(&sibling(&path, "txt", "captions"), &t("captions"), &sheet);
 			}
 		}
 		3 => {
 			let Some(path) = file_dialog(
 				&frame,
-				"Export wizard: description (recreation file)",
-				"Text file (*.txt)|*.txt",
+				&t("Export wizard: description (recreation file)"),
+				&format!("{}|*.txt", t("Text file (*.txt)")),
 				true,
 			) else {
 				return;
 			};
 			let summary = state.drawing.summary();
-			write_side(&path, "description", &summary);
+			write_side(&path, &t("description"), &summary);
 		}
 		_ => {
 			let Some(path) = file_dialog(
 				&frame,
-				"Export wizard: animated GIF",
-				"GIF image (*.gif)|*.gif",
+				&t("Export wizard: animated GIF"),
+				&format!("{}|*.gif", t("GIF image (*.gif)")),
 				true,
 			) else {
 				return;
 			};
 			match state.drawing.to_gif() {
 				Ok(bytes) => match std::fs::write(&path, &bytes) {
-					Ok(()) => frame.set_status_text(&format!("Exported GIF to {path}"), 0),
+					Ok(()) => frame.set_status_text(
+						&t("Exported GIF to %s").replacen("%s", &(path).to_string(), 1),
+						0,
+					),
 					Err(err) => {
-						frame.set_status_text(&format!("Export failed: {err}"), 0);
+						frame.set_status_text(
+							&t("Export failed: %s").replacen("%s", &(err).to_string(), 1),
+							0,
+						);
 						return;
 					}
 				},
 				Err(err) => {
-					frame.set_status_text(&format!("Export failed: {err}"), 0);
+					frame.set_status_text(
+						&t("Export failed: %s").replacen("%s", &(err).to_string(), 1),
+						0,
+					);
 					return;
 				}
 			}
@@ -5142,13 +5713,15 @@ fn export_wizard(win: &Rc<Win>, shared: &Shared) {
 					.and_then(|n| n.to_str())
 					.unwrap_or("design.gif")
 					.to_string();
-				let html = format!(
-					"<!DOCTYPE html>\n<html lang=\"en\">\n<head><meta charset=\"utf-8\"><title>Blind Designer animation</title></head>\n<body>\n<img src=\"{name}\" alt=\"An animation exported from Blind Designer\">\n</body>\n</html>\n"
-				);
-				write_side(&sibling(&path, "html", ""), "inline page", &html);
+				let html = t("<!DOCTYPE html>\n<html lang=\"en\">\n<head><meta charset=\"utf-8\"><title>Blind Designer animation</title></head>\n<body>\n<img src=\"%s\" alt=\"An animation exported from Blind Designer\">\n</body>\n</html>\n").replacen("%s", &(name).to_string(), 1);
+				write_side(&sibling(&path, "html", ""), &t("inline page"), &html);
 			} else if e == 2 {
 				let sheet = state.drawing.animation_description();
-				write_side(&sibling(&path, "txt", "description"), "animation description", &sheet);
+				write_side(
+					&sibling(&path, "txt", "description"),
+					"animation description",
+					&sheet,
+				);
 			}
 		}
 	}
@@ -5165,8 +5738,8 @@ fn recognizability_dialog(win: &Win, shared: &Shared) {
 	};
 	report_dialog(
 		win,
-		"Recognizability",
-		"How recognizable this design is, per its project type",
+		&t("Recognizability"),
+		&t("How recognizable this design is, per its project type"),
 		&report,
 	);
 }
@@ -5189,33 +5762,49 @@ fn color_treatment_dialog(win: &Rc<Win>, shared: &Shared) {
 			.layers
 			.iter()
 			.enumerate()
-			.map(|(i, l)| (format!("Layer: {}", l.name), TreatmentScope::Layer(i)))
+			.map(|(i, l)| {
+				(
+					t("Layer: %s").replacen("%s", &(l.name).to_string(), 1),
+					TreatmentScope::Layer(i),
+				)
+			})
 			.collect();
 		for role in DepthRole::ALL {
-			if role != DepthRole::Unassigned
-				&& state.drawing.layers.iter().any(|l| l.depth == role)
+			if role != DepthRole::Unassigned && state.drawing.layers.iter().any(|l| l.depth == role)
 			{
-				v.push((format!("Depth: {}", role.name()), TreatmentScope::Depth(role)));
+				v.push((
+					t("Depth: %s").replacen("%s", &(role.name()).to_string(), 1),
+					TreatmentScope::Depth(role),
+				));
 			}
 		}
 		v
 	};
-	let dialog = Dialog::builder(&frame, "Apply Colour Treatment").build();
+	let dialog = Dialog::builder(&frame, &t("Apply Colour Treatment")).build();
 	bind_escape_cancel(dialog);
 	let sizer = BoxSizer::builder(Orientation::Vertical).build();
 	let label = StaticText::builder(&dialog)
-		.with_label("Give the grayscale shapes in this scope the palette colours, in paint order")
+		.with_label(&t(
+			"Give the grayscale shapes in this scope the palette colours, in paint order",
+		))
 		.build();
-	sizer.add(&label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	sizer.add(
+		&label,
+		0,
+		SizerFlag::Left | SizerFlag::Right | SizerFlag::Top,
+		5,
+	);
 	let choice = Choice::builder(&dialog).build();
 	for (name, _) in &scopes {
 		choice.append(name);
 	}
 	choice.set_selection(0);
-	choice.set_name("Colour treatment scope");
+	choice.set_name(&t("Colour treatment scope"));
 	sizer.add(&choice, 0, SizerFlag::Expand | SizerFlag::All, 5);
-	let ok = Button::builder(&dialog).with_label("Apply Treatment").build();
-	let cancel = Button::builder(&dialog).with_label("Cancel").build();
+	let ok = Button::builder(&dialog)
+		.with_label(&t("Apply Treatment"))
+		.build();
+	let cancel = Button::builder(&dialog).with_label(&t("Cancel")).build();
 	let buttons = BoxSizer::builder(Orientation::Horizontal).build();
 	buttons.add(&ok, 0, SizerFlag::All, 5);
 	buttons.add(&cancel, 0, SizerFlag::All, 5);
@@ -5232,12 +5821,15 @@ fn color_treatment_dialog(win: &Rc<Win>, shared: &Shared) {
 	if dialog.show_modal() != ID_OK {
 		return;
 	}
-	let Some(sel) = choice.get_selection() else { return };
-	let Some((name, scope)) = scopes.get(sel as usize) else { return };
+	let Some(sel) = choice.get_selection() else {
+		return;
+	};
+	let Some((name, scope)) = scopes.get(sel as usize) else {
+		return;
+	};
 	let mut state = shared.borrow_mut();
 	if state.palette.is_empty() {
-		frame.set_status_text(
-			"Colour treatment takes colours from the palette, and the palette is empty: add colours or load the starter colours first.",
+		frame.set_status_text(&t("Colour treatment takes colours from the palette, and the palette is empty: add colours or load the starter colours first."),
 			0,
 		);
 		return;
@@ -5249,14 +5841,18 @@ fn color_treatment_dialog(win: &Rc<Win>, shared: &Shared) {
 		announce(win, &state);
 	} else {
 		frame.set_status_text(
-			&format!(
-				"Colour treatment on {name}: no grayscale shapes to colour{}.",
-				if outcome.locked > 0 {
-					format!(" ({} locked stayed grayscale)", outcome.locked)
-				} else {
-					String::new()
-				}
-			),
+			&t("Colour treatment on %s: no grayscale shapes to colour%s.")
+				.replacen("%s", &(name).to_string(), 1)
+				.replacen(
+					"%s",
+					&(if outcome.locked > 0 {
+						format!(" ({} locked stayed grayscale)", outcome.locked)
+					} else {
+						String::new()
+					})
+					.to_string(),
+					1,
+				),
 			0,
 		);
 	}
@@ -5273,24 +5869,37 @@ fn scheme_settings_dialog(win: &Win, shared: &Shared) {
 		let state = shared.borrow();
 		(state.wheel_ryb, state.scheme_spread)
 	};
-	let dialog = Dialog::builder(&frame, "Scheme Settings").build();
+	let dialog = Dialog::builder(&frame, &t("Scheme Settings")).build();
 	bind_escape_cancel(dialog);
 	let sizer = BoxSizer::builder(Orientation::Vertical).build();
-	let wheel_label = StaticText::builder(&dialog).with_label("Harmony wheel").build();
-	sizer.add(&wheel_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	let wheel_label = StaticText::builder(&dialog)
+		.with_label(&t("Harmony wheel"))
+		.build();
+	sizer.add(
+		&wheel_label,
+		0,
+		SizerFlag::Left | SizerFlag::Right | SizerFlag::Top,
+		5,
+	);
 	let wheel = Choice::builder(&dialog).build();
-	wheel.append("Screen wheel (RGB hues)");
-	wheel.append("Paint wheel (RYB: red is opposite green)");
+	wheel.append(&t("Screen wheel (RGB hues)"));
+	wheel.append(&t("Paint wheel (RYB: red is opposite green)"));
 	wheel.set_selection(if wheel_ryb { 1 } else { 0 });
 	sizer.add(&wheel, 0, SizerFlag::Expand | SizerFlag::All, 5);
-	let spread_label =
-		StaticText::builder(&dialog).with_label("Analogous spread in degrees").build();
-	sizer.add(&spread_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	let spread_label = StaticText::builder(&dialog)
+		.with_label(&t("Analogous spread in degrees"))
+		.build();
+	sizer.add(
+		&spread_label,
+		0,
+		SizerFlag::Left | SizerFlag::Right | SizerFlag::Top,
+		5,
+	);
 	let spread_spin = SpinCtrl::builder(&dialog).with_range(5, 90).build();
 	spread_spin.set_value(spread as i32);
 	sizer.add(&spread_spin, 0, SizerFlag::Expand | SizerFlag::All, 5);
-	let ok = Button::builder(&dialog).with_label("OK").build();
-	let cancel = Button::builder(&dialog).with_label("Cancel").build();
+	let ok = Button::builder(&dialog).with_label(&t("OK")).build();
+	let cancel = Button::builder(&dialog).with_label(&t("Cancel")).build();
 	let buttons = BoxSizer::builder(Orientation::Horizontal).build();
 	buttons.add(&ok, 0, SizerFlag::All, 5);
 	buttons.add(&cancel, 0, SizerFlag::All, 5);
@@ -5305,11 +5914,17 @@ fn scheme_settings_dialog(win: &Win, shared: &Shared) {
 		state.wheel_ryb = wheel.get_selection() == Some(1);
 		state.scheme_spread = spread_spin.value() as f32;
 		frame.set_status_text(
-			&format!(
-				"Scheme settings saved: {} wheel, analogous spread {:.0} degrees.",
-				if state.wheel_ryb { "paint (RYB)" } else { "screen (RGB)" },
-				state.scheme_spread
-			),
+			&t("Scheme settings saved: %s wheel, analogous spread %s degrees.")
+				.replacen(
+					"%s",
+					if state.wheel_ryb {
+						"paint (RYB)"
+					} else {
+						"screen (RGB)"
+					},
+					1,
+				)
+				.replacen("%s", &format!("{:.0}", state.scheme_spread), 1),
 			0,
 		);
 	}
@@ -5327,57 +5942,96 @@ fn scheme_settings_dialog(win: &Win, shared: &Shared) {
 /// several tools can run in one visit; focus is never moved.
 fn color_tools_dialog(win: &Rc<Win>, shared: &Shared) {
 	let frame = win.frame;
-	let dialog = Dialog::builder(&frame, "Color Tools").with_size(640, 560).build();
+	let dialog = Dialog::builder(&frame, &t("Color Tools"))
+		.with_size(640, 560)
+		.build();
 	bind_escape_cancel(dialog);
 	let sizer = BoxSizer::builder(Orientation::Vertical).build();
-	let first_label = StaticText::builder(&dialog).with_label("First color").build();
-	sizer.add(&first_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	let first_label = StaticText::builder(&dialog)
+		.with_label(&t("First color"))
+		.build();
+	sizer.add(
+		&first_label,
+		0,
+		SizerFlag::Left | SizerFlag::Right | SizerFlag::Top,
+		5,
+	);
 	let first = Choice::builder(&dialog).build();
 	sizer.add(&first, 0, SizerFlag::Expand | SizerFlag::All, 5);
-	let second_label = StaticText::builder(&dialog).with_label("Second color").build();
-	sizer.add(&second_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	let second_label = StaticText::builder(&dialog)
+		.with_label(&t("Second color"))
+		.build();
+	sizer.add(
+		&second_label,
+		0,
+		SizerFlag::Left | SizerFlag::Right | SizerFlag::Top,
+		5,
+	);
 	let second = Choice::builder(&dialog).build();
 	sizer.add(&second, 0, SizerFlag::Expand | SizerFlag::All, 5);
-	let blend_label =
-		StaticText::builder(&dialog).with_label("Blend: percent of the second color").build();
-	sizer.add(&blend_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	let blend_label = StaticText::builder(&dialog)
+		.with_label(&t("Blend: percent of the second color"))
+		.build();
+	sizer.add(
+		&blend_label,
+		0,
+		SizerFlag::Left | SizerFlag::Right | SizerFlag::Top,
+		5,
+	);
 	let blend_row = BoxSizer::builder(Orientation::Horizontal).build();
 	let blend_slider = Slider::builder(&dialog)
 		.with_min_value(0)
 		.with_max_value(100)
 		.with_value(50)
 		.build();
-	blend_slider.set_name("Blend percent of second color");
+	blend_slider.set_name(&t("Blend percent of second color"));
 	blend_row.add(&blend_slider, 1, SizerFlag::Expand | SizerFlag::All, 5);
-	let blend_readout = StaticText::builder(&dialog).with_label("50 percent").build();
+	let blend_readout = StaticText::builder(&dialog)
+		.with_label(&t("50 percent"))
+		.build();
 	blend_row.add(&blend_readout, 0, SizerFlag::All, 5);
 	sizer.add_sizer(&blend_row, 0, SizerFlag::Expand, 0);
-	let blend_btn = Button::builder(&dialog).with_label("Blend").build();
-	let subtract_btn = Button::builder(&dialog).with_label("Subtract Second from First").build();
-	let gradient_btn = Button::builder(&dialog).with_label("Gradient…").build();
+	let blend_btn = Button::builder(&dialog).with_label(&t("Blend")).build();
+	let subtract_btn = Button::builder(&dialog)
+		.with_label(&t("Subtract Second from First"))
+		.build();
+	let gradient_btn = Button::builder(&dialog).with_label(&t("Gradient…")).build();
 	let row1 = BoxSizer::builder(Orientation::Horizontal).build();
 	for b in [&blend_btn, &subtract_btn, &gradient_btn] {
 		row1.add(b, 0, SizerFlag::All, 5);
 	}
 	sizer.add_sizer(&row1, 0, SizerFlag::All, 5);
-	let contrast_btn = Button::builder(&dialog).with_label("Contrast Check").build();
-	let wavelength_btn = Button::builder(&dialog).with_label("Dominant Wavelength").build();
-	let random_btn = Button::builder(&dialog).with_label("Random Color").build();
+	let contrast_btn = Button::builder(&dialog)
+		.with_label(&t("Contrast Check"))
+		.build();
+	let wavelength_btn = Button::builder(&dialog)
+		.with_label(&t("Dominant Wavelength"))
+		.build();
+	let random_btn = Button::builder(&dialog)
+		.with_label(&t("Random Color"))
+		.build();
 	let row2 = BoxSizer::builder(Orientation::Horizontal).build();
 	for b in [&contrast_btn, &wavelength_btn, &random_btn] {
 		row2.add(b, 0, SizerFlag::All, 5);
 	}
 	sizer.add_sizer(&row2, 0, SizerFlag::All, 5);
 	let freq_btn = Button::builder(&dialog)
-		.with_label("Frequency to Color (experimental)…")
+		.with_label(&t("Frequency to Color (experimental)…"))
 		.build();
-	let close = Button::builder(&dialog).with_label("Close").build();
+	let close = Button::builder(&dialog).with_label(&t("Close")).build();
 	let row3 = BoxSizer::builder(Orientation::Horizontal).build();
 	row3.add(&freq_btn, 0, SizerFlag::All, 5);
 	row3.add(&close, 0, SizerFlag::All, 5);
 	sizer.add_sizer(&row3, 0, SizerFlag::All, 5);
-	let result_label = StaticText::builder(&dialog).with_label("Result").build();
-	sizer.add(&result_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	let result_label = StaticText::builder(&dialog)
+		.with_label(&t("Result"))
+		.build();
+	sizer.add(
+		&result_label,
+		0,
+		SizerFlag::Left | SizerFlag::Right | SizerFlag::Top,
+		5,
+	);
 	let result = TextCtrl::builder(&dialog)
 		.with_style(TextCtrlStyle::MultiLine | TextCtrlStyle::ReadOnly)
 		.build();
@@ -5413,7 +6067,11 @@ fn color_tools_dialog(win: &Rc<Win>, shared: &Shared) {
 	{
 		let (for_closure, readout) = (blend_slider.clone(), blend_readout.clone());
 		blend_slider.on_slider(move |_| {
-			readout.set_label(&format!("{} percent", for_closure.get_value()));
+			readout.set_label(&t("%s percent").replacen(
+				"%s",
+				&(for_closure.get_value()).to_string(),
+				1,
+			));
 		});
 	}
 	// The two picked palette colors, or a note in the Result field.
@@ -5421,13 +6079,17 @@ fn color_tools_dialog(win: &Rc<Win>, shared: &Shared) {
 		let (first, second, result) = (first.clone(), second.clone(), result.clone());
 		move |state: &State| -> Option<(Srgb, Srgb)> {
 			let (Some(i), Some(j)) = (first.get_selection(), second.get_selection()) else {
-				result.set_value("Pick a first and a second color from the palette first.");
+				result.set_value(&t(
+					"Pick a first and a second color from the palette first.",
+				));
 				return None;
 			};
 			match (state.palette.get(i as usize), state.palette.get(j as usize)) {
 				(Some(a), Some(b)) => Some((a.color, b.color)),
 				_ => {
-					result.set_value("Pick a first and a second color from the palette first.");
+					result.set_value(&t(
+						"Pick a first and a second color from the palette first.",
+					));
 					None
 				}
 			}
@@ -5448,12 +6110,13 @@ fn color_tools_dialog(win: &Rc<Win>, shared: &Shared) {
 			let percent = slider.get_value().clamp(0, 100) as u8;
 			let c = blend(a, b, percent);
 			let provenance = Provenance::Generated {
-				scheme: format!("blend of {} and {}", a.to_hex(), b.to_hex()),
+				scheme: t("blend of %s and %s")
+					.replacen("%s", &(a.to_hex()).to_string(), 1)
+					.replacen("%s", &(b.to_hex()).to_string(), 1),
 			};
-			let text = format!(
-				"Blend at {percent} percent of the second color: {}. Added to the palette.",
-				describe_in(c, state.color_format)
-			);
+			let text = t("Blend at %s percent of the second color: %s. Added to the palette.")
+				.replacen("%s", &(percent).to_string(), 1)
+				.replacen("%s", &(describe_in(c, state.color_format)).to_string(), 1);
 			add_colors(&win, &mut state, &[c], "blend", &provenance);
 			result.set_value(&text);
 		});
@@ -5466,12 +6129,9 @@ fn color_tools_dialog(win: &Rc<Win>, shared: &Shared) {
 			let Some((a, b)) = picked(&state) else { return };
 			let c = subtract(a, b);
 			let provenance = Provenance::Generated {
-				scheme: format!("{} minus {}", a.to_hex(), b.to_hex()),
+				scheme: t("%s minus %s").replacen("%s", &(a.to_hex()).to_string(), 1).replacen("%s", &(b.to_hex()).to_string(), 1),
 			};
-			let text = format!(
-				"Subtraction, each channel of the second taken from the first: {}. Added to the palette.",
-				describe_in(c, state.color_format)
-			);
+			let text = t("Subtraction, each channel of the second taken from the first: %s. Added to the palette.").replacen("%s", &(describe_in(c, state.color_format)).to_string(), 1);
 			add_colors(&win, &mut state, &[c], "subtraction", &provenance);
 			result.set_value(&text);
 		});
@@ -5482,8 +6142,8 @@ fn color_tools_dialog(win: &Rc<Win>, shared: &Shared) {
 		gradient_btn.on_click(move |_| {
 			let Some(v) = numbers_dialog(
 				&frame,
-				"Gradient steps",
-				&[("Steps in the ramp, both end colors included", 2, 32, 7)],
+				&t("Gradient steps"),
+				&[(t("Steps in the ramp, both end colors included"), 2, 32, 7)],
 			) else {
 				return;
 			};
@@ -5491,14 +6151,14 @@ fn color_tools_dialog(win: &Rc<Win>, shared: &Shared) {
 			let Some((a, b)) = picked(&state) else { return };
 			let ramp = gradient(a, b, v[0] as usize);
 			let provenance = Provenance::Generated {
-				scheme: format!("gradient from {} to {}", a.to_hex(), b.to_hex()),
+				scheme: t("gradient from %s to %s")
+					.replacen("%s", &(a.to_hex()).to_string(), 1)
+					.replacen("%s", &(b.to_hex()).to_string(), 1),
 			};
-			let text = format!(
-				"Gradient of {} steps from {} to {} added to the palette.",
-				ramp.len(),
-				describe_in(a, state.color_format),
-				describe_in(b, state.color_format)
-			);
+			let text = t("Gradient of %s steps from %s to %s added to the palette.")
+				.replacen("%s", &(ramp.len()).to_string(), 1)
+				.replacen("%s", &(describe_in(a, state.color_format)).to_string(), 1)
+				.replacen("%s", &(describe_in(b, state.color_format)).to_string(), 1);
 			add_colors(&win, &mut state, &ramp, "gradient", &provenance);
 			result.set_value(&text);
 		});
@@ -5509,13 +6169,13 @@ fn color_tools_dialog(win: &Rc<Win>, shared: &Shared) {
 			let state = shared.borrow();
 			let Some((a, b)) = picked(&state) else { return };
 			let ratio = a.contrast(b);
-			result.set_value(&format!(
-				"{} against {}: contrast {:.1} to 1 — {}.",
-				describe_in(a, state.color_format),
-				describe_in(b, state.color_format),
-				ratio,
-				contrast_verdict(ratio)
-			));
+			result.set_value(
+				&t("%s against %s: contrast %s to 1 — %s.")
+					.replacen("%s", &(describe_in(a, state.color_format)).to_string(), 1)
+					.replacen("%s", &(describe_in(b, state.color_format)).to_string(), 1)
+					.replacen("%s", &format!("{:.1}", ratio), 1)
+					.replacen("%s", &(contrast_verdict(ratio)).to_string(), 1),
+			);
 		});
 	}
 	{
@@ -5523,7 +6183,7 @@ fn color_tools_dialog(win: &Rc<Win>, shared: &Shared) {
 		wavelength_btn.on_click(move |_| {
 			let state = shared.borrow();
 			let Some(i) = first.get_selection() else {
-				result.set_value("Pick a first color from the palette first.");
+				result.set_value(&t("Pick a first color from the palette first."));
 				return;
 			};
 			let Some(pc) = state.palette.get(i as usize) else { return };
@@ -5533,10 +6193,7 @@ fn color_tools_dialog(win: &Rc<Win>, shared: &Shared) {
 					describe_in(pc.color, state.color_format),
 					w.spoken()
 				)),
-				None => result.set_value(&format!(
-					"{} has no dominant wavelength: it is achromatic, a gray with no hue direction.",
-					describe_in(pc.color, state.color_format)
-				)),
+				None => result.set_value(&t("%s has no dominant wavelength: it is achromatic, a gray with no hue direction.").replacen("%s", &(describe_in(pc.color, state.color_format)).to_string(), 1)),
 			}
 		});
 	}
@@ -5549,11 +6206,13 @@ fn color_tools_dialog(win: &Rc<Win>, shared: &Shared) {
 				.unwrap_or(0x5EED);
 			let c = random_color(seed);
 			let mut state = shared.borrow_mut();
-			let provenance =
-				Provenance::Generated { scheme: "random color".to_string() };
-			let text = format!(
-				"Random color: {}. Added to the palette.",
-				describe_in(c, state.color_format)
+			let provenance = Provenance::Generated {
+				scheme: "random color".to_string(),
+			};
+			let text = t("Random color: %s. Added to the palette.").replacen(
+				"%s",
+				&(describe_in(c, state.color_format)).to_string(),
+				1,
 			);
 			add_colors(&win, &mut state, &[c], "random color", &provenance);
 			drop(state);
@@ -5565,24 +6224,21 @@ fn color_tools_dialog(win: &Rc<Win>, shared: &Shared) {
 		freq_btn.on_click(move |_| {
 			let Some(v) = numbers_dialog(
 				&frame,
-				"Frequency to color (experimental)",
-				&[("Sound frequency in hertz", 1, 1_000_000, 440)],
+				&t("Frequency to color (experimental)"),
+				&[(t("Sound frequency in hertz"), 1, 1_000_000, 440)],
 			) else {
 				return;
 			};
 			let hz = v[0] as f64;
 			let Some((c, nm)) = frequency_to_color(hz) else {
-				result.set_value("That frequency could not be folded into the visible band.");
+				result.set_value(&t("That frequency could not be folded into the visible band."));
 				return;
 			};
 			let mut state = shared.borrow_mut();
 			let provenance = Provenance::Generated {
-				scheme: format!("frequency {hz:.0} hertz (experimental)"),
+				scheme: t("frequency %s hertz (experimental)").replacen("%s", &format!("{:.0}", hz), 1),
 			};
-			let text = format!(
-				"Experimental: {hz:.0} hertz folded up by octaves lands at {nm:.0} nanometres: {}. Added to the palette. Octaves of sound are mapped to octaves of light by convention, not by physics.",
-				describe_in(c, state.color_format)
-			);
+			let text = t("Experimental: %s hertz folded up by octaves lands at %s nanometres: %s. Added to the palette. Octaves of sound are mapped to octaves of light by convention, not by physics.").replacen("%s", &format!("{:.0}", hz), 1).replacen("%s", &format!("{:.0}", nm), 1).replacen("%s", &(describe_in(c, state.color_format)).to_string(), 1);
 			add_colors(&win, &mut state, &[c], "frequency color", &provenance);
 			drop(state);
 			result.set_value(&text);
@@ -5603,7 +6259,12 @@ fn template_rows() -> Vec<(usize, String)> {
 			let count = templates::template(name)
 				.map(|d| d.layers.iter().map(|l| l.shapes.len()).sum::<usize>())
 				.unwrap_or(0);
-			(i, format!("{name}: {count} elements on an 800 by 600 canvas"))
+			(
+				i,
+				t("%s: %s elements on an 800 by 600 canvas")
+					.replacen("%s", (name).as_ref(), 1)
+					.replacen("%s", &(count).to_string(), 1),
+			)
 		})
 		.collect()
 }
@@ -5615,13 +6276,15 @@ fn template_rows() -> Vec<(usize, String)> {
 /// drawn by hand. The list is labelled "Templates".
 fn templates_dialog(win: &Rc<Win>, shared: &Shared) {
 	let frame = win.frame;
-	let dialog = Dialog::builder(&frame, "New from Template").build();
+	let dialog = Dialog::builder(&frame, &t("New from Template")).build();
 	bind_escape_cancel(dialog);
 	let sizer = BoxSizer::builder(Orientation::Vertical).build();
-	let list = QuietList::new(&dialog, "Templates");
+	let list = QuietList::new(&dialog, &t("Templates"));
 	sizer.add(&list, 1, SizerFlag::Expand | SizerFlag::All, 5);
-	let load = Button::builder(&dialog).with_label("Load Template").build();
-	let close = Button::builder(&dialog).with_label("Close").build();
+	let load = Button::builder(&dialog)
+		.with_label(&t("Load Template"))
+		.build();
+	let close = Button::builder(&dialog).with_label(&t("Close")).build();
 	let buttons = BoxSizer::builder(Orientation::Horizontal).build();
 	buttons.add(&load, 0, SizerFlag::All, 5);
 	buttons.add(&close, 0, SizerFlag::All, 5);
@@ -5630,8 +6293,7 @@ fn templates_dialog(win: &Rc<Win>, shared: &Shared) {
 	let list = Rc::new(list);
 	list.update_labelled(template_rows(), Select::Start);
 	{
-		let (list, shared, dialog, w) =
-			(list.clone(), shared.clone(), dialog.clone(), win.clone());
+		let (list, shared, dialog, w) = (list.clone(), shared.clone(), dialog.clone(), win.clone());
 		load.on_click(move |_| {
 			let Some(i) = list.selected() else { return };
 			let name = templates::TEMPLATE_NAMES[i];
@@ -5656,7 +6318,7 @@ fn templates_dialog(win: &Rc<Win>, shared: &Shared) {
 				drop(state);
 				apply_interaction_mode(&w, &shared, true);
 				frame.set_status_text(
-					&format!("Started a new design from the {name} template. It is a normal design now: edit it, then Save Design to keep it."),
+					&t("Started a new design from the %s template. It is a normal design now: edit it, then Save Design to keep it.").replacen("%s", name, 1),
 					0,
 				);
 				dialog.end_modal(ID_OK);
@@ -5678,13 +6340,15 @@ fn templates_dialog(win: &Rc<Win>, shared: &Shared) {
 /// be added in one visit.
 fn symbols_dialog(win: &Win, shared: &Shared) {
 	let frame = win.frame;
-	let dialog = Dialog::builder(&frame, "Add Symbol").build();
+	let dialog = Dialog::builder(&frame, &t("Add Symbol")).build();
 	bind_escape_cancel(dialog);
 	let sizer = BoxSizer::builder(Orientation::Vertical).build();
-	let list = QuietList::new(&dialog, "Symbols");
+	let list = QuietList::new(&dialog, &t("Symbols"));
 	sizer.add(&list, 1, SizerFlag::Expand | SizerFlag::All, 5);
-	let add = Button::builder(&dialog).with_label("Add Symbol\u{2026}").build();
-	let close = Button::builder(&dialog).with_label("Close").build();
+	let add = Button::builder(&dialog)
+		.with_label(&t("Add Symbol\u{2026}"))
+		.build();
+	let close = Button::builder(&dialog).with_label(&t("Close")).build();
 	let buttons = BoxSizer::builder(Orientation::Horizontal).build();
 	buttons.add(&add, 0, SizerFlag::All, 5);
 	buttons.add(&close, 0, SizerFlag::All, 5);
@@ -5693,7 +6357,7 @@ fn symbols_dialog(win: &Win, shared: &Shared) {
 	let rows: Vec<(usize, String)> = symbols::SYMBOL_NAMES
 		.iter()
 		.enumerate()
-		.map(|(i, name)| (i, format!("{name} symbol")))
+		.map(|(i, name)| (i, t("%s symbol").replacen("%s", (name).as_ref(), 1)))
 		.collect();
 	let list = Rc::new(list);
 	list.update_labelled(rows, Select::Start);
@@ -5710,14 +6374,14 @@ fn symbols_dialog(win: &Win, shared: &Shared) {
 			// fields form dialogs can use: numbers or plain words.
 			let Some(v) = fields_dialog(
 				&frame,
-				&format!("Add {name} symbol"),
+				&t("Add %s symbol").replacen("%s", name, 1),
 				&[
 					(
-						"Position: numbers like 120, 80, or words like top left, center, a bit right",
+						t("Position: numbers like 120, 80, or words like top left, center, a bit right"),
 						"60, 60",
 					),
-					("Size: numbers like 200 by 100, or words like a bit wider, a bit taller", "100 by 100"),
-					("Color: a name like sky blue, or a hex code", &color.to_hex()),
+					(t("Size: numbers like 200 by 100, or words like a bit wider, a bit taller"), "100 by 100"),
+					(t("Color: a name like sky blue, or a hex code"), &color.to_hex()),
 				],
 			) else {
 				return;
@@ -5727,8 +6391,7 @@ fn symbols_dialog(win: &Win, shared: &Shared) {
 				parse_size(&v[1], Some((100, 100))),
 				parse_color(&v[2]),
 			) else {
-				frame.set_status_text(
-					"One of those fields did not parse. Position and size take numbers or plain words; color takes a name like sky blue or a hex code.",
+				frame.set_status_text(&t("One of those fields did not parse. Position and size take numbers or plain words; color takes a name like sky blue or a hex code."),
 					0,
 				);
 				return;
@@ -5740,7 +6403,7 @@ fn symbols_dialog(win: &Win, shared: &Shared) {
 			for path in paths {
 				let mut shape = Shape::stroke(path, 3, color);
 				shape.opacity = state.current_opacity;
-				shape.caption = Some(format!("{name} symbol"));
+				shape.caption = Some(t("%s symbol").replacen("%s", name, 1));
 				if state.drawing.add_shape(layer, shape).is_some() {
 					added += 1;
 				}
@@ -5748,11 +6411,7 @@ fn symbols_dialog(win: &Win, shared: &Shared) {
 			drop(state);
 			if added > 0 {
 				frame.set_status_text(
-					&format!(
-						"Added {name} symbol ({} stroke{}).",
-						added,
-						if added == 1 { "" } else { "s" }
-					),
+					&t("Added %s symbol (%s stroke%s).").replacen("%s", name, 1).replacen("%s", &(added).to_string(), 1).replacen("%s", if added == 1 { "" } else { "s" }, 1),
 					0,
 				);
 			}
@@ -5775,8 +6434,11 @@ fn extract_image_dialog(win: &Win, shared: &Shared, set_background: bool) {
 	let frame = win.frame;
 	let Some(path) = file_dialog(
 		&frame,
-		"Choose an image to extract colors from",
-		"Image files (*.png;*.jpg;*.jpeg;*.webp)|*.png;*.jpg;*.jpeg;*.webp",
+		&t("Choose an image to extract colors from"),
+		&format!(
+			"{}|*.png;*.jpg;*.jpeg;*.webp",
+			t("Image files (*.png;*.jpg;*.jpeg;*.webp)")
+		),
 		false,
 	) else {
 		return;
@@ -5787,8 +6449,8 @@ fn extract_image_dialog(win: &Win, shared: &Shared, set_background: bool) {
 	let now = shared.borrow().extract_count;
 	let Some(v) = numbers_dialog(
 		&frame,
-		"How many colors to extract",
-		&[("Number of colors", count_def.min, count_def.max, now)],
+		&t("How many colors to extract"),
+		&[(t("Number of colors"), count_def.min, count_def.max, now)],
 	) else {
 		return;
 	};
@@ -5815,15 +6477,18 @@ fn extract_image_dialog(win: &Win, shared: &Shared, set_background: bool) {
 			}
 			refresh_lists(win, &state);
 			frame.set_status_text(
-				&format!(
-					"Extracted {} colors from {name}.{}",
-					entries.len(),
-					if set_background {
-						" The largest is now the design background."
-					} else {
-						" They were added to the palette."
-					}
-				),
+				&t("Extracted %s colors from %s.%s")
+					.replacen("%s", &(entries.len()).to_string(), 1)
+					.replacen("%s", &(name).to_string(), 1)
+					.replacen(
+						"%s",
+						if set_background {
+							" The largest is now the design background."
+						} else {
+							" They were added to the palette."
+						},
+						1,
+					),
 				0,
 			);
 			if set_background {
@@ -5834,7 +6499,10 @@ fn extract_image_dialog(win: &Win, shared: &Shared, set_background: bool) {
 			}
 		}
 		Err(e) => {
-			frame.set_status_text(&format!("Could not open that image: {e}"), 0);
+			frame.set_status_text(
+				&t("Could not open that image: %s").replacen("%s", &(e).to_string(), 1),
+				0,
+			);
 		}
 	}
 }
@@ -5857,33 +6525,48 @@ fn replacement_variables_dialog(win: &Rc<Win>, shared: &Shared) {
 	let project = current_project(&shared.borrow());
 	let names = variables::scan(&project);
 	if names.is_empty() {
-		frame.set_status_text(
-			"This design uses no replacement variables. Write a token like {name} in a text element or a caption, and it will be fillable here.",
+		frame.set_status_text(&t("This design uses no replacement variables. Write a token like {name} in a text element or a caption, and it will be fillable here."),
 			0,
 		);
 		return;
 	}
-	let dialog = Dialog::builder(&frame, "Replacement Variables").build();
+	let dialog = Dialog::builder(&frame, &t("Replacement Variables")).build();
 	bind_escape_cancel(dialog);
 	let sizer = BoxSizer::builder(Orientation::Vertical).build();
 	let intro = StaticText::builder(&dialog)
-		.with_label("Give each variable a value. Leave a field empty to leave that token as it is.")
+		.with_label(&t(
+			"Give each variable a value. Leave a field empty to leave that token as it is.",
+		))
 		.build();
-	sizer.add(&intro, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	sizer.add(
+		&intro,
+		0,
+		SizerFlag::Left | SizerFlag::Right | SizerFlag::Top,
+		5,
+	);
 	let mut fields = Vec::new();
 	for name in &names {
 		let label = StaticText::builder(&dialog)
-			.with_label(&format!("Value for {{{name}}}"))
+			.with_label(&t("Value for {%s}").replacen("%s", &(name).to_string(), 1))
 			.build();
-		sizer.add(&label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+		sizer.add(
+			&label,
+			0,
+			SizerFlag::Left | SizerFlag::Right | SizerFlag::Top,
+			5,
+		);
 		let field = TextCtrl::builder(&dialog).build();
-		field.set_name(&format!("Value for {name}"));
+		field.set_name(&t("Value for %s").replacen("%s", &(name).to_string(), 1));
 		sizer.add(&field, 0, SizerFlag::Expand | SizerFlag::All, 5);
 		fields.push(field);
 	}
-	let here = Button::builder(&dialog).with_label("Substitute in This Project").build();
-	let copy = Button::builder(&dialog).with_label("Substitute in a Copy and Save As…").build();
-	let cancel = Button::builder(&dialog).with_label("Cancel").build();
+	let here = Button::builder(&dialog)
+		.with_label(&t("Substitute in This Project"))
+		.build();
+	let copy = Button::builder(&dialog)
+		.with_label(&t("Substitute in a Copy and Save As…"))
+		.build();
+	let cancel = Button::builder(&dialog).with_label(&t("Cancel")).build();
 	let buttons = BoxSizer::builder(Orientation::Horizontal).build();
 	buttons.add(&here, 0, SizerFlag::All, 5);
 	buttons.add(&copy, 0, SizerFlag::All, 5);
@@ -5919,7 +6602,7 @@ fn replacement_variables_dialog(win: &Rc<Win>, shared: &Shared) {
 		let report = state.drawing.substitute_variables(&values);
 		if report.replaced == 0 {
 			frame.set_status_text(
-				"Nothing was substituted: no value matched a token in this design.",
+				&t("Nothing was substituted: no value matched a token in this design."),
 				0,
 			);
 			return;
@@ -5930,19 +6613,22 @@ fn replacement_variables_dialog(win: &Rc<Win>, shared: &Shared) {
 			drop(state);
 			report_dialog(
 				win,
-				"Replacement Variables",
-				"Substitution done, with tokens left unfilled",
-				&format!(
-					"{} values substituted in {} elements.\nStill in the words, unfilled: {}.",
-					report.replaced,
-					report.affected,
-					report
-						.unknown
-						.iter()
-						.map(|n| format!("{{{n}}}"))
-						.collect::<Vec<_>>()
-						.join(", ")
-				),
+				&t("Replacement Variables"),
+				&t("Substitution done, with tokens left unfilled"),
+				&t("%s values substituted in %s elements.\nStill in the words, unfilled: %s.")
+					.replacen("%s", &(report.replaced).to_string(), 1)
+					.replacen("%s", &(report.affected).to_string(), 1)
+					.replacen(
+						"%s",
+						&(report
+							.unknown
+							.iter()
+							.map(|n| format!("{{{n}}}"))
+							.collect::<Vec<_>>()
+							.join(", "))
+						.to_string(),
+						1,
+					),
 			);
 		}
 		return;
@@ -5952,33 +6638,40 @@ fn replacement_variables_dialog(win: &Rc<Win>, shared: &Shared) {
 	// gets saved.
 	let (copy_project, report) = variables::substitute(&project, &values);
 	if report.replaced == 0 {
-		frame.set_status_text(
-			"Nothing was substituted, so no copy was saved: no value matched a token in this design.",
+		frame.set_status_text(&t("Nothing was substituted, so no copy was saved: no value matched a token in this design."),
 			0,
 		);
 		return;
 	}
-	if let Some(path) = file_dialog(&frame, "Save substituted copy", "Blind Designer design (*.bdd)|*.bdd", true) {
+	if let Some(path) = file_dialog(
+		&frame,
+		&t("Save substituted copy"),
+		&format!("{}|*.bdd", t("Blind Designer design (*.bdd)")),
+		true,
+	) {
 		match std::fs::write(&path, copy_project.to_text()) {
 			Ok(()) => {
-				let mut note = format!(
-					"Saved a substituted copy to {path}: {} values substituted in {} elements. This project is unchanged.",
-					report.replaced, report.affected
-				);
+				let mut note = t("Saved a substituted copy to %s: %s values substituted in %s elements. This project is unchanged.").replacen("%s", &(path).to_string(), 1).replacen("%s", &(report.replaced).to_string(), 1).replacen("%s", &(report.affected).to_string(), 1);
 				if !report.unknown.is_empty() {
-					note.push_str(&format!(
-						" Still unfilled in the copy: {}.",
-						report
-							.unknown
-							.iter()
-							.map(|n| format!("{{{n}}}"))
-							.collect::<Vec<_>>()
-							.join(", ")
-					));
+					note.push_str(
+						&t(" Still unfilled in the copy: %s.").replacen(
+							"%s",
+							&(report
+								.unknown
+								.iter()
+								.map(|n| format!("{{{n}}}"))
+								.collect::<Vec<_>>()
+								.join(", "))
+							.to_string(),
+							1,
+						),
+					);
 				}
 				frame.set_status_text(&note, 0);
 			}
-			Err(e) => frame.set_status_text(&format!("Save failed: {e}"), 0),
+			Err(e) => {
+				frame.set_status_text(&t("Save failed: %s").replacen("%s", &(e).to_string(), 1), 0)
+			}
 		}
 	}
 }
@@ -5998,13 +6691,15 @@ fn focus_texts(win: &Win, state: &State) -> (String, String) {
 				.find(|(key, _)| *key == flat)
 				.map(|(_, row)| row)
 		})
-		.map(|row| format!("Focus: {row}"))
-		.unwrap_or_else(|| "Focus: whole project".to_string());
+		.map(|row| t("Focus: %s").replacen("%s", &(row).to_string(), 1))
+		.unwrap_or_else(|| t("Focus: whole project"));
 	let mut body = ProjectStats::gather(&state.drawing, state.palette.len()).report();
 	match &state.goal {
 		Some(goal) => {
 			if let Some(report) = goal_report(&current_project(state)) {
-				body.push_str("\n\nAgainst your goal — what is built, and what is not built yet:\n");
+				body.push_str(
+					"\n\nAgainst your goal — what is built, and what is not built yet:\n",
+				);
 				body.push_str(&report.full_text(goal));
 			}
 		}
@@ -6065,20 +6760,29 @@ fn set_focus_mode(win: &Rc<Win>, shared: &Shared, on: bool) {
 	}
 	if win.focus_frame.borrow().is_none() {
 		let frame = Frame::builder()
-			.with_title("Focus — Blind Designer")
+			.with_title(&t("Focus — Blind Designer"))
 			.with_size(Size::new(640, 480))
 			.build();
 		let panel = Panel::builder(&frame).build();
 		let sizer = BoxSizer::builder(Orientation::Vertical).build();
-		let line = StaticText::builder(&panel).with_label("Focus: whole project").build();
-		line.set_name("Current focus");
-		sizer.add(&line, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+		let line = StaticText::builder(&panel)
+			.with_label(&t("Focus: whole project"))
+			.build();
+		line.set_name(&t("Current focus"));
+		sizer.add(
+			&line,
+			0,
+			SizerFlag::Left | SizerFlag::Right | SizerFlag::Top,
+			5,
+		);
 		let body = TextCtrl::builder(&panel)
 			.with_style(TextCtrlStyle::MultiLine | TextCtrlStyle::ReadOnly)
 			.build();
-		body.set_name("What you have built, and what is not built yet");
+		body.set_name(&t("What you have built, and what is not built yet"));
 		sizer.add(&body, 1, SizerFlag::Expand | SizerFlag::All, 5);
-		let close = Button::builder(&panel).with_label("Close Focus Window").build();
+		let close = Button::builder(&panel)
+			.with_label(&t("Close Focus Window"))
+			.build();
 		sizer.add(&close, 0, SizerFlag::All, 5);
 		panel.set_sizer(sizer, true);
 		{
@@ -6147,11 +6851,17 @@ fn draw_pointer_dialog(win: &Rc<Win>, shared: &Shared) {
 	let frame = win.frame;
 	let (canvas_w, canvas_h, brush) = {
 		let state = shared.borrow();
-		(state.drawing.width, state.drawing.height, state.brush.clone())
+		(
+			state.drawing.width,
+			state.drawing.height,
+			state.brush.clone(),
+		)
 	};
 	// The surface never upscales; a canvas bigger than the fit
 	// box scales down, and positions divide back by the scale.
-	let scale = (880.0 / canvas_w as f64).min(620.0 / canvas_h as f64).min(1.0);
+	let scale = (880.0 / canvas_w as f64)
+		.min(620.0 / canvas_h as f64)
+		.min(1.0);
 	let session = Rc::new(RefCell::new(DrawSession {
 		raw: Vec::new(),
 		held: false,
@@ -6162,34 +6872,50 @@ fn draw_pointer_dialog(win: &Rc<Win>, shared: &Shared) {
 		canvas_w,
 		canvas_h,
 	}));
-	let dialog = Dialog::builder(&frame, "Draw with Pointer").build();
+	let dialog = Dialog::builder(&frame, &t("Draw with Pointer")).build();
 	bind_escape_cancel(dialog);
 	let sizer = BoxSizer::builder(Orientation::Vertical).build();
 	let intro = StaticText::builder(&dialog)
-		.with_label("Press and drag to draw one stroke. Keys: 1 to 9 set the brush width, C cycles the brush colour, Escape cancels.")
+		.with_label(&t("Press and drag to draw one stroke. Keys: 1 to 9 set the brush width, C cycles the brush colour, Escape cancels."))
 		.build();
-	sizer.add(&intro, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	sizer.add(
+		&intro,
+		0,
+		SizerFlag::Left | SizerFlag::Right | SizerFlag::Top,
+		5,
+	);
 	let surface = Panel::builder(&dialog)
 		.with_size(Size::new(
 			((canvas_w as f64 * scale).round() as i32).max(50),
 			((canvas_h as f64 * scale).round() as i32).max(50),
 		))
 		.build();
-	surface.set_name(&format!(
-		"Drawing surface: the {canvas_w} by {canvas_h} canvas"
-	));
+	surface.set_name(
+		&t("Drawing surface: the %s by %s canvas")
+			.replacen("%s", &(canvas_w).to_string(), 1)
+			.replacen("%s", &(canvas_h).to_string(), 1),
+	);
 	sizer.add(&surface, 0, SizerFlag::All, 5);
 	let status = StaticText::builder(&dialog)
-		.with_label(&format!(
-			"Brush width {} pixels. Colour {}. No points yet.",
-			brush.width,
-			describe_in(brush.color, shared.borrow().color_format)
-		))
+		.with_label(
+			&t("Brush width %s pixels. Colour %s. No points yet.")
+				.replacen("%s", &(brush.width).to_string(), 1)
+				.replacen(
+					"%s",
+					&(describe_in(brush.color, shared.borrow().color_format)).to_string(),
+					1,
+				),
+		)
 		.build();
-	status.set_name("Draw status");
-	sizer.add(&status, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
-	let finish = Button::builder(&dialog).with_label("Finish").build();
-	let cancel = Button::builder(&dialog).with_label("Cancel").build();
+	status.set_name(&t("Draw status"));
+	sizer.add(
+		&status,
+		0,
+		SizerFlag::Left | SizerFlag::Right | SizerFlag::Top,
+		5,
+	);
+	let finish = Button::builder(&dialog).with_label(&t("Finish")).build();
+	let cancel = Button::builder(&dialog).with_label(&t("Cancel")).build();
 	let buttons = BoxSizer::builder(Orientation::Horizontal).build();
 	buttons.add(&finish, 0, SizerFlag::All, 5);
 	buttons.add(&cancel, 0, SizerFlag::All, 5);
@@ -6200,16 +6926,19 @@ fn draw_pointer_dialog(win: &Rc<Win>, shared: &Shared) {
 	// how many points the stroke will keep after sampling.
 	let say = |session: &DrawSession, format: ColorFormat| {
 		let kept = chroma_core::design::sample_points(&session.raw, 4).len();
-		format!(
-			"Brush width {} pixels. Colour {}. {}",
-			session.width,
-			describe_in(session.color, format),
-			if kept == 0 {
-				"No points yet.".to_string()
-			} else {
-				format!("{kept} points so far.")
-			}
-		)
+		t("Brush width %s pixels. Colour %s. %s")
+			.replacen("%s", &(session.width).to_string(), 1)
+			.replacen("%s", &(describe_in(session.color, format)).to_string(), 1)
+			.replacen(
+				"%s",
+				&(if kept == 0 {
+					t("No points yet.")
+				} else {
+					format!("{kept} points so far.")
+				})
+				.to_string(),
+				1,
+			)
 	};
 	let to_canvas = |session: &DrawSession, p: Point| {
 		let x = (p.x as f64 / session.scale).round() as i32;
@@ -6222,7 +6951,9 @@ fn draw_pointer_dialog(win: &Rc<Win>, shared: &Shared) {
 	{
 		let (session, status, shared2) = (session.clone(), status.clone(), shared.clone());
 		surface.on_mouse_left_down(move |data| {
-			let WindowEventData::MouseButton(e) = data else { return };
+			let WindowEventData::MouseButton(e) = data else {
+				return;
+			};
 			let Some(p) = e.get_position() else { return };
 			let mut s = session.borrow_mut();
 			s.held = true;
@@ -6239,7 +6970,9 @@ fn draw_pointer_dialog(win: &Rc<Win>, shared: &Shared) {
 	{
 		let (session, status, shared2) = (session.clone(), status.clone(), shared.clone());
 		surface.on_mouse_motion(move |data| {
-			let WindowEventData::MouseMotion(e) = data else { return };
+			let WindowEventData::MouseMotion(e) = data else {
+				return;
+			};
 			let Some(p) = e.get_position() else { return };
 			let mut s = session.borrow_mut();
 			if !s.held {
@@ -6262,8 +6995,12 @@ fn draw_pointer_dialog(win: &Rc<Win>, shared: &Shared) {
 		});
 	}
 	{
-		let (session, status, shared2, d) =
-			(session.clone(), status.clone(), shared.clone(), dialog.clone());
+		let (session, status, shared2, d) = (
+			session.clone(),
+			status.clone(),
+			shared.clone(),
+			dialog.clone(),
+		);
 		surface.on_key_down(move |data| {
 			let WindowEventData::Keyboard(kb) = &data else {
 				data.skip(true);
@@ -6364,10 +7101,11 @@ fn text_rows(state: &State) -> Vec<(usize, String)> {
 			};
 			(
 				i,
-				format!(
-					"{}: \"{first}\"{more} — {style}",
-					state.drawing.layers[li].name
-				),
+				t("%s: \"%s\"%s — %s")
+					.replacen("%s", &(state.drawing.layers[li].name).to_string(), 1)
+					.replacen("%s", first, 1)
+					.replacen("%s", more, 1)
+					.replacen("%s", &(style).to_string(), 1),
 			)
 		})
 		.collect()
@@ -6384,76 +7122,139 @@ fn text_rows(state: &State) -> Vec<(usize, String)> {
 /// elements"; nothing here moves focus on its own.
 fn text_studio_dialog(win: &Rc<Win>, shared: &Shared) {
 	let frame = win.frame;
-	let dialog = Dialog::builder(&frame, "Text Studio").with_size(640, 720).build();
+	let dialog = Dialog::builder(&frame, &t("Text Studio"))
+		.with_size(640, 720)
+		.build();
 	bind_escape_cancel(dialog);
 	let sizer = BoxSizer::builder(Orientation::Vertical).build();
-	let list_label = StaticText::builder(&dialog).with_label("Text elements").build();
-	sizer.add(&list_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
-	let list = QuietList::new(&dialog, "Text elements");
+	let list_label = StaticText::builder(&dialog)
+		.with_label(&t("Text elements"))
+		.build();
+	sizer.add(
+		&list_label,
+		0,
+		SizerFlag::Left | SizerFlag::Right | SizerFlag::Top,
+		5,
+	);
+	let list = QuietList::new(&dialog, &t("Text elements"));
 	sizer.add(&list, 1, SizerFlag::Expand | SizerFlag::All, 5);
 	let phrase_label = StaticText::builder(&dialog)
-		.with_label("Words of the selected element (one line per row)")
+		.with_label(&t("Words of the selected element (one line per row)"))
 		.build();
-	sizer.add(&phrase_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	sizer.add(
+		&phrase_label,
+		0,
+		SizerFlag::Left | SizerFlag::Right | SizerFlag::Top,
+		5,
+	);
 	let phrase = TextCtrl::builder(&dialog)
 		.with_style(TextCtrlStyle::MultiLine)
 		.build();
 	sizer.add(&phrase, 1, SizerFlag::Expand | SizerFlag::All, 5);
-	let bold = CheckBox::builder(&dialog).with_label("Bold").build();
-	let italic = CheckBox::builder(&dialog).with_label("Italic (spoken and exported; the picture font has no slanted letters)").build();
-	let underline = CheckBox::builder(&dialog).with_label("Underline").build();
+	let bold = CheckBox::builder(&dialog).with_label(&t("Bold")).build();
+	let italic = CheckBox::builder(&dialog)
+		.with_label(&t(
+			"Italic (spoken and exported; the picture font has no slanted letters)",
+		))
+		.build();
+	let underline = CheckBox::builder(&dialog)
+		.with_label(&t("Underline"))
+		.build();
 	for b in [&bold, &italic, &underline] {
 		sizer.add(b, 0, SizerFlag::All, 5);
 	}
-	let heading_label = StaticText::builder(&dialog).with_label("Heading level").build();
-	sizer.add(&heading_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	let heading_label = StaticText::builder(&dialog)
+		.with_label(&t("Heading level"))
+		.build();
+	sizer.add(
+		&heading_label,
+		0,
+		SizerFlag::Left | SizerFlag::Right | SizerFlag::Top,
+		5,
+	);
 	let heading_choice = Choice::builder(&dialog).build();
 	for h in Heading::ALL {
-		heading_choice.append(h.name());
+		heading_choice.append(&h.name());
 	}
 	sizer.add(&heading_choice, 0, SizerFlag::Expand | SizerFlag::All, 5);
-	let align_label = StaticText::builder(&dialog).with_label("Alignment in its box").build();
-	sizer.add(&align_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	let align_label = StaticText::builder(&dialog)
+		.with_label(&t("Alignment in its box"))
+		.build();
+	sizer.add(
+		&align_label,
+		0,
+		SizerFlag::Left | SizerFlag::Right | SizerFlag::Top,
+		5,
+	);
 	let align_choice = Choice::builder(&dialog).build();
 	for a in TextAlign::ALL {
-		align_choice.append(a.label());
+		align_choice.append(&a.label());
 	}
 	sizer.add(&align_choice, 0, SizerFlag::Expand | SizerFlag::All, 5);
-	let apply_btn = Button::builder(&dialog).with_label("Apply Words and Style").build();
-	let sort_az_btn = Button::builder(&dialog).with_label("Sort Lines A to Z").build();
-	let sort_za_btn = Button::builder(&dialog).with_label("Sort Lines Z to A").build();
+	let apply_btn = Button::builder(&dialog)
+		.with_label(&t("Apply Words and Style"))
+		.build();
+	let sort_az_btn = Button::builder(&dialog)
+		.with_label(&t("Sort Lines A to Z"))
+		.build();
+	let sort_za_btn = Button::builder(&dialog)
+		.with_label(&t("Sort Lines Z to A"))
+		.build();
 	let edit_buttons = BoxSizer::builder(Orientation::Horizontal).build();
 	for b in [&apply_btn, &sort_az_btn, &sort_za_btn] {
 		edit_buttons.add(b, 0, SizerFlag::All, 5);
 	}
 	sizer.add_sizer(&edit_buttons, 0, SizerFlag::All, 5);
 	let columns_label = StaticText::builder(&dialog)
-		.with_label("Spread every text element into this many columns, in reading order")
+		.with_label(&t(
+			"Spread every text element into this many columns, in reading order",
+		))
 		.build();
-	sizer.add(&columns_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	sizer.add(
+		&columns_label,
+		0,
+		SizerFlag::Left | SizerFlag::Right | SizerFlag::Top,
+		5,
+	);
 	let columns_spin = SpinCtrl::builder(&dialog).with_range(1, 12).build();
 	columns_spin.set_value(2);
 	sizer.add(&columns_spin, 0, SizerFlag::Expand | SizerFlag::All, 5);
-	let spread_btn = Button::builder(&dialog).with_label("Spread into Columns").build();
+	let spread_btn = Button::builder(&dialog)
+		.with_label(&t("Spread into Columns"))
+		.build();
 	sizer.add(&spread_btn, 0, SizerFlag::All, 5);
 	let grid_label = StaticText::builder(&dialog)
-		.with_label("Build a text grid from a pasted table (tabs between columns)")
+		.with_label(&t(
+			"Build a text grid from a pasted table (tabs between columns)",
+		))
 		.build();
-	sizer.add(&grid_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	sizer.add(
+		&grid_label,
+		0,
+		SizerFlag::Left | SizerFlag::Right | SizerFlag::Top,
+		5,
+	);
 	let grid_data = TextCtrl::builder(&dialog)
 		.with_style(TextCtrlStyle::MultiLine)
 		.build();
 	sizer.add(&grid_data, 1, SizerFlag::Expand | SizerFlag::All, 5);
 	let grid_size_label = StaticText::builder(&dialog)
-		.with_label("Grid font size in points")
+		.with_label(&t("Grid font size in points"))
 		.build();
-	sizer.add(&grid_size_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	sizer.add(
+		&grid_size_label,
+		0,
+		SizerFlag::Left | SizerFlag::Right | SizerFlag::Top,
+		5,
+	);
 	let grid_size_spin = SpinCtrl::builder(&dialog).with_range(6, 72).build();
 	grid_size_spin.set_value(14);
 	sizer.add(&grid_size_spin, 0, SizerFlag::Expand | SizerFlag::All, 5);
-	let grid_btn = Button::builder(&dialog).with_label("Build Text Grid").build();
+	let grid_btn = Button::builder(&dialog)
+		.with_label(&t("Build Text Grid"))
+		.build();
 	sizer.add(&grid_btn, 0, SizerFlag::All, 5);
-	let close = Button::builder(&dialog).with_label("Close").build();
+	let close = Button::builder(&dialog).with_label(&t("Close")).build();
 	sizer.add(&close, 0, SizerFlag::All, 5);
 	dialog.set_sizer(sizer, true);
 	let list = Rc::new(list);
@@ -6467,18 +7268,29 @@ fn text_studio_dialog(win: &Rc<Win>, shared: &Shared) {
 		let (list, shared) = (list.clone(), shared.clone());
 		move || -> Option<(usize, usize)> {
 			let ordinal = list.selected()?;
-			shared.borrow().drawing.text_positions().get(ordinal).copied()
+			shared
+				.borrow()
+				.drawing
+				.text_positions()
+				.get(ordinal)
+				.copied()
 		}
 	};
 	let picked = Rc::new(picked);
 	// Load the selected element's words and style into the editor.
 	let load = {
 		let (list, shared) = (list.clone(), shared.clone());
-		let (phrase, bold, italic, underline) =
-			(phrase.clone(), bold.clone(), italic.clone(), underline.clone());
+		let (phrase, bold, italic, underline) = (
+			phrase.clone(),
+			bold.clone(),
+			italic.clone(),
+			underline.clone(),
+		);
 		let (heading_choice, align_choice) = (heading_choice.clone(), align_choice.clone());
 		move || {
-			let Some(ordinal) = list.selected() else { return };
+			let Some(ordinal) = list.selected() else {
+				return;
+			};
 			let state = shared.borrow();
 			let Some(&(li, si)) = state.drawing.text_positions().get(ordinal) else {
 				return;
@@ -6488,9 +7300,15 @@ fn text_studio_dialog(win: &Rc<Win>, shared: &Shared) {
 			bold.set_value(s.style.bold);
 			italic.set_value(s.style.italic);
 			underline.set_value(s.style.underline);
-			let h = Heading::ALL.iter().position(|x| *x == s.style.heading).unwrap_or(0);
+			let h = Heading::ALL
+				.iter()
+				.position(|x| *x == s.style.heading)
+				.unwrap_or(0);
 			heading_choice.set_selection(h as u32);
-			let a = TextAlign::ALL.iter().position(|x| *x == s.style.align).unwrap_or(0);
+			let a = TextAlign::ALL
+				.iter()
+				.position(|x| *x == s.style.align)
+				.unwrap_or(0);
 			align_choice.set_selection(a as u32);
 		}
 	};
@@ -6498,8 +7316,13 @@ fn text_studio_dialog(win: &Rc<Win>, shared: &Shared) {
 	// Refresh the rows and the main window, speak the newest
 	// log entry, and reload the editor from the selection.
 	let sync = {
-		let (win, list, shared, grey, load) =
-			(win.clone(), list.clone(), shared.clone(), grey.clone(), load.clone());
+		let (win, list, shared, grey, load) = (
+			win.clone(),
+			list.clone(),
+			shared.clone(),
+			grey.clone(),
+			load.clone(),
+		);
 		move || {
 			{
 				let state = shared.borrow();
@@ -6520,8 +7343,12 @@ fn text_studio_dialog(win: &Rc<Win>, shared: &Shared) {
 	}
 	{
 		let (shared, sync, picked) = (shared.clone(), sync.clone(), picked.clone());
-		let (phrase, bold, italic, underline) =
-			(phrase.clone(), bold.clone(), italic.clone(), underline.clone());
+		let (phrase, bold, italic, underline) = (
+			phrase.clone(),
+			bold.clone(),
+			italic.clone(),
+			underline.clone(),
+		);
 		let (heading_choice, align_choice) = (heading_choice.clone(), align_choice.clone());
 		apply_btn.on_click(move |_| {
 			let Some((li, si)) = picked() else { return };
@@ -6547,11 +7374,15 @@ fn text_studio_dialog(win: &Rc<Win>, shared: &Shared) {
 		let (shared, sync, picked) = (shared.clone(), sync.clone(), picked.clone());
 		btn.on_click(move |_| {
 			let Some((li, si)) = picked() else { return };
-			if shared.borrow_mut().drawing.sort_text_lines(li, si, ascending) {
+			if shared
+				.borrow_mut()
+				.drawing
+				.sort_text_lines(li, si, ascending)
+			{
 				sync();
 			} else {
 				frame.set_status_text(
-					"That element has fewer than two lines; there is nothing to sort.",
+					&t("That element has fewer than two lines; there is nothing to sort."),
 					0,
 				);
 			}
@@ -6563,7 +7394,7 @@ fn text_studio_dialog(win: &Rc<Win>, shared: &Shared) {
 			let columns = columns_spin.value().max(1) as usize;
 			let placed = shared.borrow_mut().drawing.distribute_texts(columns);
 			if placed == 0 {
-				frame.set_status_text("This design has no text elements to spread.", 0);
+				frame.set_status_text(&t("This design has no text elements to spread."), 0);
 			} else {
 				sync();
 			}
@@ -6580,8 +7411,7 @@ fn text_studio_dialog(win: &Rc<Win>, shared: &Shared) {
 			let added = state.drawing.add_text_grid(layer, &data, fill, size);
 			drop(state);
 			if added == 0 {
-				frame.set_status_text(
-					"No words in that table; nothing was built. Paste rows with tabs between the columns.",
+				frame.set_status_text(&t("No words in that table; nothing was built. Paste rows with tabs between the columns."),
 					0,
 				);
 			} else {
@@ -6609,17 +7439,17 @@ fn embed_feed_dialog(win: &Rc<Win>, shared: &Shared) {
 	let frame = win.frame;
 	let Some(v) = fields_dialog(
 		&frame,
-		"Embed feed snapshot",
+		&t("Embed feed snapshot"),
 		&[
-			("Feed address (an RSS or Atom URL)", "https://"),
-			("How many of the latest items (1 to 50)", "5"),
+			(t("Feed address (an RSS or Atom URL)"), "https://"),
+			(t("How many of the latest items (1 to 50)"), "5"),
 		],
 	) else {
 		return;
 	};
 	let url = v[0].trim().to_string();
 	if url.is_empty() {
-		frame.set_status_text("No feed address given; nothing was embedded.", 0);
+		frame.set_status_text(&t("No feed address given; nothing was embedded."), 0);
 		return;
 	}
 	let count: usize = v[1]
@@ -6634,15 +7464,16 @@ fn embed_feed_dialog(win: &Rc<Win>, shared: &Shared) {
 			.build();
 		let agent = ureq::Agent::new_with_config(config);
 		let mut response = agent.get(&url).call().map_err(|e| e.to_string())?;
-		response.body_mut().read_to_string().map_err(|e| e.to_string())
+		response
+			.body_mut()
+			.read_to_string()
+			.map_err(|e| e.to_string())
 	})();
 	let xml = match fetched {
 		Ok(xml) => xml,
 		Err(e) => {
 			frame.set_status_text(
-				&format!(
-					"That feed could not be fetched: {e}. Check the address and your connection, then try again."
-				),
+				&t("That feed could not be fetched: %s. Check the address and your connection, then try again.").replacen("%s", &(e).to_string(), 1),
 				0,
 			);
 			return;
@@ -6650,8 +7481,7 @@ fn embed_feed_dialog(win: &Rc<Win>, shared: &Shared) {
 	};
 	let titles = parse_feed_titles(&xml, count);
 	if titles.is_empty() {
-		frame.set_status_text(
-			"No items were found at that address. It may not be a feed, or the feed may be empty.",
+		frame.set_status_text(&t("No items were found at that address. It may not be a feed, or the feed may be empty."),
 			0,
 		);
 		return;
@@ -6673,7 +7503,11 @@ fn embed_feed_dialog(win: &Rc<Win>, shared: &Shared) {
 	let height = ((lines as u32 * 29 + 8).max(29)).min(state.drawing.height.max(29));
 	let mut shape = Shape::text(&phrase, "", 16, 10, 10, width, height, fill);
 	shape.opacity = state.current_opacity;
-	shape.caption = Some(format!("Feed snapshot: {lines} items from {host}"));
+	shape.caption = Some(
+		t("Feed snapshot: %s items from %s")
+			.replacen("%s", &(lines).to_string(), 1)
+			.replacen("%s", &(host).to_string(), 1),
+	);
 	let index = state.drawing.add_shape(layer, shape);
 	refresh_lists(win, &state);
 	if let Some(index) = index {
@@ -6687,19 +7521,26 @@ fn embed_feed_dialog(win: &Rc<Win>, shared: &Shared) {
 /// origin is never a mystery later.
 fn embed_paste_dialog(win: &Rc<Win>, shared: &Shared) {
 	let frame = win.frame;
-	let dialog = Dialog::builder(&frame, "Embed Pasted Post").with_size(560, 420).build();
+	let dialog = Dialog::builder(&frame, &t("Embed Pasted Post"))
+		.with_size(560, 420)
+		.build();
 	bind_escape_cancel(dialog);
 	let sizer = BoxSizer::builder(Orientation::Vertical).build();
 	let label = StaticText::builder(&dialog)
-		.with_label("Paste the post or text here")
+		.with_label(&t("Paste the post or text here"))
 		.build();
-	sizer.add(&label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+	sizer.add(
+		&label,
+		0,
+		SizerFlag::Left | SizerFlag::Right | SizerFlag::Top,
+		5,
+	);
 	let field = TextCtrl::builder(&dialog)
 		.with_style(TextCtrlStyle::MultiLine)
 		.build();
 	sizer.add(&field, 1, SizerFlag::Expand | SizerFlag::All, 5);
-	let ok = Button::builder(&dialog).with_label("Embed").build();
-	let cancel = Button::builder(&dialog).with_label("Cancel").build();
+	let ok = Button::builder(&dialog).with_label(&t("Embed")).build();
+	let cancel = Button::builder(&dialog).with_label(&t("Cancel")).build();
 	let buttons = BoxSizer::builder(Orientation::Horizontal).build();
 	buttons.add(&ok, 0, SizerFlag::All, 5);
 	buttons.add(&cancel, 0, SizerFlag::All, 5);
@@ -6719,7 +7560,7 @@ fn embed_paste_dialog(win: &Rc<Win>, shared: &Shared) {
 	let pasted = field.get_value();
 	let text = pasted.trim();
 	if text.is_empty() {
-		frame.set_status_text("Nothing was pasted; nothing was embedded.", 0);
+		frame.set_status_text(&t("Nothing was pasted; nothing was embedded."), 0);
 		return;
 	}
 	let first_line = text.lines().next().unwrap_or("");
@@ -6732,7 +7573,7 @@ fn embed_paste_dialog(win: &Rc<Win>, shared: &Shared) {
 	let height = ((lines * 29 + 8).max(29)).min(state.drawing.height.max(29));
 	let mut shape = Shape::text(text, "", 16, 10, 10, width, height, fill);
 	shape.opacity = state.current_opacity;
-	shape.caption = Some(format!("pasted post: {short}"));
+	shape.caption = Some(t("pasted post: %s").replacen("%s", &(short).to_string(), 1));
 	let index = state.drawing.add_shape(layer, shape);
 	refresh_lists(win, &state);
 	if let Some(index) = index {
@@ -6752,12 +7593,11 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 			match std::env::current_exe()
 				.and_then(|exe| std::process::Command::new(exe).spawn())
 			{
-				Ok(_) => frame.set_status_text(
-					"A second Blind Designer window opened: it starts its own project, and each window saves its own design.",
+				Ok(_) => frame.set_status_text(&t("A second Blind Designer window opened: it starts its own project, and each window saves its own design."),
 					0,
 				),
 				Err(e) => frame.set_status_text(
-					&format!("A second window could not be opened: {e}"),
+					&t("A second window could not be opened: %s").replacen("%s", &(e).to_string(), 1),
 					0,
 				),
 			}
@@ -6768,11 +7608,11 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 			let mut state = shared.borrow_mut();
 			state.sound_cues = !state.sound_cues;
 			frame.set_status_text(
-				if state.sound_cues {
-					"Sound cues on: drawing changes play a pitch and position tone."
+				&(if state.sound_cues {
+					t("Sound cues on: drawing changes play a pitch and position tone.")
 				} else {
-					"Sound cues off. Spoken readouts are unchanged."
-				},
+					t("Sound cues off. Spoken readouts are unchanged.")
+				}),
 				0,
 			);
 		}
@@ -6785,7 +7625,7 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 				 parameter change you can predict. Palettes extract free from \
 				 any image. Every drawing change is logged, step by step. \
 				 Built with wxDragon.",
-				"About Blind Designer",
+				&t("About Blind Designer"),
 			)
 			.build()
 			.show_modal();
@@ -6810,11 +7650,11 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 			let on = !shared.borrow().focus_mode;
 			set_focus_mode(win, shared, on);
 			frame.set_status_text(
-				if on {
-					"Focus mode on: the Focus window shows the current focus, the statistics, and what is built and not built yet."
+				&(if on {
+					t("Focus mode on: the Focus window shows the current focus, the statistics, and what is built and not built yet.")
 				} else {
-					"Focus mode off: the Focus window is closed."
-				},
+					t("Focus mode off: the Focus window is closed.")
+				}),
 				0,
 			);
 		}
@@ -6825,11 +7665,11 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 				bar.check_item(ID_ANNOUNCE_SLIDERS, state.announce_sliders);
 			}
 			frame.set_status_text(
-				if state.announce_sliders {
-					"Slider announcements on: moving a slider says what changed and that everything else stayed the same."
+				&(if state.announce_sliders {
+					t("Slider announcements on: moving a slider says what changed and that everything else stayed the same.")
 				} else {
-					"Slider announcements off: moving a slider says only its name and value."
-				},
+					t("Slider announcements off: moving a slider says only its name and value.")
+				}),
 				0,
 			);
 		}
@@ -6839,15 +7679,14 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 		ID_OPEN_DESIGN => {
 			if let Some(path) = file_dialog(
 				&frame,
-				"Open design",
-				"Blind Designer design (*.bdd)|*.bdd",
+				&t("Open design"),
+				&format!("{}|*.bdd", t("Blind Designer design (*.bdd)")),
 				false,
 			) {
 				// Opening replaces the current design: unsaved
 				// work gets its say first.
 				if !confirm_discard(win, shared, "open a different design") {
-					frame.set_status_text(
-						"Open cancelled: the current project is unchanged.",
+					frame.set_status_text(&t("Open cancelled: the current project is unchanged."),
 						0,
 					);
 					return;
@@ -6882,19 +7721,17 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 							let state = shared.borrow();
 							refresh_lists(win, &state);
 							frame.set_status_text(
-								&format!(
-									"Opened design from {path}: {layers} layers, {shapes} shapes, {colors} palette colors. It replaces the previous design."
-								),
+								&t("Opened design from %s: %s layers, %s shapes, %s palette colors. It replaces the previous design.").replacen("%s", &(path).to_string(), 1).replacen("%s", &(layers).to_string(), 1).replacen("%s", &(shapes).to_string(), 1).replacen("%s", &(colors).to_string(), 1),
 								0,
 							);
 						}
 						Err(e) => frame.set_status_text(
-							&format!("That file could not be opened as a design: {e}"),
+							&t("That file could not be opened as a design: %s").replacen("%s", &(e).to_string(), 1),
 							0,
 						),
 					},
 					Err(e) => {
-						frame.set_status_text(&format!("Could not read that file: {e}"), 0)
+						frame.set_status_text(&t("Could not read that file: %s").replacen("%s", &(e).to_string(), 1), 0)
 					}
 				}
 			}
@@ -6925,43 +7762,39 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 					let state = shared.borrow();
 					select_color(win, &state, c);
 					frame.set_status_text(
-						&format!(
-							"Color values now shown as {}, for example {}.",
-							format.name(),
-							c.format(format)
-						),
+						&t("Color values now shown as %s, for example %s.").replacen("%s", &(format.name()).to_string(), 1).replacen("%s", &(c.format(format)).to_string(), 1),
 						0,
 					);
 				}
 				None => frame.set_status_text(
-					&format!("Color values now shown as {}.", format.name()),
+					&t("Color values now shown as %s.").replacen("%s", &(format.name()).to_string(), 1),
 					0,
 				),
 			}
 		}
 		ID_EXPORT_PNG => {
-			if let Some(path) = file_dialog(&frame, "Export design as PNG", "PNG image (*.png)|*.png", true) {
+			if let Some(path) = file_dialog(&frame, &t("Export design as PNG"), &format!("{}|*.png", t("PNG image (*.png)")), true) {
 				let state = shared.borrow();
 				match state.drawing.flatten().render().save(&path) {
-					Ok(()) => frame.set_status_text(&format!("Exported PNG to {path}"), 0),
-					Err(e) => frame.set_status_text(&format!("Export failed: {e}"), 0),
+					Ok(()) => frame.set_status_text(&t("Exported PNG to %s").replacen("%s", &(path).to_string(), 1), 0),
+					Err(e) => frame.set_status_text(&t("Export failed: %s").replacen("%s", &(e).to_string(), 1), 0),
 				}
 			}
 		}
 		ID_EXPORT_CAPTIONS => {
 			if let Some(path) =
-				file_dialog(&frame, "Export caption sheet", "Text file (*.txt)|*.txt", true)
+				file_dialog(&frame, &t("Export caption sheet"), &format!("{}|*.txt", t("Text file (*.txt)")), true)
 			{
 				let state = shared.borrow();
 				match std::fs::write(&path, state.drawing.flatten().caption_sheet()) {
-					Ok(()) => frame.set_status_text(&format!("Exported captions to {path}"), 0),
-					Err(e) => frame.set_status_text(&format!("Export failed: {e}"), 0),
+					Ok(()) => frame.set_status_text(&t("Exported captions to %s").replacen("%s", &(path).to_string(), 1), 0),
+					Err(e) => frame.set_status_text(&t("Export failed: %s").replacen("%s", &(e).to_string(), 1), 0),
 				}
 			}
 		}
 		ID_EXPORT_CSS => {
 			if let Some(path) =
-				file_dialog(&frame, "Export palette as CSS", "CSS file (*.css)|*.css", true)
+				file_dialog(&frame, &t("Export palette as CSS"), &format!("{}|*.css", t("CSS file (*.css)")), true)
 			{
 				let state = shared.borrow();
 				let colors: Vec<Srgb> = if state.palette.is_empty() {
@@ -6970,44 +7803,44 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 					state.palette.iter().map(|pc| pc.color).collect()
 				};
 				match std::fs::write(&path, css_for_colors(&colors, "color")) {
-					Ok(()) => frame.set_status_text(&format!("Exported CSS to {path}"), 0),
-					Err(e) => frame.set_status_text(&format!("Export failed: {e}"), 0),
+					Ok(()) => frame.set_status_text(&t("Exported CSS to %s").replacen("%s", &(path).to_string(), 1), 0),
+					Err(e) => frame.set_status_text(&t("Export failed: %s").replacen("%s", &(e).to_string(), 1), 0),
 				}
 			}
 		}
 		ID_EXPORT_SUMMARY => {
 			if let Some(path) = file_dialog(
 				&frame,
-				"Export recreation file (step-by-step summary)",
-				"Text file (*.txt)|*.txt",
+				&t("Export recreation file (step-by-step summary)"),
+				&format!("{}|*.txt", t("Text file (*.txt)")),
 				true,
 			) {
 				let state = shared.borrow();
 				match std::fs::write(&path, state.drawing.summary()) {
-					Ok(()) => frame.set_status_text(&format!("Exported recreation file to {path}"), 0),
-					Err(e) => frame.set_status_text(&format!("Export failed: {e}"), 0),
+					Ok(()) => frame.set_status_text(&t("Exported recreation file to %s").replacen("%s", &(path).to_string(), 1), 0),
+					Err(e) => frame.set_status_text(&t("Export failed: %s").replacen("%s", &(e).to_string(), 1), 0),
 				}
 			}
 		}
 		ID_EXPORT_HTML => {
 			if let Some(path) = file_dialog(
 				&frame,
-				"Export design as an HTML page",
-				"HTML page (*.html)|*.html",
+				&t("Export design as an HTML page"),
+				&format!("{}|*.html", t("HTML page (*.html)")),
 				true,
 			) {
 				let state = shared.borrow();
-				match std::fs::write(&path, state.drawing.flatten().to_html("Blind Designer design")) {
-					Ok(()) => frame.set_status_text(&format!("Exported HTML page to {path}"), 0),
-					Err(e) => frame.set_status_text(&format!("Export failed: {e}"), 0),
+				match std::fs::write(&path, state.drawing.flatten().to_html(&t("Blind Designer design"))) {
+					Ok(()) => frame.set_status_text(&t("Exported HTML page to %s").replacen("%s", &(path).to_string(), 1), 0),
+					Err(e) => frame.set_status_text(&t("Export failed: %s").replacen("%s", &(e).to_string(), 1), 0),
 				}
 			}
 		}
 		ID_EXPORT_GIF => {
 			if let Some(path) = file_dialog(
 				&frame,
-				"Export animation as a GIF",
-				"GIF image (*.gif)|*.gif",
+				&t("Export animation as a GIF"),
+				&format!("{}|*.gif", t("GIF image (*.gif)")),
 				true,
 			) {
 				let state = shared.borrow();
@@ -7016,65 +7849,65 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 				match state.drawing.to_gif() {
 					Ok(bytes) => match std::fs::write(&path, &bytes) {
 						Ok(()) => frame.set_status_text(
-							&format!("Exported animated GIF ({count} frames) to {path}"),
+							&t("Exported animated GIF (%s frames) to %s").replacen("%s", &(count).to_string(), 1).replacen("%s", &(path).to_string(), 1),
 							0,
 						),
 						Err(e) => {
-							frame.set_status_text(&format!("Export failed: {e}"), 0)
+							frame.set_status_text(&t("Export failed: %s").replacen("%s", &(e).to_string(), 1), 0)
 						}
 					},
-					Err(e) => frame.set_status_text(&format!("Export failed: {e}"), 0),
+					Err(e) => frame.set_status_text(&t("Export failed: %s").replacen("%s", &(e).to_string(), 1), 0),
 				}
 			}
 		}
 		ID_EXPORT_ANIM_HTML => {
 			if let Some(path) = file_dialog(
 				&frame,
-				"Export animation as an HTML page",
-				"HTML page (*.html)|*.html",
+				&t("Export animation as an HTML page"),
+				&format!("{}|*.html", t("HTML page (*.html)")),
 				true,
 			) {
 				let state = shared.borrow();
 				match std::fs::write(
 					&path,
-					state.drawing.to_html_animated("Blind Designer animation"),
+					state.drawing.to_html_animated(&t("Blind Designer animation")),
 				) {
 					Ok(()) => {
-						frame.set_status_text(&format!("Exported animated HTML page to {path}"), 0)
+						frame.set_status_text(&t("Exported animated HTML page to %s").replacen("%s", &(path).to_string(), 1), 0)
 					}
-					Err(e) => frame.set_status_text(&format!("Export failed: {e}"), 0),
+					Err(e) => frame.set_status_text(&t("Export failed: %s").replacen("%s", &(e).to_string(), 1), 0),
 				}
 			}
 		}
 		ID_EXPORT_ANIM_DESC => {
 			if let Some(path) = file_dialog(
 				&frame,
-				"Export animation description (frame by frame)",
-				"Text file (*.txt)|*.txt",
+				&t("Export animation description (frame by frame)"),
+				&format!("{}|*.txt", t("Text file (*.txt)")),
 				true,
 			) {
 				let state = shared.borrow();
 				match std::fs::write(&path, state.drawing.animation_description()) {
 					Ok(()) => frame.set_status_text(
-						&format!("Exported animation description to {path}"),
+						&t("Exported animation description to %s").replacen("%s", &(path).to_string(), 1),
 						0,
 					),
-					Err(e) => frame.set_status_text(&format!("Export failed: {e}"), 0),
+					Err(e) => frame.set_status_text(&t("Export failed: %s").replacen("%s", &(e).to_string(), 1), 0),
 				}
 			}
 		}
 		ID_IMPORT_CSS => {
 			if let Some(path) = file_dialog(
 				&frame,
-				"Import colors from a CSS file",
-				"CSS file (*.css)|*.css",
+				&t("Import colors from a CSS file"),
+				&format!("{}|*.css", t("CSS file (*.css)")),
 				false,
 			) {
 				match std::fs::read_to_string(&path) {
 					Ok(text) => {
 						let found = parse_css_colors(&text);
 						if found.is_empty() {
-							frame.set_status_text("No colors found in that CSS file.", 0);
+							frame.set_status_text(&t("No colors found in that CSS file."), 0);
 						} else {
 							let mut state = shared.borrow_mut();
 							for c in &found {
@@ -7088,17 +7921,13 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 								.map(|c| format!("{} ({})", c.color.format(format), c.source))
 								.collect();
 							frame.set_status_text(
-								&format!(
-									"Imported {} colors from CSS: {}",
-									found.len(),
-									notes.join("; ")
-								),
+								&t("Imported %s colors from CSS: %s").replacen("%s", &(found.len()).to_string(), 1).replacen("%s", &(notes.join("; ")).to_string(), 1),
 								0,
 							);
 						}
 					}
 					Err(e) => {
-						frame.set_status_text(&format!("Could not read that CSS file: {e}"), 0)
+						frame.set_status_text(&t("Could not read that CSS file: %s").replacen("%s", &(e).to_string(), 1), 0)
 					}
 				}
 			}
@@ -7106,8 +7935,8 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 		ID_IMPORT_HTML => {
 			if let Some(path) = file_dialog(
 				&frame,
-				"Import an HTML page as a design",
-				"HTML file (*.html;*.htm)|*.html;*.htm",
+				&t("Import an HTML page as a design"),
+				&format!("{}|*.html;*.htm", t("HTML file (*.html;*.htm)")),
 				false,
 			) {
 				match std::fs::read_to_string(&path) {
@@ -7143,14 +7972,12 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 						let colors = state.palette.len();
 						refresh_lists(win, &state);
 						frame.set_status_text(
-							&format!(
-								"Imported {path}: {shapes} shapes on the canvas, {colors} colors in the palette. The imported design replaces the previous one."
-							),
+							&t("Imported %s: %s shapes on the canvas, %s colors in the palette. The imported design replaces the previous one.").replacen("%s", &(path).to_string(), 1).replacen("%s", &(shapes).to_string(), 1).replacen("%s", &(colors).to_string(), 1),
 							0,
 						);
 					}
 					Err(e) => {
-						frame.set_status_text(&format!("Could not read that HTML file: {e}"), 0)
+						frame.set_status_text(&t("Could not read that HTML file: %s").replacen("%s", &(e).to_string(), 1), 0)
 					}
 				}
 			}
@@ -7160,8 +7987,7 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 			// the main window (the palette context menu's way in):
 			// take the user there and say so.
 			win.hex_field.set_focus();
-			frame.set_status_text(
-				"Type a hex value in the Hex value field, then press Apply Hex to add the color.",
+			frame.set_status_text(&t("Type a hex value in the Hex value field, then press Apply Hex to add the color."),
 				0,
 			);
 		}
@@ -7184,7 +8010,7 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 				}
 				text
 			};
-			report_dialog(win, "Project statistics", "What is in this project", &report);
+			report_dialog(win, &t("Project statistics"), &t("What is in this project"), &report);
 		}
 		ID_SCHEME_SETTINGS => scheme_settings_dialog(win, shared),
 		ID_COLOR_TOOLS => color_tools_dialog(win, shared),
@@ -7195,8 +8021,8 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 			};
 			report_dialog(
 				win,
-				"Text Readability",
-				"How readable each text element is",
+				&t("Text Readability"),
+				&t("How readable each text element is"),
 				&report,
 			);
 		}
@@ -7204,7 +8030,7 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 		| ID_TINTS | ID_TONES => {
 			let mut state = shared.borrow_mut();
 			let Some(base) = selected_color(win, &state) else {
-				frame.set_status_text("Select a palette color first.", 0);
+				frame.set_status_text(&t("Select a palette color first."), 0);
 				return;
 			};
 			let o = base.to_oklch();
@@ -7223,7 +8049,7 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 						ID_SPLIT => (vec![150.0, -150.0], "split complementary".to_string()),
 						ID_ANALOGOUS => (
 							vec![-spread, spread],
-							format!("analogous ({spread:.0} degrees)"),
+							t("analogous (%s degrees)").replacen("%s", &format!("{:.0}", spread), 1),
 						),
 						ID_TRIADIC => (vec![120.0, 240.0], "triadic".to_string()),
 						_ => (vec![60.0, 180.0, 240.0], "tetradic".to_string()),
@@ -7234,7 +8060,7 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 						offsets.iter().map(|d| o.rotate(*d).to_srgb()).collect()
 					};
 					let label = if state.wheel_ryb {
-						format!("{label} (paint wheel)")
+						t("%s (paint wheel)").replacen("%s", &(label).to_string(), 1)
 					} else {
 						label
 					};
@@ -7242,7 +8068,7 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 				}
 			};
 			let provenance =
-				Provenance::Generated { scheme: format!("{what} of {}", base.to_hex()) };
+				Provenance::Generated { scheme: t("%s of %s").replacen("%s", &(what).to_string(), 1).replacen("%s", &(base.to_hex()).to_string(), 1) };
 			add_colors(win, &mut state, &colors, &what, &provenance);
 		}
 		ID_REMOVE_COLOR => {
@@ -7252,10 +8078,10 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 					let gone = state.palette.remove(i).color;
 					let label = describe_in(gone, state.color_format);
 					refresh_lists(win, &state);
-					frame.set_status_text(&format!("Removed {label}"), 0);
+					frame.set_status_text(&t("Removed %s").replacen("%s", &(label).to_string(), 1), 0);
 				}
 			} else {
-				frame.set_status_text("Select a palette color first.", 0);
+				frame.set_status_text(&t("Select a palette color first."), 0);
 			}
 		}
 		ID_SET_BACKGROUND => {
@@ -7266,7 +8092,7 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 				announce(win, &state);
 				select_color(win, &state, c);
 			} else {
-				frame.set_status_text("Select a palette color first.", 0);
+				frame.set_status_text(&t("Select a palette color first."), 0);
 			}
 		}
 		ID_CANVAS_SIZE => {
@@ -7276,10 +8102,10 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 			};
 			if let Some(v) = numbers_dialog(
 				&frame,
-				"Canvas size",
+				&t("Canvas size"),
 				&[
-					("Width in pixels", 16, 8000, w as i32),
-					("Height in pixels", 16, 8000, h as i32),
+					(t("Width in pixels"), 16, 8000, w as i32),
+					(t("Height in pixels"), 16, 8000, h as i32),
 				],
 			) {
 				let mut state = shared.borrow_mut();
@@ -7300,12 +8126,12 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 					.map(|c| (c, state.color_format, (state.drawing.width, state.drawing.height)))
 			};
 			let Some((fill, format, canvas)) = setup else {
-				frame.set_status_text("Select a palette color to fill the shape first.", 0);
+				frame.set_status_text(&t("Select a palette color to fill the shape first."), 0);
 				return;
 			};
 			if let Some((x, y, w, h, color)) = place_dialog(
 				win,
-				&format!("Add {} filled with {}", kind.name(), describe_in(fill, format)),
+				&t("Add %s filled with %s").replacen("%s", &(kind.name()).to_string(), 1).replacen("%s", &(describe_in(fill, format)).to_string(), 1),
 				(0, 0),
 				(200, 120),
 				fill,
@@ -7323,21 +8149,21 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 			}
 		}
 		ID_ADD_TEXT => {
-			let Some(phrase) = text_dialog(&frame, "Add text", "Text to place in the design", "")
+			let Some(phrase) = text_dialog(&frame, &t("Add text"), &t("Text to place in the design"), "")
 			else {
 				return;
 			};
 			if phrase.trim().is_empty() {
-				frame.set_status_text("The text was empty; nothing was added.", 0);
+				frame.set_status_text(&t("The text was empty; nothing was added."), 0);
 				return;
 			}
-			let Some(font) = text_dialog(&frame, "Add text", "Font name", "Arial") else {
+			let Some(font) = text_dialog(&frame, &t("Add text"), &t("Font name"), "Arial") else {
 				return;
 			};
 			let Some(v) = numbers_dialog(
 				&frame,
-				"Add text",
-				&[("Font size in points", 6, 200, 24)],
+				&t("Add text"),
+				&[(t("Font size in points"), 6, 200, 24)],
 			) else {
 				return;
 			};
@@ -7356,7 +8182,7 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 			);
 			if let Some((x, y, w, h, color)) = place_dialog(
 				win,
-				&format!("Add text \"{}\"", phrase.trim()),
+				&t("Add text \"%s\"").replacen("%s", phrase.trim(), 1),
 				(0, 0),
 				est,
 				setup.0,
@@ -7376,8 +8202,8 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 		ID_ADD_IMAGE => {
 			let Some(path) = file_dialog(
 				&frame,
-				"Choose an image to place in the design",
-				"Image files (*.png;*.jpg;*.jpeg;*.webp)|*.png;*.jpg;*.jpeg;*.webp",
+				&t("Choose an image to place in the design"),
+				&format!("{}|*.png;*.jpg;*.jpeg;*.webp", t("Image files (*.png;*.jpg;*.jpeg;*.webp)")),
 				false,
 			) else {
 				return;
@@ -7415,26 +8241,25 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 			let brush = shared.borrow().brush.clone();
 			let Some(text) = text_dialog(
 				&frame,
-				"Add stroke",
-				"Points as x,y pairs, separated by spaces (for example: 10,20 100,20 100,80)",
+				&t("Add stroke"),
+				&t("Points as x,y pairs, separated by spaces (for example: 10,20 100,20 100,80)"),
 				"10,10 200,10 200,100",
 			) else {
 				return;
 			};
 			let Some(points) = parse_points(&text).filter(|p| p.len() >= 2) else {
-				frame.set_status_text(
-					"Points need to be x,y pairs, at least two of them, whole numbers.",
+				frame.set_status_text(&t("Points need to be x,y pairs, at least two of them, whole numbers."),
 					0,
 				);
 				return;
 			};
 			let Some(v) = fields_dialog(
 				&frame,
-				"Stroke brush",
+				&t("Stroke brush"),
 				&[
-					("Brush width in pixels", &brush.width.to_string()),
-					("Color: a name like sky blue, or a hex code", &brush.color.to_hex()),
-					("Pattern: solid, dashed or dotted", &brush.pattern),
+					(t("Brush width in pixels"), &brush.width.to_string()),
+					(t("Color: a name like sky blue, or a hex code"), &brush.color.to_hex()),
+					(t("Pattern: solid, dashed or dotted"), &brush.pattern),
 				],
 			) else {
 				return;
@@ -7451,24 +8276,20 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 				.map(|w| w as u32)
 			else {
 				frame.set_status_text(
-					&format!(
-						"The brush width needs to be a whole number from {} to {}.",
-						width_def.min, width_def.max
-					),
+					&t("The brush width needs to be a whole number from %s to %s.").replacen("%s", &(width_def.min).to_string(), 1).replacen("%s", &(width_def.max).to_string(), 1),
 					0,
 				);
 				return;
 			};
 			let Some(color) = parse_color(&v[1]) else {
-				frame.set_status_text(
-					"I could not understand that color. Use a name like sky blue, or a hex code like 87CEEB.",
+				frame.set_status_text(&t("I could not understand that color. Use a name like sky blue, or a hex code like 87CEEB."),
 					0,
 				);
 				return;
 			};
 			let pattern = v[2].trim().to_lowercase();
 			if !PATTERNS.contains(&pattern.as_str()) {
-				frame.set_status_text("The pattern needs to be solid, dashed or dotted.", 0);
+				frame.set_status_text(&t("The pattern needs to be solid, dashed or dotted."), 0);
 				return;
 			}
 			let mut state = shared.borrow_mut();
@@ -7486,7 +8307,7 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 		}
 		ID_MOVE_SHAPE | ID_ROTATE_SHAPE => {
 			let Some(flat) = win.elements_list.borrow().selected() else {
-				frame.set_status_text("Select a shape first.", 0);
+				frame.set_status_text(&t("Select a shape first."), 0);
 				return;
 			};
 			let at = {
@@ -7506,7 +8327,7 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 				};
 				focus_shape_part(win, part);
 				frame.set_status_text(
-					&format!("Slide mode: adjust {} on the Sliders tab.", part.name()),
+					&t("Slide mode: adjust %s on the Sliders tab.").replacen("%s", &(part.name()).to_string(), 1),
 					0,
 				);
 				return;
@@ -7519,9 +8340,8 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 				};
 				if let Some(v) = fields_dialog(
 					&frame,
-					"Move shape",
-					&[(
-						"New position: numbers like 120, 80, or words like top left, center, a bit right",
+					&t("Move shape"),
+					&[(t("New position: numbers like 120, 80, or words like top left, center, a bit right"),
 						&format!("{}, {}", cur.0, cur.1),
 					)],
 				) {
@@ -7532,8 +8352,7 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 							refresh_lists(win, &state);
 							announce(win, &state);
 						}
-						None => frame.set_status_text(
-							"I could not understand that position. Use numbers like 120, 80, or words like top left, center, a bit right.",
+						None => frame.set_status_text(&t("I could not understand that position. Use numbers like 120, 80, or words like top left, center, a bit right."),
 							0,
 						),
 					}
@@ -7545,8 +8364,8 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 				};
 				if let Some(v) = numbers_dialog(
 					&frame,
-					"Rotate shape",
-					&[("Angle in degrees, clockwise", -360, 360, now as i32)],
+					&t("Rotate shape"),
+					&[(t("Angle in degrees, clockwise"), -360, 360, now as i32)],
 				) {
 					let mut state = shared.borrow_mut();
 					state.drawing.rotate_shape(li, si, v[0] as f64);
@@ -7557,7 +8376,7 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 		}
 		ID_RESIZE_SHAPE => {
 			let Some(flat) = win.elements_list.borrow().selected() else {
-				frame.set_status_text("Select a shape first.", 0);
+				frame.set_status_text(&t("Select a shape first."), 0);
 				return;
 			};
 			let at = {
@@ -7571,7 +8390,7 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 				(s.w, s.h, s.kind == ShapeKind::Stroke)
 			};
 			if stroke {
-				frame.set_status_text("A stroke's size is its points; move it or add a new one.", 0);
+				frame.set_status_text(&t("A stroke's size is its points; move it or add a new one."), 0);
 				return;
 			}
 			// Slide mode: the Width slider carries this, the
@@ -7579,15 +8398,14 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 			let slide = shared.borrow().interaction_mode == InteractionMode::Slide;
 			if slide {
 				focus_shape_part(win, ShapePart::Width);
-				frame.set_status_text("Slide mode: adjust Width on the Sliders tab.", 0);
+				frame.set_status_text(&t("Slide mode: adjust Width on the Sliders tab."), 0);
 				return;
 			}
 			if let Some(v) = fields_dialog(
 				&frame,
-				"Resize shape",
-				&[(
-					"New size: numbers like 200 by 100, or words like a bit wider, a bit taller",
-					&format!("{w} by {h}"),
+				&t("Resize shape"),
+				&[(t("New size: numbers like 200 by 100, or words like a bit wider, a bit taller"),
+					&t("%s by %s").replacen("%s", &(w).to_string(), 1).replacen("%s", &(h).to_string(), 1),
 				)],
 			) {
 				match parse_size(&v[0], Some((w, h))) {
@@ -7597,8 +8415,7 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 						refresh_lists(win, &state);
 						announce(win, &state);
 					}
-					None => frame.set_status_text(
-						"I could not understand that size. Use numbers like 200 by 100, or words like a bit wider.",
+					None => frame.set_status_text(&t("I could not understand that size. Use numbers like 200 by 100, or words like a bit wider."),
 						0,
 					),
 				}
@@ -7608,7 +8425,7 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 			let mut state = shared.borrow_mut();
 			let (Some(flat), Some(c)) = (win.elements_list.borrow().selected(), selected_color(win, &state))
 			else {
-				frame.set_status_text("Select a shape and a palette color first.", 0);
+				frame.set_status_text(&t("Select a shape and a palette color first."), 0);
 				return;
 			};
 			if let Some((li, si)) = locate(&state, flat) {
@@ -7688,7 +8505,7 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 			if let Some(i) = win.layers_list.selected() {
 				let state = shared.borrow();
 				if let Some(text) = inspect_layer(&state.drawing, i) {
-					report_dialog(win, "Inspector: layer", "Layer inspector", &text);
+					report_dialog(win, &t("Inspector: layer"), &t("Layer inspector"), &text);
 				}
 			}
 		}
@@ -7698,7 +8515,7 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 				if let Some(text) =
 					inspect_color(&state.drawing, &state.palette, i)
 				{
-					report_dialog(win, "Inspector: color", "Color inspector", &text);
+					report_dialog(win, &t("Inspector: color"), &t("Color inspector"), &text);
 				}
 			}
 		}
@@ -7713,11 +8530,11 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 				let state = shared.borrow();
 				refresh_lists(win, &state);
 				frame.set_status_text(
-					if now {
-						"Element locked: bulk changes will skip it; direct edits still work."
+					&(if now {
+						t("Element locked: bulk changes will skip it; direct edits still work.")
 					} else {
-						"Element unlocked: bulk changes reach it again."
-					},
+						t("Element unlocked: bulk changes reach it again.")
+					}),
 					0,
 				);
 			}
@@ -7734,11 +8551,11 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 			}
 			rebuild_list_pages(win, shared);
 			frame.set_status_text(
-				if on {
-					"Palette and Elements now sit side by side on the Lists page."
+				&(if on {
+					t("Palette and Elements now sit side by side on the Lists page.")
 				} else {
-					"Palette and Elements are back on their own tabs."
-				},
+					t("Palette and Elements are back on their own tabs.")
+				}),
 				0,
 			);
 		}
@@ -7746,8 +8563,8 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 		ID_SAVE_SCENE => {
 			if let Some(path) = file_dialog(
 				&frame,
-				"Save scene (a design file other designs can insert)",
-				"Blind Designer scene (*.bdd)|*.bdd",
+				&t("Save scene (a design file other designs can insert)"),
+				&format!("{}|*.bdd", t("Blind Designer scene (*.bdd)")),
 				true,
 			) {
 				let state = shared.borrow();
@@ -7765,16 +8582,16 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 					interaction_mode: InteractionMode::Type,
 				};
 				match std::fs::write(&path, scene.to_text()) {
-					Ok(()) => frame.set_status_text(&format!("Saved scene to {path}"), 0),
-					Err(e) => frame.set_status_text(&format!("Save failed: {e}"), 0),
+					Ok(()) => frame.set_status_text(&t("Saved scene to %s").replacen("%s", &(path).to_string(), 1), 0),
+					Err(e) => frame.set_status_text(&t("Save failed: %s").replacen("%s", &(e).to_string(), 1), 0),
 				}
 			}
 		}
 		ID_INSERT_SCENE => {
 			if let Some(path) = file_dialog(
 				&frame,
-				"Insert a scene file",
-				"Blind Designer scene (*.bdd)|*.bdd",
+				&t("Insert a scene file"),
+				&format!("{}|*.bdd", t("Blind Designer scene (*.bdd)")),
 				false,
 			) {
 				match std::fs::read_to_string(&path) {
@@ -7783,7 +8600,7 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 							let name = Path::new(&path)
 								.file_stem()
 								.map(|n| n.to_string_lossy().into_owned())
-								.unwrap_or_else(|| "Scene".to_string());
+								.unwrap_or_else(|| t("Scene"));
 							let mut state = shared.borrow_mut();
 							let layer = state.layer;
 							let count =
@@ -7804,25 +8621,22 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 								refresh_lists(win, &state);
 								announce(win, &state);
 								frame.set_status_text(
-									&format!(
-										"Inserted scene \"{name}\": {count} elements onto layer \"{layer_name}\", captioned as one group."
-									),
+									&t("Inserted scene \"%s\": %s elements onto layer \"%s\", captioned as one group.").replacen("%s", &(name).to_string(), 1).replacen("%s", &(count).to_string(), 1).replacen("%s", &(layer_name).to_string(), 1),
 									0,
 								);
 							} else {
-								frame.set_status_text(
-									"That scene has no painted elements to insert.",
+								frame.set_status_text(&t("That scene has no painted elements to insert."),
 									0,
 								);
 							}
 						}
 						Err(e) => frame.set_status_text(
-							&format!("That file could not be opened as a scene: {e}"),
+							&t("That file could not be opened as a scene: %s").replacen("%s", &(e).to_string(), 1),
 							0,
 						),
 					},
 					Err(e) => {
-						frame.set_status_text(&format!("Could not read that file: {e}"), 0)
+						frame.set_status_text(&t("Could not read that file: %s").replacen("%s", &(e).to_string(), 1), 0)
 					}
 				}
 			}
@@ -7830,20 +8644,19 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 		ID_DESCRIBE_AREA => {
 			if let Some(area) = text_dialog(
 				&frame,
-				"Describe area",
-				"Area: a name like top left, center, bottom right — or a box as across, down, width, height",
+				&t("Describe area"),
+				&t("Area: a name like top left, center, bottom right — or a box as across, down, width, height"),
 				"center",
 			) {
 				let state = shared.borrow();
 				match state.drawing.describe_area_text(&area) {
 					Some(text) => report_dialog(
 						win,
-						"Describe area",
-						&format!("Elements in the {area} area"),
+						&t("Describe area"),
+						&t("Elements in the %s area").replacen("%s", &(area).to_string(), 1),
 						&text,
 					),
-					None => frame.set_status_text(
-						"I could not understand that area. Name a part of the canvas, like top left or center, or give a box as four numbers.",
+					None => frame.set_status_text(&t("I could not understand that area. Name a part of the canvas, like top left or center, or give a box as four numbers."),
 						0,
 					),
 				}
@@ -7852,62 +8665,62 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 		ID_EXPORT_TACTILE_SVG => {
 			if let Some(path) = file_dialog(
 				&frame,
-				"Export raised-line SVG (one line style per layer)",
-				"SVG drawing (*.svg)|*.svg",
+				&t("Export raised-line SVG (one line style per layer)"),
+				&format!("{}|*.svg", t("SVG drawing (*.svg)")),
 				true,
 			) {
 				let state = shared.borrow();
 				match std::fs::write(&path, state.drawing.to_tactile_svg()) {
 					Ok(()) => frame
-						.set_status_text(&format!("Exported raised-line SVG to {path}"), 0),
-					Err(e) => frame.set_status_text(&format!("Export failed: {e}"), 0),
+						.set_status_text(&t("Exported raised-line SVG to %s").replacen("%s", &(path).to_string(), 1), 0),
+					Err(e) => frame.set_status_text(&t("Export failed: %s").replacen("%s", &(e).to_string(), 1), 0),
 				}
 			}
 		}
 		ID_EXPORT_TACTILE_SHEET => {
 			if let Some(path) = file_dialog(
 				&frame,
-				"Export tactile sheet (element by element, in reading order)",
-				"Text file (*.txt)|*.txt",
+				&t("Export tactile sheet (element by element, in reading order)"),
+				&format!("{}|*.txt", t("Text file (*.txt)")),
 				true,
 			) {
 				let state = shared.borrow();
 				match std::fs::write(&path, state.drawing.tactile_sheet()) {
 					Ok(()) => frame
-						.set_status_text(&format!("Exported tactile sheet to {path}"), 0),
-					Err(e) => frame.set_status_text(&format!("Export failed: {e}"), 0),
+						.set_status_text(&t("Exported tactile sheet to %s").replacen("%s", &(path).to_string(), 1), 0),
+					Err(e) => frame.set_status_text(&t("Export failed: %s").replacen("%s", &(e).to_string(), 1), 0),
 				}
 			}
 		}
 		ID_EXPORT_BRAILLE => {
 			if let Some(path) = file_dialog(
 				&frame,
-				"Export braille labels (Grade 1)",
-				"Braille labels (*.brf)|*.brf",
+				&t("Export braille labels (Grade 1)"),
+				&format!("{}|*.brf", t("Braille labels (*.brf)")),
 				true,
 			) {
 				let state = shared.borrow();
 				match std::fs::write(&path, state.drawing.braille_labels()) {
 					Ok(()) => frame
-						.set_status_text(&format!("Exported braille labels to {path}"), 0),
-					Err(e) => frame.set_status_text(&format!("Export failed: {e}"), 0),
+						.set_status_text(&t("Exported braille labels to %s").replacen("%s", &(path).to_string(), 1), 0),
+					Err(e) => frame.set_status_text(&t("Export failed: %s").replacen("%s", &(e).to_string(), 1), 0),
 				}
 			}
 		}
 		ID_EXPORT_PRACTICE => {
 			if let Some(path) = file_dialog(
 				&frame,
-				"Save practice sheet",
-				"Text files (*.txt)|*.txt",
+				&t("Save practice sheet"),
+				&format!("{}|*.txt", t("Text files (*.txt)")),
 				true,
 			) {
 				let state = shared.borrow();
 				match std::fs::write(&path, state.drawing.practice_sheet()) {
 					Ok(()) => {
-						frame.set_status_text(&format!("Saved the practice sheet to {path}"), 0)
+						frame.set_status_text(&t("Saved the practice sheet to %s").replacen("%s", &(path).to_string(), 1), 0)
 					}
 					Err(e) => {
-						frame.set_status_text(&format!("Could not save the practice sheet: {e}"), 0)
+						frame.set_status_text(&t("Could not save the practice sheet: %s").replacen("%s", &(e).to_string(), 1), 0)
 					}
 				}
 			}
@@ -7915,19 +8728,19 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 		ID_EXPORT_PDF => {
 			if let Some(path) = file_dialog(
 				&frame,
-				"Save PDF",
-				"PDF documents (*.pdf)|*.pdf",
+				&t("Save PDF"),
+				&format!("{}|*.pdf", t("PDF documents (*.pdf)")),
 				true,
 			) {
 				let state = shared.borrow();
 				let pdf = state.drawing.to_pdf();
 				match std::fs::write(&path, &pdf) {
 					Ok(()) => frame.set_status_text(
-						&format!("Saved the PDF to {path}: page 1 is the picture, page 2 is the design's words as text."),
+						&t("Saved the PDF to %s: page 1 is the picture, page 2 is the design's words as text.").replacen("%s", &(path).to_string(), 1),
 						0,
 					),
 					Err(e) => {
-						frame.set_status_text(&format!("Could not save the PDF: {e}"), 0)
+						frame.set_status_text(&t("Could not save the PDF: %s").replacen("%s", &(e).to_string(), 1), 0)
 					}
 				}
 			}
@@ -7935,18 +8748,18 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 		ID_EXPORT_PRESENTATION => {
 			if let Some(path) = file_dialog(
 				&frame,
-				"Save presentation",
-				"Web pages (*.html)|*.html",
+				&t("Save presentation"),
+				&format!("{}|*.html", t("Web pages (*.html)")),
 				true,
 			) {
 				let state = shared.borrow();
-				let html = state.drawing.to_presentation_html("Blind Designer presentation");
+				let html = state.drawing.to_presentation_html(&t("Blind Designer presentation"));
 				match std::fs::write(&path, html) {
 					Ok(()) => {
-						frame.set_status_text(&format!("Saved the presentation to {path}"), 0)
+						frame.set_status_text(&t("Saved the presentation to %s").replacen("%s", &(path).to_string(), 1), 0)
 					}
 					Err(e) => {
-						frame.set_status_text(&format!("Could not save the presentation: {e}"), 0)
+						frame.set_status_text(&t("Could not save the presentation: %s").replacen("%s", &(e).to_string(), 1), 0)
 					}
 				}
 			}
@@ -7954,8 +8767,8 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 		ID_EXPORT_DOCUMENT => {
 			if let Some(path) = file_dialog(
 				&frame,
-				"Save document",
-				"Markdown documents (*.md)|*.md",
+				&t("Save document"),
+				&format!("{}|*.md", t("Markdown documents (*.md)")),
 				true,
 			) {
 				let state = shared.borrow();
@@ -7968,22 +8781,19 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 					.unwrap_or_else(|| "design.png".to_string());
 				let md = state
 					.drawing
-					.to_document_markdown("Blind Designer document", &png_name);
+					.to_document_markdown(&t("Blind Designer document"), &png_name);
 				let md_result = std::fs::write(&path, md);
 				let png_result = state.drawing.flatten().render().save(&png_path);
 				match (md_result, png_result) {
 					(Ok(()), Ok(())) => frame.set_status_text(
-						&format!(
-							"Saved the document to {path} and its picture to {}. Keep the two together.",
-							png_path.display()
-						),
+						&t("Saved the document to %s and its picture to %s. Keep the two together.").replacen("%s", &(path).to_string(), 1).replacen("%s", &(png_path.display()).to_string(), 1),
 						0,
 					),
 					(Err(e), _) => {
-						frame.set_status_text(&format!("Could not save the document: {e}"), 0)
+						frame.set_status_text(&t("Could not save the document: %s").replacen("%s", &(e).to_string(), 1), 0)
 					}
 					(_, Err(e)) => {
-						frame.set_status_text(&format!("Could not save the document's picture: {e}"), 0)
+						frame.set_status_text(&t("Could not save the document's picture: %s").replacen("%s", &(e).to_string(), 1), 0)
 					}
 				}
 			}
@@ -8006,23 +8816,23 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 					let opened = std::process::Command::new("xdg-open").arg(&shown).spawn();
 					match opened {
 						Ok(_) => frame.set_status_text(
-							&format!("Opened {shown} in your PDF viewer. Print from the viewer — Blind Designer does not drive the printer itself."),
+							&t("Opened %s in your PDF viewer. Print from the viewer — Blind Designer does not drive the printer itself.").replacen("%s", &(shown).to_string(), 1),
 							0,
 						),
 						Err(e) => frame.set_status_text(
-							&format!("The PDF is saved at {shown}, but the viewer could not be opened: {e}. Open the file and print from there."),
+							&t("The PDF is saved at %s, but the viewer could not be opened: %s. Open the file and print from there.").replacen("%s", &(shown).to_string(), 1).replacen("%s", &(e).to_string(), 1),
 							0,
 						),
 					}
 				}
-				Err(e) => frame.set_status_text(&format!("Could not write the print PDF: {e}"), 0),
+				Err(e) => frame.set_status_text(&t("Could not write the print PDF: %s").replacen("%s", &(e).to_string(), 1), 0),
 			}
 		}
 		ID_COMPARE_IMAGES => {
-			let images = "Image files (*.png;*.jpg;*.jpeg;*.webp)|*.png;*.jpg;*.jpeg;*.webp";
-			if let Some(first_path) = file_dialog(&frame, "Choose the first image", images, false) {
+			let images = format!("{}|*.png;*.jpg;*.jpeg;*.webp", t("Image files (*.png;*.jpg;*.jpeg;*.webp)"));
+			if let Some(first_path) = file_dialog(&frame, &t("Choose the first image"), &images, false) {
 				if let Some(second_path) =
-					file_dialog(&frame, "Choose the second image", images, false)
+					file_dialog(&frame, &t("Choose the second image"), &images, false)
 				{
 					let name = |p: &str| {
 						Path::new(p)
@@ -8033,12 +8843,11 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 					match (image::open(&first_path), image::open(&second_path)) {
 						(Ok(a), Ok(b)) => report_dialog(
 							win,
-							"Image comparison",
-							"How the two images compare",
+							&t("Image comparison"),
+							&t("How the two images compare"),
 							&compare_images(&a, &b).report(&name(&first_path), &name(&second_path)),
 						),
-						_ => frame.set_status_text(
-							"One of those files could not be read as an image.",
+						_ => frame.set_status_text(&t("One of those files could not be read as an image."),
 							0,
 						),
 					}
@@ -8046,11 +8855,11 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 			}
 		}
 		ID_TACTILE_GRID => {
-			let images = "Image files (*.png;*.jpg;*.jpeg;*.webp)|*.png;*.jpg;*.jpeg;*.webp";
+			let images = format!("{}|*.png;*.jpg;*.jpeg;*.webp", t("Image files (*.png;*.jpg;*.jpeg;*.webp)"));
 			if let Some(path) = file_dialog(
 				&frame,
-				"Choose an image to feel as a tactile grid",
-				images,
+				&t("Choose an image to feel as a tactile grid"),
+				&images,
 				false,
 			) {
 				// The ranges come from the tactile slider
@@ -8066,10 +8875,10 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 				};
 				if let Some(v) = numbers_dialog(
 					&frame,
-					"Tactile grid size",
+					&t("Tactile grid size"),
 					&[
-						("Columns", col_def.min, col_def.max, cols_now),
-						("Rows", row_def.min, row_def.max, rows_now),
+						(t("Columns"), col_def.min, col_def.max, cols_now),
+						(t("Rows"), row_def.min, row_def.max, rows_now),
 					],
 				) {
 					{
@@ -8086,13 +8895,13 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 								.unwrap_or_else(|| path.clone());
 							report_dialog(
 								win,
-								"Tactile grid",
-								"The picture as a grid of shades",
+								&t("Tactile grid"),
+								&t("The picture as a grid of shades"),
 								&grid.sheet(&name),
 							);
 						}
 						Err(e) => frame
-							.set_status_text(&format!("Could not open that image: {e}"), 0),
+							.set_status_text(&t("Could not open that image: %s").replacen("%s", &(e).to_string(), 1), 0),
 					}
 				}
 			}
@@ -8100,23 +8909,18 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 		ID_SAVE_BRUSH => {
 			let current = shared.borrow().brush.clone();
 			let default = if current.name.is_empty() {
-				"My brush".to_string()
+				t("My brush")
 			} else {
 				current.name.clone()
 			};
 			if let Some(name) = text_dialog(
 				&frame,
-				"Save current brush",
-				&format!(
-					"Name for this brush ({} pixel, {}, {} pattern)",
-					current.width,
-					chroma_core::color_words(current.color),
-					current.pattern
-				),
+				&t("Save current brush"),
+				&t("Name for this brush (%s pixel, %s, %s pattern)").replacen("%s", &(current.width).to_string(), 1).replacen("%s", &(chroma_core::color_words(current.color)).to_string(), 1).replacen("%s", &(current.pattern).to_string(), 1),
 				&default,
 			) {
 				if name.trim().is_empty() {
-					frame.set_status_text("The brush was not saved: it needs a name.", 0);
+					frame.set_status_text(&t("The brush was not saved: it needs a name."), 0);
 					return;
 				}
 				let mut state = shared.borrow_mut();
@@ -8125,7 +8929,7 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 				state.brush = brush.clone();
 				state.brushes.save(brush);
 				persist_brushes(win, &state);
-				frame.set_status_text(&format!("Saved brush: {spoken}."), 0);
+				frame.set_status_text(&t("Saved brush: %s.").replacen("%s", &(spoken).to_string(), 1), 0);
 			}
 		}
 		ID_BRUSHES => brushes_dialog(win, shared),
@@ -8138,7 +8942,7 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 					announce(win, &state);
 				}
 			} else {
-				frame.set_status_text("Select a shape first.", 0);
+				frame.set_status_text(&t("Select a shape first."), 0);
 			}
 		}
 		_ => {}
@@ -8156,160 +8960,490 @@ fn build_menus(frame: &Frame) {
 	// language what it does — the status line shows it while the
 	// item is rested on.
 	let import = Menu::builder().build();
-	import.append(ID_OPEN_IMAGE, "&Open Image…\tCtrl+O", "Open an image: its colors replace the palette and its largest color becomes the background.", ItemKind::Normal);
-	import.append(ID_EXTRACT_IMAGE, "&Extract Colors from Image…", "Add an image's colors to the palette, leaving the design untouched.", ItemKind::Normal);
-	import.append(ID_IMPORT_CSS, "&CSS Colors…", "Add every color found in a CSS file to the palette.", ItemKind::Normal);
-	import.append(ID_IMPORT_HTML, "&HTML Design…", "Turn a simple HTML page (inline styles) into a design.", ItemKind::Normal);
-	import.append(ID_COMPARE_IMAGES, "Compare I&mages…", "Compare two images: their sizes, shared colors, which is brighter, which is blurrier.", ItemKind::Normal);
-	import.append(ID_TACTILE_GRID, "Describe Image as &Tactile Grid…", "Describe any image as a grid of shades, in braille patterns and in words.", ItemKind::Normal);
-	import.append(ID_EMBED_FEED, "Embed Feed &Snapshot…", "Fetch a feed (RSS or Atom) and place its latest item titles in the design as one text element — a snapshot: it changes only when you embed again.", ItemKind::Normal);
-	import.append(ID_EMBED_PASTE, "Embed &Pasted Post…", "Paste text copied from anywhere — a Facebook post, another Serrebi tool — and place it in the design as a text element captioned as pasted.", ItemKind::Normal);
+	import.append(ID_OPEN_IMAGE, &t("&Open Image…\tCtrl+O"), &t("Open an image: its colors replace the palette and its largest color becomes the background."), ItemKind::Normal);
+	import.append(
+		ID_EXTRACT_IMAGE,
+		&t("&Extract Colors from Image…"),
+		&t("Add an image's colors to the palette, leaving the design untouched."),
+		ItemKind::Normal,
+	);
+	import.append(
+		ID_IMPORT_CSS,
+		&t("&CSS Colors…"),
+		&t("Add every color found in a CSS file to the palette."),
+		ItemKind::Normal,
+	);
+	import.append(
+		ID_IMPORT_HTML,
+		&t("&HTML Design…"),
+		&t("Turn a simple HTML page (inline styles) into a design."),
+		ItemKind::Normal,
+	);
+	import.append(
+		ID_COMPARE_IMAGES,
+		&t("Compare I&mages…"),
+		&t("Compare two images: their sizes, shared colors, which is brighter, which is blurrier."),
+		ItemKind::Normal,
+	);
+	import.append(
+		ID_TACTILE_GRID,
+		&t("Describe Image as &Tactile Grid…"),
+		&t("Describe any image as a grid of shades, in braille patterns and in words."),
+		ItemKind::Normal,
+	);
+	import.append(ID_EMBED_FEED, &t("Embed Feed &Snapshot…"), &t("Fetch a feed (RSS or Atom) and place its latest item titles in the design as one text element — a snapshot: it changes only when you embed again."), ItemKind::Normal);
+	import.append(ID_EMBED_PASTE, &t("Embed &Pasted Post…"), &t("Paste text copied from anywhere — a Facebook post, another Serrebi tool — and place it in the design as a text element captioned as pasted."), ItemKind::Normal);
 
 	let export = Menu::builder().build();
-	export.append(ID_EXPORT_WIZARD, "Export &Wizard…", "Step through the export: choose the format, how it will be embedded or accompanied, and confirm what will be written before anything is.", ItemKind::Normal);
-	export.append(ID_EXPORT_PNG, "&PNG…\tCtrl+E", "Save the design as a PNG picture.", ItemKind::Normal);
-	export.append(ID_EXPORT_CAPTIONS, "&Captions…", "Save a text sheet describing every shape in words.", ItemKind::Normal);
-	export.append(ID_EXPORT_CSS, "C&SS…", "Save the palette as CSS variables, ready for a web page.", ItemKind::Normal);
-	export.append(ID_EXPORT_SUMMARY, "&Summary (recreation file)…", "Save the step-by-step log that recreates this design exactly.", ItemKind::Normal);
-	export.append(ID_EXPORT_HTML, "HT&ML Page…", "Save the design as a standalone web page whose shapes carry their captions as accessible names.", ItemKind::Normal);
-	export.append(ID_EXPORT_GIF, "Animated &GIF…", "Save the animation as a looping GIF; with no frames, the design as one still picture.", ItemKind::Normal);
-	export.append(ID_EXPORT_ANIM_HTML, "Animated HTML…", "Save the animation as a web page that steps through the frames.", ItemKind::Normal);
-	export.append(ID_EXPORT_ANIM_DESC, "Animation &Description…", "Save the film as words: every frame, its duration, and what changed.", ItemKind::Normal);
-	export.append(ID_EXPORT_TACTILE_SVG, "&Raised-Line SVG…", "Save the design as outlines for swell paper or an embosser, one line style per layer.", ItemKind::Normal);
-	export.append(ID_EXPORT_TACTILE_SHEET, "Tactile &Sheet…", "Save the design as a text walk, element by element in reading order, with braille labels.", ItemKind::Normal);
-	export.append(ID_EXPORT_BRAILLE, "&Braille Labels…", "Save the elements' captions as Grade 1 braille labels.", ItemKind::Normal);
-	export.append(ID_EXPORT_PRACTICE, "Print-Writing &Practice Sheet…", "Save a practice sheet: every text element printed large as block letters to trace or copy, with a legibility line for each.", ItemKind::Normal);
-	export.append(ID_EXPORT_PDF, "P&DF…", "Save a two-page PDF: the design as a picture, then its text elements as real, readable text.", ItemKind::Normal);
-	export.append(ID_EXPORT_PRESENTATION, "Presen&tation HTML…", "Save the design as presentation slides — one per animation frame — each laying the picture and its words side by side.", ItemKind::Normal);
-	export.append(ID_EXPORT_DOCUMENT, "&Document (Markdown)…", "Save a Markdown document: the design's PNG written beside it and referenced, then the design's words with their styles, then every element's caption.", ItemKind::Normal);
+	export.append(ID_EXPORT_WIZARD, &t("Export &Wizard…"), &t("Step through the export: choose the format, how it will be embedded or accompanied, and confirm what will be written before anything is."), ItemKind::Normal);
+	export.append(
+		ID_EXPORT_PNG,
+		&t("&PNG…\tCtrl+E"),
+		&t("Save the design as a PNG picture."),
+		ItemKind::Normal,
+	);
+	export.append(
+		ID_EXPORT_CAPTIONS,
+		&t("&Captions…"),
+		&t("Save a text sheet describing every shape in words."),
+		ItemKind::Normal,
+	);
+	export.append(
+		ID_EXPORT_CSS,
+		&t("C&SS…"),
+		&t("Save the palette as CSS variables, ready for a web page."),
+		ItemKind::Normal,
+	);
+	export.append(
+		ID_EXPORT_SUMMARY,
+		&t("&Summary (recreation file)…"),
+		&t("Save the step-by-step log that recreates this design exactly."),
+		ItemKind::Normal,
+	);
+	export.append(ID_EXPORT_HTML, &t("HT&ML Page…"), &t("Save the design as a standalone web page whose shapes carry their captions as accessible names."), ItemKind::Normal);
+	export.append(
+		ID_EXPORT_GIF,
+		&t("Animated &GIF…"),
+		&t("Save the animation as a looping GIF; with no frames, the design as one still picture."),
+		ItemKind::Normal,
+	);
+	export.append(
+		ID_EXPORT_ANIM_HTML,
+		&t("Animated HTML…"),
+		&t("Save the animation as a web page that steps through the frames."),
+		ItemKind::Normal,
+	);
+	export.append(
+		ID_EXPORT_ANIM_DESC,
+		&t("Animation &Description…"),
+		&t("Save the film as words: every frame, its duration, and what changed."),
+		ItemKind::Normal,
+	);
+	export.append(
+		ID_EXPORT_TACTILE_SVG,
+		&t("&Raised-Line SVG…"),
+		&t("Save the design as outlines for swell paper or an embosser, one line style per layer."),
+		ItemKind::Normal,
+	);
+	export.append(ID_EXPORT_TACTILE_SHEET, &t("Tactile &Sheet…"), &t("Save the design as a text walk, element by element in reading order, with braille labels."), ItemKind::Normal);
+	export.append(
+		ID_EXPORT_BRAILLE,
+		&t("&Braille Labels…"),
+		&t("Save the elements' captions as Grade 1 braille labels."),
+		ItemKind::Normal,
+	);
+	export.append(ID_EXPORT_PRACTICE, &t("Print-Writing &Practice Sheet…"), &t("Save a practice sheet: every text element printed large as block letters to trace or copy, with a legibility line for each."), ItemKind::Normal);
+	export.append(ID_EXPORT_PDF, &t("P&DF…"), &t("Save a two-page PDF: the design as a picture, then its text elements as real, readable text."), ItemKind::Normal);
+	export.append(ID_EXPORT_PRESENTATION, &t("Presen&tation HTML…"), &t("Save the design as presentation slides — one per animation frame — each laying the picture and its words side by side."), ItemKind::Normal);
+	export.append(ID_EXPORT_DOCUMENT, &t("&Document (Markdown)…"), &t("Save a Markdown document: the design's PNG written beside it and referenced, then the design's words with their styles, then every element's caption."), ItemKind::Normal);
 
 	let file = Menu::builder().build();
-	file.append(ID_OPEN_DESIGN, "Open &Design…", "Open a saved design file, replacing the current design.", ItemKind::Normal);
-	file.append(ID_SAVE_DESIGN, "&Save Design…", "Save the whole design — canvas, layers, palette and log — to a file.", ItemKind::Normal);
-	file.append(ID_SAVE_SCENE, "Save Sc&ene…", "Save the current design as a scene file, ready to insert into other designs as a group.", ItemKind::Normal);
-	file.append(ID_INSERT_SCENE, "Insert &Scene…", "Insert a saved scene's elements onto the current layer, captioned as one group under the scene's name.", ItemKind::Normal);
-	file.append(ID_TEMPLATES, "New from &Template…", "Start a new design from a built-in layout: birthday card, house, face, chart, portrait or landscape.", ItemKind::Normal);
-	file.append(ID_NEW_WIZARD, "New with &Wizard…", "Start a new project through the setup wizard: say what you want to create or build, answer its focus questions (any may be left with no fixed answer), and the goal is set and the canvas seeded for that kind.", ItemKind::Normal);
-	file.append(ID_PATTERN_TEMPLATES, "New from &Pattern…", "Start a new design as a two-color pattern — checkerboard, stripes or dots — woven from two palette colors you pick.", ItemKind::Normal);
-	file.append(ID_NEW_WINDOW, "New &Window", "Open a second Blind Designer window — a separate copy of the app — so two projects can be open at once; each window keeps and saves its own design.", ItemKind::Normal);
+	file.append(
+		ID_OPEN_DESIGN,
+		&t("Open &Design…"),
+		&t("Open a saved design file, replacing the current design."),
+		ItemKind::Normal,
+	);
+	file.append(
+		ID_SAVE_DESIGN,
+		&t("&Save Design…"),
+		&t("Save the whole design — canvas, layers, palette and log — to a file."),
+		ItemKind::Normal,
+	);
+	file.append(ID_SAVE_SCENE, &t("Save Sc&ene…"), &t("Save the current design as a scene file, ready to insert into other designs as a group."), ItemKind::Normal);
+	file.append(ID_INSERT_SCENE, &t("Insert &Scene…"), &t("Insert a saved scene's elements onto the current layer, captioned as one group under the scene's name."), ItemKind::Normal);
+	file.append(ID_TEMPLATES, &t("New from &Template…"), &t("Start a new design from a built-in layout: birthday card, house, face, chart, portrait or landscape."), ItemKind::Normal);
+	file.append(ID_NEW_WIZARD, &t("New with &Wizard…"), &t("Start a new project through the setup wizard: say what you want to create or build, answer its focus questions (any may be left with no fixed answer), and the goal is set and the canvas seeded for that kind."), ItemKind::Normal);
+	file.append(ID_PATTERN_TEMPLATES, &t("New from &Pattern…"), &t("Start a new design as a two-color pattern — checkerboard, stripes or dots — woven from two palette colors you pick."), ItemKind::Normal);
+	file.append(ID_NEW_WINDOW, &t("New &Window"), &t("Open a second Blind Designer window — a separate copy of the app — so two projects can be open at once; each window keeps and saves its own design."), ItemKind::Normal);
 	file.append_separator();
-	file.append_submenu(import, "&Import", "Bring images, colors and designs in.");
-	file.append_submenu(export, "&Export", "Write the design out: pictures, pages, text and touch.");
-	file.append(ID_PRINT_PDF, "&Print via PDF…", "Write the design's PDF to a temporary file and open it in your PDF viewer; print from the viewer. (Blind Designer does not drive the printer itself.)", ItemKind::Normal);
+	file.append_submenu(
+		import,
+		&t("&Import"),
+		&t("Bring images, colors and designs in."),
+	);
+	file.append_submenu(
+		export,
+		&t("&Export"),
+		&t("Write the design out: pictures, pages, text and touch."),
+	);
+	file.append(ID_PRINT_PDF, &t("&Print via PDF…"), &t("Write the design's PDF to a temporary file and open it in your PDF viewer; print from the viewer. (Blind Designer does not drive the printer itself.)"), ItemKind::Normal);
 	file.append_separator();
-	file.append(ID_EXIT, "E&xit", "Close Blind Designer.", ItemKind::Normal);
+	file.append(
+		ID_EXIT,
+		&t("E&xit"),
+		&t("Close Blind Designer."),
+		ItemKind::Normal,
+	);
 
 	let schemes = Menu::builder().build();
-	schemes.append(ID_COMPLEMENTARY, "&Complementary (hue + 180)", "Add the color opposite the selected one on the hue circle.", ItemKind::Normal);
-	schemes.append(ID_SPLIT, "&Split Complementary (hue ± 150)", "Add the two colors 150 degrees either side of the selected one.", ItemKind::Normal);
-	schemes.append(ID_ANALOGOUS, "&Analogous (hue ± spread)", "Add the two neighboring colors, the Scheme Settings spread either side (30 degrees to start).", ItemKind::Normal);
-	schemes.append(ID_TRIADIC, "&Triadic (hue ± 120)", "Add the two colors a third of the circle away, either side.", ItemKind::Normal);
-	schemes.append(ID_TETRADIC, "T&etradic", "Add the three colors that complete a rectangle on the hue circle.", ItemKind::Normal);
+	schemes.append(
+		ID_COMPLEMENTARY,
+		&t("&Complementary (hue + 180)"),
+		&t("Add the color opposite the selected one on the hue circle."),
+		ItemKind::Normal,
+	);
+	schemes.append(
+		ID_SPLIT,
+		&t("&Split Complementary (hue ± 150)"),
+		&t("Add the two colors 150 degrees either side of the selected one."),
+		ItemKind::Normal,
+	);
+	schemes.append(ID_ANALOGOUS, &t("&Analogous (hue ± spread)"), &t("Add the two neighboring colors, the Scheme Settings spread either side (30 degrees to start)."), ItemKind::Normal);
+	schemes.append(
+		ID_TRIADIC,
+		&t("&Triadic (hue ± 120)"),
+		&t("Add the two colors a third of the circle away, either side."),
+		ItemKind::Normal,
+	);
+	schemes.append(
+		ID_TETRADIC,
+		&t("T&etradic"),
+		&t("Add the three colors that complete a rectangle on the hue circle."),
+		ItemKind::Normal,
+	);
 	schemes.append_separator();
-	schemes.append(ID_SCHEME_SETTINGS, "Scheme &Settings…", "Choose the harmony wheel (screen or paint) and the analogous spread in degrees.", ItemKind::Normal);
+	schemes.append(
+		ID_SCHEME_SETTINGS,
+		&t("Scheme &Settings…"),
+		&t("Choose the harmony wheel (screen or paint) and the analogous spread in degrees."),
+		ItemKind::Normal,
+	);
 
 	let variations = Menu::builder().build();
-	variations.append(ID_SHADES, "Add 4 S&hades (lightness down)", "Add four darker versions of the selected color.", ItemKind::Normal);
-	variations.append(ID_TINTS, "Add 4 &Tints (lightness up)", "Add four lighter versions of the selected color.", ItemKind::Normal);
-	variations.append(ID_TONES, "Add 4 Tone&s (chroma down)", "Add four softer, less saturated versions of the selected color.", ItemKind::Normal);
+	variations.append(
+		ID_SHADES,
+		&t("Add 4 S&hades (lightness down)"),
+		&t("Add four darker versions of the selected color."),
+		ItemKind::Normal,
+	);
+	variations.append(
+		ID_TINTS,
+		&t("Add 4 &Tints (lightness up)"),
+		&t("Add four lighter versions of the selected color."),
+		ItemKind::Normal,
+	);
+	variations.append(
+		ID_TONES,
+		&t("Add 4 Tone&s (chroma down)"),
+		&t("Add four softer, less saturated versions of the selected color."),
+		ItemKind::Normal,
+	);
 
 	let color = Menu::builder().build();
-	color.append_submenu(schemes, "&Schemes", "New colors computed from the selected color.");
-	color.append_submenu(variations, "&Shades, Tints and Tones", "Darker, lighter and softer versions of the selected color.");
+	color.append_submenu(
+		schemes,
+		&t("&Schemes"),
+		&t("New colors computed from the selected color."),
+	);
+	color.append_submenu(
+		variations,
+		&t("&Shades, Tints and Tones"),
+		&t("Darker, lighter and softer versions of the selected color."),
+	);
 	color.append_separator();
-	color.append(ID_COLOR_TOOLS, "Color &Tools…", "Blend, subtract and gradient between two palette colors, random colors, contrast checks, dominant wavelength, and sound frequency to color.", ItemKind::Normal);
-	color.append(ID_TEXT_READABILITY, "Te&xt Readability…", "How readable every text element in the design is against its background.", ItemKind::Normal);
+	color.append(ID_COLOR_TOOLS, &t("Color &Tools…"), &t("Blend, subtract and gradient between two palette colors, random colors, contrast checks, dominant wavelength, and sound frequency to color."), ItemKind::Normal);
+	color.append(
+		ID_TEXT_READABILITY,
+		&t("Te&xt Readability…"),
+		&t("How readable every text element in the design is against its background."),
+		ItemKind::Normal,
+	);
 	color.append_separator();
-	color.append(ID_LOAD_STARTER, "&Load Starter Colors", "Add the starter colors to the palette. A new palette starts empty; these join only when you ask.", ItemKind::Normal);
-	color.append(ID_REMOVE_COLOR, "&Remove Selected Color", "Take the selected color out of the palette.", ItemKind::Normal);
+	color.append(ID_LOAD_STARTER, &t("&Load Starter Colors"), &t("Add the starter colors to the palette. A new palette starts empty; these join only when you ask."), ItemKind::Normal);
+	color.append(
+		ID_REMOVE_COLOR,
+		&t("&Remove Selected Color"),
+		&t("Take the selected color out of the palette."),
+		ItemKind::Normal,
+	);
 	color.append_separator();
-	color.append(ID_SET_BACKGROUND, "Set &Background to Selected Color", "Make the selected palette color the design's background.", ItemKind::Normal);
+	color.append(
+		ID_SET_BACKGROUND,
+		&t("Set &Background to Selected Color"),
+		&t("Make the selected palette color the design's background."),
+		ItemKind::Normal,
+	);
 
 	let add = Menu::builder().build();
-	add.append(ID_ADD_RECT, "&Rectangle…", "Place a rectangle, by numbers or in plain words.", ItemKind::Normal);
-	add.append(ID_ADD_ELLIPSE, "&Ellipse…", "Place an ellipse; equal width and height make a circle.", ItemKind::Normal);
-	add.append(ID_ADD_STROKE, "Stro&ke…", "Draw a line through points you list, with the current brush.", ItemKind::Normal);
-	add.append(ID_ADD_TEXT, "&Text…", "Place words in the design, in a named font at a chosen size.", ItemKind::Normal);
-	add.append(ID_ADD_IMAGE, "&Image…", "Place an image file in the design, scaled into a box you give it.", ItemKind::Normal);
-	add.append(ID_ADD_SYMBOL, "S&ymbol…", "Stamp a ready-made symbol: star, heart, arrow, check, cross, sun or moon.", ItemKind::Normal);
+	add.append(
+		ID_ADD_RECT,
+		&t("&Rectangle…"),
+		&t("Place a rectangle, by numbers or in plain words."),
+		ItemKind::Normal,
+	);
+	add.append(
+		ID_ADD_ELLIPSE,
+		&t("&Ellipse…"),
+		&t("Place an ellipse; equal width and height make a circle."),
+		ItemKind::Normal,
+	);
+	add.append(
+		ID_ADD_STROKE,
+		&t("Stro&ke…"),
+		&t("Draw a line through points you list, with the current brush."),
+		ItemKind::Normal,
+	);
+	add.append(
+		ID_ADD_TEXT,
+		&t("&Text…"),
+		&t("Place words in the design, in a named font at a chosen size."),
+		ItemKind::Normal,
+	);
+	add.append(
+		ID_ADD_IMAGE,
+		&t("&Image…"),
+		&t("Place an image file in the design, scaled into a box you give it."),
+		ItemKind::Normal,
+	);
+	add.append(
+		ID_ADD_SYMBOL,
+		&t("S&ymbol…"),
+		&t("Stamp a ready-made symbol: star, heart, arrow, check, cross, sun or moon."),
+		ItemKind::Normal,
+	);
 
 	let arrange = Menu::builder().build();
-	arrange.append(ID_MOVE_SHAPE, "&Move…", "Move the selected element, by numbers or in plain words.", ItemKind::Normal);
-	arrange.append(ID_ROTATE_SHAPE, "R&otate…", "Turn the selected element by an angle in degrees.", ItemKind::Normal);
-	arrange.append(ID_RESIZE_SHAPE, "Resi&ze…", "Change the selected element's size, by numbers or in plain words.", ItemKind::Normal);
-	arrange.append(ID_RECOLOR_SHAPE, "Set to Palette &Color", "Give the selected element the selected palette color.", ItemKind::Normal);
-	arrange.append(ID_REMOVE_SHAPE, "Remove Sha&pe", "Delete the selected element from the design.", ItemKind::Normal);
+	arrange.append(
+		ID_MOVE_SHAPE,
+		&t("&Move…"),
+		&t("Move the selected element, by numbers or in plain words."),
+		ItemKind::Normal,
+	);
+	arrange.append(
+		ID_ROTATE_SHAPE,
+		&t("R&otate…"),
+		&t("Turn the selected element by an angle in degrees."),
+		ItemKind::Normal,
+	);
+	arrange.append(
+		ID_RESIZE_SHAPE,
+		&t("Resi&ze…"),
+		&t("Change the selected element's size, by numbers or in plain words."),
+		ItemKind::Normal,
+	);
+	arrange.append(
+		ID_RECOLOR_SHAPE,
+		&t("Set to Palette &Color"),
+		&t("Give the selected element the selected palette color."),
+		ItemKind::Normal,
+	);
+	arrange.append(
+		ID_REMOVE_SHAPE,
+		&t("Remove Sha&pe"),
+		&t("Delete the selected element from the design."),
+		ItemKind::Normal,
+	);
 
 	let text = Menu::builder().build();
-	text.append(ID_TEXT_STUDIO, "Text &Studio…", "The project's text elements as an editor: rewrite their words, set bold, italic, underline, heading level and alignment, sort their lines, spread them into columns, and build text grids from pasted tables.", ItemKind::Normal);
-	text.append(ID_REPLACEMENT_VARIABLES, "Replacement &Variables…", "Fill in the {name} tokens written in text elements and captions: give each a value, then substitute in this project or in a saved copy.", ItemKind::Normal);
+	text.append(ID_TEXT_STUDIO, &t("Text &Studio…"), &t("The project's text elements as an editor: rewrite their words, set bold, italic, underline, heading level and alignment, sort their lines, spread them into columns, and build text grids from pasted tables."), ItemKind::Normal);
+	text.append(ID_REPLACEMENT_VARIABLES, &t("Replacement &Variables…"), &t("Fill in the {name} tokens written in text elements and captions: give each a value, then substitute in this project or in a saved copy."), ItemKind::Normal);
 
 	let review = Menu::builder().build();
-	review.append(ID_INSPECT, "In&spect Selected…", "The inspector: what the selected element is, where it is used, what can change it and what happens if it is left alone. Enter on the Elements list does the same.", ItemKind::Normal);
-	review.append(ID_VIEWABILITY, "&Viewability…", "Report how the design reads from a viewing angle: what is viewable, what is hidden behind something else, what is turned away, per depth.", ItemKind::Normal);
-	review.append(ID_RECOGNIZABILITY, "&Recognizability…", "How clearly someone else would recognize what you are creating, judged for this project's type: a rough guide from element counts, contrast and depth layering, not a measurement.", ItemKind::Normal);
-	review.append(ID_STATS, "&Project Statistics…", "How many layers, elements, palette colors and animation frames this project has.", ItemKind::Normal);
+	review.append(ID_INSPECT, &t("In&spect Selected…"), &t("The inspector: what the selected element is, where it is used, what can change it and what happens if it is left alone. Enter on the Elements list does the same."), ItemKind::Normal);
+	review.append(ID_VIEWABILITY, &t("&Viewability…"), &t("Report how the design reads from a viewing angle: what is viewable, what is hidden behind something else, what is turned away, per depth."), ItemKind::Normal);
+	review.append(ID_RECOGNIZABILITY, &t("&Recognizability…"), &t("How clearly someone else would recognize what you are creating, judged for this project's type: a rough guide from element counts, contrast and depth layering, not a measurement."), ItemKind::Normal);
+	review.append(
+		ID_STATS,
+		&t("&Project Statistics…"),
+		&t("How many layers, elements, palette colors and animation frames this project has."),
+		ItemKind::Normal,
+	);
 
 	let design = Menu::builder().build();
-	design.append(ID_CANVAS_SIZE, "Canvas &Size…", "Change the canvas width and height in pixels.", ItemKind::Normal);
+	design.append(
+		ID_CANVAS_SIZE,
+		&t("Canvas &Size…"),
+		&t("Change the canvas width and height in pixels."),
+		ItemKind::Normal,
+	);
 	design.append_separator();
-	design.append_submenu(add, "&Add", "Add a new element to the design.");
-	design.append_submenu(arrange, "A&rrange Selected Shape", "Move, turn, resize, recolor or remove the selected element.");
+	design.append_submenu(add, &t("&Add"), &t("Add a new element to the design."));
+	design.append_submenu(
+		arrange,
+		&t("A&rrange Selected Shape"),
+		&t("Move, turn, resize, recolor or remove the selected element."),
+	);
 	design.append_separator();
-	design.append(ID_ELEMENTS, "E&lements…", "Every element in plain language, with rename, describe, move, resize, recolor and delete.", ItemKind::Normal);
-	design.append_submenu(text, "&Text", "The project's words: the text editor, and the replacement variables that fill its tokens.");
-	design.append_submenu(review, "&Review", "Look at the design: inspect the selection, judge its viewability and recognizability, and read its statistics.");
-	design.append(ID_ELEMENT_WIZARD, "Element &Wizard…", "The wizard scoped to the selected element: its stack (what sits on it, what it sits on), slider edits, and the inspector's review.", ItemKind::Normal);
-	design.append(ID_LOCK_TOGGLE, "&Lock/Unlock Selected", "Lock the selected element so bulk changes skip it, or unlock it so they reach it again. Direct edits work either way.", ItemKind::Normal);
-	design.append(ID_SEARCH_INSERT, "&Search and Insert…\tCtrl+F", "Search palette colors, starter colors, elements, symbols and templates by name, and insert what you find at the cursor.", ItemKind::Normal);
-	design.append(ID_LAYERS, "&Layers…", "Add, rename, reorder, show or hide layers, and choose where new shapes land.", ItemKind::Normal);
-	design.append(ID_ANIMATION, "Anim&ation…", "Build a film from frames of the canvas, each with its own duration.", ItemKind::Normal);
-	design.append(ID_DESCRIBE_AREA, "&Describe Area…", "Hear only the elements inside one part of the canvas.", ItemKind::Normal);
-	design.append(ID_PROJECT_OPTIONS, "Project &Options…", "Choose which sliders this project pins to its Sliders tab, what the color adjustments act on, how far Page Up and Page Down jump, grayscale start, and load the starter colors or the gray ramp.", ItemKind::Normal);
-	design.append(ID_SETUP_WIZARD, "Setup &Wizard…", "State (or restate) this project's goal through the wizard: what you want to create or build, and its focus questions — any answer may be left with no fixed answer.", ItemKind::Normal);
-	design.append(ID_COLOR_TREATMENT, "Apply Colour &Treatment…", "Grayscale start's second half: give the grayscale shapes of one layer, or of a whole depth, the palette colours in paint order. Locked shapes stay grayscale.", ItemKind::Normal);
-	design.append(ID_DRAW_POINTER, "Draw with &Pointer…", "Draw one stroke with the mouse or touch: press and drag on the surface, release, Finish. Keys 1 to 9 set the brush width while you draw; C cycles the brush colour.", ItemKind::Normal);
-	design.append(ID_RECOGNIZE_SHAPE, "Recognize Shape from &Stroke", "Read the selected stroke's path and replace it with the known shape it traces — a line, a rectangle, an ellipse or a triangle — in the same color and brush width. A stroke that matches nothing known stays exactly as drawn.", ItemKind::Normal);
+	design.append(ID_ELEMENTS, &t("E&lements…"), &t("Every element in plain language, with rename, describe, move, resize, recolor and delete."), ItemKind::Normal);
+	design.append_submenu(text, &t("&Text"), &t("The project's words: the text editor, and the replacement variables that fill its tokens."));
+	design.append_submenu(review, &t("&Review"), &t("Look at the design: inspect the selection, judge its viewability and recognizability, and read its statistics."));
+	design.append(ID_ELEMENT_WIZARD, &t("Element &Wizard…"), &t("The wizard scoped to the selected element: its stack (what sits on it, what it sits on), slider edits, and the inspector's review."), ItemKind::Normal);
+	design.append(ID_LOCK_TOGGLE, &t("&Lock/Unlock Selected"), &t("Lock the selected element so bulk changes skip it, or unlock it so they reach it again. Direct edits work either way."), ItemKind::Normal);
+	design.append(ID_SEARCH_INSERT, &t("&Search and Insert…\tCtrl+F"), &t("Search palette colors, starter colors, elements, symbols and templates by name, and insert what you find at the cursor."), ItemKind::Normal);
+	design.append(
+		ID_LAYERS,
+		&t("&Layers…"),
+		&t("Add, rename, reorder, show or hide layers, and choose where new shapes land."),
+		ItemKind::Normal,
+	);
+	design.append(
+		ID_ANIMATION,
+		&t("Anim&ation…"),
+		&t("Build a film from frames of the canvas, each with its own duration."),
+		ItemKind::Normal,
+	);
+	design.append(
+		ID_DESCRIBE_AREA,
+		&t("&Describe Area…"),
+		&t("Hear only the elements inside one part of the canvas."),
+		ItemKind::Normal,
+	);
+	design.append(ID_PROJECT_OPTIONS, &t("Project &Options…"), &t("Choose which sliders this project pins to its Sliders tab, what the color adjustments act on, how far Page Up and Page Down jump, grayscale start, and load the starter colors or the gray ramp."), ItemKind::Normal);
+	design.append(ID_SETUP_WIZARD, &t("Setup &Wizard…"), &t("State (or restate) this project's goal through the wizard: what you want to create or build, and its focus questions — any answer may be left with no fixed answer."), ItemKind::Normal);
+	design.append(ID_COLOR_TREATMENT, &t("Apply Colour &Treatment…"), &t("Grayscale start's second half: give the grayscale shapes of one layer, or of a whole depth, the palette colours in paint order. Locked shapes stay grayscale."), ItemKind::Normal);
+	design.append(ID_DRAW_POINTER, &t("Draw with &Pointer…"), &t("Draw one stroke with the mouse or touch: press and drag on the surface, release, Finish. Keys 1 to 9 set the brush width while you draw; C cycles the brush colour."), ItemKind::Normal);
+	design.append(ID_RECOGNIZE_SHAPE, &t("Recognize Shape from &Stroke"), &t("Read the selected stroke's path and replace it with the known shape it traces — a line, a rectangle, an ellipse or a triangle — in the same color and brush width. A stroke that matches nothing known stays exactly as drawn."), ItemKind::Normal);
 	design.append_separator();
-	design.append(ID_SAVE_BRUSH, "Save Current Br&ush…", "Keep the current brush — width, color, pattern — in the brush library under a name.", ItemKind::Normal);
-	design.append(ID_BRUSHES, "Brush Li&brary…", "The saved brushes; apply one to make it current for new strokes.", ItemKind::Normal);
+	design.append(
+		ID_SAVE_BRUSH,
+		&t("Save Current Br&ush…"),
+		&t("Keep the current brush — width, color, pattern — in the brush library under a name."),
+		ItemKind::Normal,
+	);
+	design.append(
+		ID_BRUSHES,
+		&t("Brush Li&brary…"),
+		&t("The saved brushes; apply one to make it current for new strokes."),
+		ItemKind::Normal,
+	);
 
 	let formats = Menu::builder().build();
-	formats.append(ID_FORMAT_HEX, "Color Values as &Hex", "Show and speak color values as hex codes, like #3A7CA5.", ItemKind::Check);
-	formats.append(ID_FORMAT_RGB, "Color Values as &RGB", "Show and speak color values as red, green and blue numbers, 0 to 255.", ItemKind::Check);
-	formats.append(ID_FORMAT_HSL, "Color Values as HS&L", "Show and speak color values as hue, saturation and lightness.", ItemKind::Check);
-	formats.append(ID_FORMAT_HSV, "Color Values as HS&V", "Show and speak color values as hue, saturation and value.", ItemKind::Check);
-	formats.append(ID_FORMAT_CMYK, "Color Values as CM&YK", "Show and speak color values as cyan, magenta, yellow and black ink percents.", ItemKind::Check);
-	formats.append(ID_FORMAT_XYZ, "Color Values as CIE &XYZ", "Show and speak color values as CIE XYZ tristimulus numbers.", ItemKind::Check);
-	formats.append(ID_FORMAT_XYY, "Color Values as x&yY", "Show and speak color values as chromaticity x and y plus luminance Y.", ItemKind::Check);
-	formats.append(ID_FORMAT_LAB, "Color Values as CIE L&ab", "Show and speak color values as CIE lightness and the a and b opponent axes.", ItemKind::Check);
-	formats.append(ID_FORMAT_LCH, "Color Values as CIE LC&H", "Show and speak color values as CIE lightness, chroma and hue.", ItemKind::Check);
-	formats.append(ID_FORMAT_LUV, "Color Values as CIE LU&V", "Show and speak color values as CIE lightness and the u and v axes.", ItemKind::Check);
-	formats.append(ID_FORMAT_HUNTER, "Color Values as &Hunter Lab", "Show and speak color values in the 1948 Hunter Lab system (different numbers from CIE Lab).", ItemKind::Check);
-	formats.append(ID_FORMAT_DECIMAL, "Color Values as &Decimal", "Show and speak color values as one decimal number, 0 to 16777215.", ItemKind::Check);
-	formats.append(ID_FORMAT_WEBSAFE, "Color Values as &Web Safe", "Show and speak each color snapped to the nearest web-safe color.", ItemKind::Check);
-	formats.append(ID_FORMAT_BINARY, "Color Values as &Binary", "Show and speak color values as a 24-bit binary string.", ItemKind::Check);
+	formats.append(
+		ID_FORMAT_HEX,
+		&t("Color Values as &Hex"),
+		&t("Show and speak color values as hex codes, like #3A7CA5."),
+		ItemKind::Check,
+	);
+	formats.append(
+		ID_FORMAT_RGB,
+		&t("Color Values as &RGB"),
+		&t("Show and speak color values as red, green and blue numbers, 0 to 255."),
+		ItemKind::Check,
+	);
+	formats.append(
+		ID_FORMAT_HSL,
+		&t("Color Values as HS&L"),
+		&t("Show and speak color values as hue, saturation and lightness."),
+		ItemKind::Check,
+	);
+	formats.append(
+		ID_FORMAT_HSV,
+		&t("Color Values as HS&V"),
+		&t("Show and speak color values as hue, saturation and value."),
+		ItemKind::Check,
+	);
+	formats.append(
+		ID_FORMAT_CMYK,
+		&t("Color Values as CM&YK"),
+		&t("Show and speak color values as cyan, magenta, yellow and black ink percents."),
+		ItemKind::Check,
+	);
+	formats.append(
+		ID_FORMAT_XYZ,
+		&t("Color Values as CIE &XYZ"),
+		&t("Show and speak color values as CIE XYZ tristimulus numbers."),
+		ItemKind::Check,
+	);
+	formats.append(
+		ID_FORMAT_XYY,
+		&t("Color Values as x&yY"),
+		&t("Show and speak color values as chromaticity x and y plus luminance Y."),
+		ItemKind::Check,
+	);
+	formats.append(
+		ID_FORMAT_LAB,
+		&t("Color Values as CIE L&ab"),
+		&t("Show and speak color values as CIE lightness and the a and b opponent axes."),
+		ItemKind::Check,
+	);
+	formats.append(
+		ID_FORMAT_LCH,
+		&t("Color Values as CIE LC&H"),
+		&t("Show and speak color values as CIE lightness, chroma and hue."),
+		ItemKind::Check,
+	);
+	formats.append(
+		ID_FORMAT_LUV,
+		&t("Color Values as CIE LU&V"),
+		&t("Show and speak color values as CIE lightness and the u and v axes."),
+		ItemKind::Check,
+	);
+	formats.append(ID_FORMAT_HUNTER, &t("Color Values as &Hunter Lab"), &t("Show and speak color values in the 1948 Hunter Lab system (different numbers from CIE Lab)."), ItemKind::Check);
+	formats.append(
+		ID_FORMAT_DECIMAL,
+		&t("Color Values as &Decimal"),
+		&t("Show and speak color values as one decimal number, 0 to 16777215."),
+		ItemKind::Check,
+	);
+	formats.append(
+		ID_FORMAT_WEBSAFE,
+		&t("Color Values as &Web Safe"),
+		&t("Show and speak each color snapped to the nearest web-safe color."),
+		ItemKind::Check,
+	);
+	formats.append(
+		ID_FORMAT_BINARY,
+		&t("Color Values as &Binary"),
+		&t("Show and speak color values as a 24-bit binary string."),
+		ItemKind::Check,
+	);
 
 	let view = Menu::builder().build();
-	view.append_submenu(formats, "Color &Format", "How color values are shown and spoken across the app; exactly one format is ticked at a time.");
+	view.append_submenu(formats, &t("Color &Format"), &t("How color values are shown and spoken across the app; exactly one format is ticked at a time."));
 	view.append_separator();
-	view.append(ID_ANNOUNCE_SLIDERS, "&Announce Slider Changes", "Moving a slider says what changed and that everything else stayed the same. Off: only the slider's name and new value are said.", ItemKind::Check);
-	view.append(ID_LISTS_SIDE_BY_SIDE, "Lists &Side by Side", "Show the Palette and Elements lists side by side on one Lists page instead of on separate tabs. This session only.", ItemKind::Check);
-	view.append(ID_FOCUS_MODE, "&Focus Mode", "Open the Focus window: only the current focus, the statistics, and what you have built against your goal — and what is not built yet. This session only.", ItemKind::Check);
+	view.append(ID_ANNOUNCE_SLIDERS, &t("&Announce Slider Changes"), &t("Moving a slider says what changed and that everything else stayed the same. Off: only the slider's name and new value are said."), ItemKind::Check);
+	view.append(ID_LISTS_SIDE_BY_SIDE, &t("Lists &Side by Side"), &t("Show the Palette and Elements lists side by side on one Lists page instead of on separate tabs. This session only."), ItemKind::Check);
+	view.append(ID_FOCUS_MODE, &t("&Focus Mode"), &t("Open the Focus window: only the current focus, the statistics, and what you have built against your goal — and what is not built yet. This session only."), ItemKind::Check);
 
 	let help = Menu::builder().build();
-	help.append(ID_DICTIONARY, "&Dictionary…", "Plain-language definitions of the color and design terms the app uses.", ItemKind::Normal);
-	help.append(ID_HELP_FILE, "&Help and Worked Examples…", "How the app works, what every setting changes, and step-by-step examples.", ItemKind::Normal);
-	help.append(ID_SOUND_CUES, "&Sound Cues", "Play a tone for each drawing change: pitch says height, stereo says left or right, length says size.", ItemKind::Check);
+	help.append(
+		ID_DICTIONARY,
+		&t("&Dictionary…"),
+		&t("Plain-language definitions of the color and design terms the app uses."),
+		ItemKind::Normal,
+	);
+	help.append(
+		ID_HELP_FILE,
+		&t("&Help and Worked Examples…"),
+		&t("How the app works, what every setting changes, and step-by-step examples."),
+		ItemKind::Normal,
+	);
+	help.append(ID_SOUND_CUES, &t("&Sound Cues"), &t("Play a tone for each drawing change: pitch says height, stereo says left or right, length says size."), ItemKind::Check);
 	help.append_separator();
-	help.append(ID_ABOUT, "&About Blind Designer", "What Blind Designer is.", ItemKind::Normal);
+	help.append(
+		ID_ABOUT,
+		&t("&About Blind Designer"),
+		&t("What Blind Designer is."),
+		ItemKind::Normal,
+	);
 
 	let bar = MenuBar::builder()
-		.append(file, "&File")
-		.append(color, "&Color")
-		.append(design, "&Design")
-		.append(view, "&View")
-		.append(help, "&Help")
+		.append(file, &t("&File"))
+		.append(color, &t("&Color"))
+		.append(design, &t("&Design"))
+		.append(view, &t("&View"))
+		.append(help, &t("&Help"))
 		.build();
 	bar.check_item(ID_SOUND_CUES, true); // sound cues start on
 	bar.check_item(ID_FORMAT_HEX, true); // color values start as hex
@@ -8319,8 +9453,13 @@ fn build_menus(frame: &Frame) {
 
 fn main() {
 	let _ = wxdragon::main(|_| {
+		// Translations first, before any UI exists: pick the catalog
+		// that best fits the system language (English when none does)
+		// for both this app's strings and wxWidgets' stock strings.
+		let mut translations = patois::wx::WxTranslationManager::new(env!("CARGO_PKG_NAME"));
+		translations.initialize(WxStdCatalogLoader);
 		let frame = Frame::builder()
-			.with_title("Blind Designer")
+			.with_title(&t("Blind Designer"))
 			.with_size(Size::new(800, 700))
 			.build();
 		let panel = Panel::builder(&frame).build();
@@ -8335,16 +9474,20 @@ fn main() {
 		// a new project starts with an empty palette, no elements
 		// and its one real layer.
 		let notebook = Notebook::builder(&panel).build();
-		let (palette_page, palette_list) = list_panel(&notebook, "Palette");
-		let (elements_page, elements_list) = list_panel(&notebook, "Elements");
-		let (layers_page, layers_list) = list_panel(&notebook, "Layers");
-		notebook.add_page(&palette_page, "Palette", true, None);
-		notebook.add_page(&elements_page, "Elements", false, None);
-		notebook.add_page(&layers_page, "Layers", false, None);
+		let (palette_page, palette_list) = list_panel(&notebook, &t("Palette"));
+		let (elements_page, elements_list) = list_panel(&notebook, &t("Elements"));
+		let (layers_page, layers_list) = list_panel(&notebook, &t("Layers"));
+		notebook.add_page(&palette_page, &t("Palette"), true, None);
+		notebook.add_page(&elements_page, &t("Elements"), false, None);
+		notebook.add_page(&layers_page, &t("Layers"), false, None);
 
-		let readout_label = StaticText::builder(&panel).with_label("Selected color").build();
+		let readout_label = StaticText::builder(&panel)
+			.with_label(&t("Selected color"))
+			.build();
 		let readout = StaticText::builder(&panel)
-			.with_label("No color selected yet. Open an image, or add a color by hex.")
+			.with_label(&t(
+				"No color selected yet. Open an image, or add a color by hex.",
+			))
 			.build();
 
 		// The typed-fields surface (Elshara's interaction
@@ -8352,24 +9495,42 @@ fn main() {
 		// ONE panel, so a mode switch shows or hides the whole
 		// surface as a unit — visible only in Type mode.
 		let typed_panel = Panel::builder(&panel).build();
-		let hex_label = StaticText::builder(&typed_panel).with_label("Hex value").build();
+		let hex_label = StaticText::builder(&typed_panel)
+			.with_label(&t("Hex value"))
+			.build();
 		let hex_field = TextCtrl::builder(&typed_panel).build();
 		hex_field.set_value("#3A7CA5");
-		let apply_hex = Button::builder(&typed_panel).with_label("Apply Hex").build();
+		let apply_hex = Button::builder(&typed_panel)
+			.with_label(&t("Apply Hex"))
+			.build();
 
-		let l_label = StaticText::builder(&typed_panel).with_label("Lightness (0 to 1)").build();
-		let l_spin = SpinCtrlDouble::builder(&typed_panel).with_range(0.0, 1.0).build();
-		let c_label = StaticText::builder(&typed_panel).with_label("Chroma (0 to 0.4)").build();
-		let c_spin = SpinCtrlDouble::builder(&typed_panel).with_range(0.0, 0.4).build();
-		let h_label = StaticText::builder(&typed_panel).with_label("Hue (0 to 360 degrees)").build();
-		let h_spin = SpinCtrlDouble::builder(&typed_panel).with_range(0.0, 360.0).build();
+		let l_label = StaticText::builder(&typed_panel)
+			.with_label(&t("Lightness (0 to 1)"))
+			.build();
+		let l_spin = SpinCtrlDouble::builder(&typed_panel)
+			.with_range(0.0, 1.0)
+			.build();
+		let c_label = StaticText::builder(&typed_panel)
+			.with_label(&t("Chroma (0 to 0.4)"))
+			.build();
+		let c_spin = SpinCtrlDouble::builder(&typed_panel)
+			.with_range(0.0, 0.4)
+			.build();
+		let h_label = StaticText::builder(&typed_panel)
+			.with_label(&t("Hue (0 to 360 degrees)"))
+			.build();
+		let h_spin = SpinCtrlDouble::builder(&typed_panel)
+			.with_range(0.0, 360.0)
+			.build();
 		l_spin.set_increment(0.01);
 		l_spin.set_digits(2);
 		c_spin.set_increment(0.01);
 		c_spin.set_digits(2);
 		h_spin.set_increment(1.0);
 		h_spin.set_digits(0);
-		let apply_lch = Button::builder(&typed_panel).with_label("Apply L C H").build();
+		let apply_lch = Button::builder(&typed_panel)
+			.with_label(&t("Apply L C H"))
+			.build();
 		let typed_sizer = BoxSizer::builder(Orientation::Vertical).build();
 		let editor = BoxSizer::builder(Orientation::Horizontal).build();
 		editor.add(&hex_label, 0, SizerFlag::All, 5);
@@ -8392,25 +9553,45 @@ fn main() {
 		// only in Draw mode.
 		let draw_panel = Panel::builder(&panel).build();
 		let draw_note = StaticText::builder(&draw_panel)
-			.with_label("Draw mode: the pointer drawing tools lead. Everything else waits in the menus.")
+			.with_label(&t(
+				"Draw mode: the pointer drawing tools lead. Everything else waits in the menus.",
+			))
 			.build();
-		let draw_button =
-			Button::builder(&draw_panel).with_label("Draw with Pointer\u{2026}").build();
+		let draw_button = Button::builder(&draw_panel)
+			.with_label(&t("Draw with Pointer\u{2026}"))
+			.build();
 		let draw_sizer = BoxSizer::builder(Orientation::Vertical).build();
-		draw_sizer.add(&draw_note, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+		draw_sizer.add(
+			&draw_note,
+			0,
+			SizerFlag::Left | SizerFlag::Right | SizerFlag::Top,
+			5,
+		);
 		draw_sizer.add(&draw_button, 0, SizerFlag::All, 5);
 		draw_panel.set_sizer(draw_sizer, true);
 
-		let stats_label = StaticText::builder(&panel).with_label("Project statistics").build();
+		let stats_label = StaticText::builder(&panel)
+			.with_label(&t("Project statistics"))
+			.build();
 		let stats_text = StaticText::builder(&panel).build();
 
 		let sizer = BoxSizer::builder(Orientation::Vertical).build();
 		sizer.add(&notebook, 1, SizerFlag::Expand | SizerFlag::All, 5);
-		sizer.add(&readout_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+		sizer.add(
+			&readout_label,
+			0,
+			SizerFlag::Left | SizerFlag::Right | SizerFlag::Top,
+			5,
+		);
 		sizer.add(&readout, 0, SizerFlag::Expand | SizerFlag::All, 5);
 		sizer.add(&typed_panel, 0, SizerFlag::Expand, 0);
 		sizer.add(&draw_panel, 0, SizerFlag::Expand, 0);
-		sizer.add(&stats_label, 0, SizerFlag::Left | SizerFlag::Right | SizerFlag::Top, 5);
+		sizer.add(
+			&stats_label,
+			0,
+			SizerFlag::Left | SizerFlag::Right | SizerFlag::Top,
+			5,
+		);
 		sizer.add(&stats_text, 0, SizerFlag::Expand | SizerFlag::All, 5);
 		panel.set_sizer(sizer, true);
 
@@ -8419,7 +9600,7 @@ fn main() {
 		// wxID_SEPARATOR, "invalid for normal items", and it trips the
 		// wincmn.cpp CreateBase() "invalid id value" assert at startup
 		// (issue #4).
-		frame.create_status_bar(1, 0, ID_ANY as i32, "Status");
+		frame.create_status_bar(1, 0, ID_ANY as i32, &t("Status"));
 		build_menus(&frame);
 
 		let start = Srgb::new(58, 124, 165);
@@ -8520,7 +9701,8 @@ fn main() {
 			// The Draw surface's button opens the same pointer
 			// drawing dialog as Design, Draw with Pointer.
 			let (w, s) = (win.clone(), shared.clone());
-			win.draw_button.on_click(move |_| draw_pointer_dialog(&w, &s));
+			win.draw_button
+				.on_click(move |_| draw_pointer_dialog(&w, &s));
 		}
 		// The startup project's mode is Slide: the Sliders tab
 		// is built, the typed and Draw panels stay hidden. No
@@ -8531,8 +9713,7 @@ fn main() {
 			let state = shared.borrow();
 			refresh_lists(&win, &state);
 		}
-		frame.set_status_text(
-			"A new project: the setup wizard opens with the app — it states the goal, seeds the canvas, and pins the sliders for the kind you choose. Grayscale start is on: colors come later, per part, layer, or depth.",
+		frame.set_status_text(&t("A new project: the setup wizard opens with the app — it states the goal, seeds the canvas, and pins the sliders for the kind you choose. Grayscale start is on: colors come later, per part, layer, or depth."),
 			0,
 		);
 
@@ -8541,14 +9722,16 @@ fn main() {
 		{
 			let (w, s) = (win.clone(), shared.clone());
 			win.layers_list.on_key_down(move |data| {
-				let WindowEventData::Keyboard(kb) = data else { return false };
+				let WindowEventData::Keyboard(kb) = data else {
+					return false;
+				};
 				if kb.get_key_code() != Some(WXK_RETURN) {
 					return false;
 				}
 				if let Some(i) = w.layers_list.selected() {
 					let state = s.borrow();
 					if let Some(text) = inspect_layer(&state.drawing, i) {
-						report_dialog(&w, "Inspector: layer", "Layer inspector", &text);
+						report_dialog(&w, &t("Inspector: layer"), &t("Layer inspector"), &text);
 					}
 				}
 				true
@@ -8556,7 +9739,8 @@ fn main() {
 		}
 		{
 			let w = win.clone();
-			win.layers_list.on_context_menu(move || show_layers_context(&w));
+			win.layers_list
+				.on_context_menu(move || show_layers_context(&w));
 		}
 		{
 			let (w, s) = (win.clone(), shared.clone());
@@ -8564,9 +9748,13 @@ fn main() {
 				// Selecting a layer in the main window makes it the
 				// current layer: where new shapes land. (Renaming,
 				// removing and hiding stay in Design, Layers.)
-				let Some(i) = w.layers_list.selected() else { return };
+				let Some(i) = w.layers_list.selected() else {
+					return;
+				};
 				let name = {
-					let Ok(mut state) = s.try_borrow_mut() else { return };
+					let Ok(mut state) = s.try_borrow_mut() else {
+						return;
+					};
 					if i >= state.drawing.layers.len() || state.layer == i {
 						return;
 					}
@@ -8580,14 +9768,19 @@ fn main() {
 				refresh_lists(&w, &state);
 				drop(state);
 				w.frame.set_status_text(
-					&format!("New shapes now land on layer \"{name}\"."),
+					&t("New shapes now land on layer \"%s\".").replacen(
+						"%s",
+						&(name).to_string(),
+						1,
+					),
 					0,
 				);
 			});
 		}
 		{
 			let (w, s) = (win.clone(), shared.clone());
-			win.frame.on_menu_selected(move |e| dispatch(&w, &s, e.get_id()));
+			win.frame
+				.on_menu_selected(move |e| dispatch(&w, &s, e.get_id()));
 		}
 		{
 			let (w, s) = (win.clone(), shared.clone());
@@ -8609,8 +9802,10 @@ fn main() {
 						select_color(&w, &state, c);
 					}
 					None => {
-						w.frame
-							.set_status_text("That is not a hex color. Use RRGGBB, like 3A7CA5.", 0);
+						w.frame.set_status_text(
+							&t("That is not a hex color. Use RRGGBB, like 3A7CA5."),
+							0,
+						);
 					}
 				}
 			});
@@ -8662,7 +9857,10 @@ mod tests {
 	#[test]
 	fn menu_ids_are_unique_and_in_wx_range() {
 		for (i, id) in MENU_IDS.iter().enumerate() {
-			assert!(*id > 0 && *id <= ID_HIGHEST, "menu ID {id} out of the valid wx range");
+			assert!(
+				*id > 0 && *id <= ID_HIGHEST,
+				"menu ID {id} out of the valid wx range"
+			);
 			assert!(!MENU_IDS[i + 1..].contains(id), "duplicate menu ID {id}");
 		}
 	}

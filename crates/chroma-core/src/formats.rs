@@ -17,11 +17,17 @@
 //!   (octave-folding sound up into the visible band), not physics:
 //!   sound and light are different phenomena.
 
+use patois::t;
+
 use crate::design::{Design, ShapeKind};
 use crate::{ColorFormat, Srgb};
 
 /// The D65 reference white, XYZ on the 0..100 scale.
-pub const D65: Xyz = Xyz { x: 95.047, y: 100.0, z: 108.883 };
+pub const D65: Xyz = Xyz {
+	x: 95.047,
+	y: 100.0,
+	z: 108.883,
+};
 /// The D65 white point in chromaticity coordinates.
 const D65_XY: (f64, f64) = (0.31271, 0.32902);
 
@@ -75,7 +81,11 @@ impl Srgb {
 		if y <= 0.0 || lum <= 0.0 {
 			return Srgb::BLACK;
 		}
-		Srgb::from_xyz(Xyz { x: x * lum / y, y: lum, z: (1.0 - x - y) * lum / y })
+		Srgb::from_xyz(Xyz {
+			x: x * lum / y,
+			y: lum,
+			z: (1.0 - x - y) * lum / y,
+		})
 	}
 
 	/// CMYK as percents 0..100: (cyan, magenta, yellow, key/black).
@@ -179,7 +189,11 @@ impl Srgb {
 			lab_f(xyz.y / D65.y),
 			lab_f(xyz.z / D65.z),
 		);
-		Lab { l: 116.0 * fy - 16.0, a: 500.0 * (fx - fy), b: 200.0 * (fy - fz) }
+		Lab {
+			l: 116.0 * fy - 16.0,
+			a: 500.0 * (fx - fy),
+			b: 200.0 * (fy - fz),
+		}
 	}
 
 	pub fn from_lab(lab: Lab) -> Srgb {
@@ -188,7 +202,12 @@ impl Srgb {
 		let fz = fy - lab.b / 200.0;
 		Srgb::from_xyz(Xyz {
 			x: D65.x * lab_f_inv(fx),
-			y: D65.y * if lab.l > 8.0 { fy * fy * fy } else { lab.l / 903.3 },
+			y: D65.y
+				* if lab.l > 8.0 {
+					fy * fy * fy
+				} else {
+					lab.l / 903.3
+				},
 			z: D65.z * lab_f_inv(fz),
 		})
 	}
@@ -204,7 +223,11 @@ impl Srgb {
 
 	pub fn from_lch(l: f64, c: f64, h: f64) -> Srgb {
 		let hr = h.to_radians();
-		Srgb::from_lab(Lab { l, a: c * hr.cos(), b: c * hr.sin() })
+		Srgb::from_lab(Lab {
+			l,
+			a: c * hr.cos(),
+			b: c * hr.sin(),
+		})
 	}
 
 	/// CIE L*u*v* against D65: L 0..100, u and v signed.
@@ -230,7 +253,12 @@ impl Srgb {
 		if vp == 0.0 {
 			return Srgb::BLACK;
 		}
-		let y = D65.y * if l > 8.0 { ((l + 16.0) / 116.0).powi(3) } else { l / 903.3 };
+		let y = D65.y
+			* if l > 8.0 {
+				((l + 16.0) / 116.0).powi(3)
+			} else {
+				l / 903.3
+			};
 		let x = y * 9.0 * up / (4.0 * vp);
 		let z = y * (12.0 - 3.0 * up - 20.0 * vp) / (4.0 * vp);
 		Srgb::from_xyz(Xyz { x, y, z })
@@ -292,7 +320,11 @@ impl Srgb {
 			});
 		}
 		let (nm, _) = locus_hit(wx, wy, -dx, -dy)?;
-		Some(Wavelength { nanometres: nm, complementary: true, purity: 0.0 })
+		Some(Wavelength {
+			nanometres: nm,
+			complementary: true,
+			purity: 0.0,
+		})
 	}
 }
 
@@ -326,15 +358,12 @@ impl Wavelength {
 	/// "complementary wavelength", never plain "wavelength".
 	pub fn spoken(&self) -> String {
 		if self.complementary {
-			format!(
-				"no dominant wavelength (purple family); complementary wavelength {:.0} nanometres",
-				self.nanometres
-			)
+			t("no dominant wavelength (purple family); complementary wavelength %s nanometres")
+				.replacen("%s", &format!("{:.0}", self.nanometres), 1)
 		} else {
-			format!(
-				"dominant wavelength {:.0} nanometres, excitation purity {:.0} percent",
-				self.nanometres, self.purity
-			)
+			t("dominant wavelength %s nanometres, excitation purity %s percent")
+				.replacen("%s", &format!("{:.0}", self.nanometres), 1)
+				.replacen("%s", &format!("{:.0}", self.purity), 1)
 		}
 	}
 }
@@ -506,7 +535,11 @@ pub struct XorShift(u64);
 impl XorShift {
 	pub fn new(seed: u64) -> XorShift {
 		// Zero is xorshift's fixed point; nudge it off.
-		XorShift(if seed == 0 { 0x9E37_79B9_7F4A_7C15 } else { seed })
+		XorShift(if seed == 0 {
+			0x9E37_79B9_7F4A_7C15
+		} else {
+			seed
+		})
 	}
 
 	pub fn next_u64(&mut self) -> u64 {
@@ -533,21 +566,21 @@ pub fn random_color(seed: u64) -> Srgb {
 /// The WCAG verdict for a contrast ratio, in words a designer can
 /// act on: the thresholds are the WCAG AA lines (4.5 for normal
 /// text, 3 for large text) and the AAA line (7).
-pub fn contrast_verdict(ratio: f32) -> &'static str {
+pub fn contrast_verdict(ratio: f32) -> String {
 	match ratio {
-		x if x >= 7.0 => "excellent contrast, readable at any text size",
-		x if x >= 4.5 => "good contrast, readable as normal text",
-		x if x >= 3.0 => "fair contrast, readable only as large text",
-		_ => "poor contrast, hard to read at any size",
+		x if x >= 7.0 => t("excellent contrast, readable at any text size"),
+		x if x >= 4.5 => t("good contrast, readable as normal text"),
+		x if x >= 3.0 => t("fair contrast, readable only as large text"),
+		_ => t("poor contrast, hard to read at any size"),
 	}
 }
 
 /// How readable one text element is, in one word group.
-fn readability_word(ratio: f32) -> &'static str {
+fn readability_word(ratio: f32) -> String {
 	match ratio {
-		x if x >= 4.5 => "easy to read",
-		x if x >= 3.0 => "hard to read",
-		_ => "unreadable",
+		x if x >= 4.5 => t("easy to read"),
+		x if x >= 3.0 => t("hard to read"),
+		_ => t("unreadable"),
 	}
 }
 
@@ -557,9 +590,13 @@ fn readability_word(ratio: f32) -> &'static str {
 /// against the background only — a shape painted directly behind a
 /// text element is not accounted for (stated in the report itself).
 pub fn text_readability(design: &Design) -> String {
-	let texts: Vec<_> = design.shapes.iter().filter(|s| s.kind == ShapeKind::Text).collect();
+	let texts: Vec<_> = design
+		.shapes
+		.iter()
+		.filter(|s| s.kind == ShapeKind::Text)
+		.collect();
 	if texts.is_empty() {
-		return "This design has no text elements to check.".to_string();
+		return t("This design has no text elements to check.");
 	}
 	let mut out = format!(
 		"Text readability, measured against the design background ({}). Shapes painted behind text are not accounted for.\n",
@@ -567,14 +604,14 @@ pub fn text_readability(design: &Design) -> String {
 	);
 	for (i, s) in texts.iter().enumerate() {
 		let ratio = s.fill.contrast(design.background);
-		out.push_str(&format!(
-			"{}. \"{}\" in {}: contrast {:.1} to 1 against the background, {}.\n",
-			i + 1,
-			s.text,
-			crate::color_words(s.fill),
-			ratio,
-			readability_word(ratio)
-		));
+		out.push_str(
+			&t("%s. \"%s\" in %s: contrast %s to 1 against the background, %s.\n")
+				.replacen("%s", &(i + 1).to_string(), 1)
+				.replacen("%s", &s.text, 1)
+				.replacen("%s", &crate::color_words(s.fill), 1)
+				.replacen("%s", &format!("{:.1}", ratio), 1)
+				.replacen("%s", &readability_word(ratio), 1),
+		);
 	}
 	out
 }
@@ -770,8 +807,14 @@ pub struct ChannelDef {
 
 impl ChannelDef {
 	/// The spoken name: system and channel together, "LCH hue".
+	/// This is the English source string, and the translation key.
 	pub fn label(&self) -> String {
 		format!("{} {}", self.system, self.name)
+	}
+
+	/// The spoken name as the app shows it, translated.
+	pub fn display_label(&self) -> String {
+		t(&self.label())
 	}
 
 	/// Bring a slider value inside this channel's range.
@@ -785,11 +828,13 @@ impl ChannelDef {
 		let value = self.clamp(value);
 		match self.unit {
 			ChannelUnit::Plain => format!("{value}"),
-			ChannelUnit::Percent => format!("{value} percent"),
-			ChannelUnit::Degrees => format!("{value} degrees"),
-			ChannelUnit::DegreesFixed(d) => {
-				format!("{:.*} degrees", d as usize, value as f64 / 10f64.powi(d as i32))
-			}
+			ChannelUnit::Percent => t("%s percent").replacen("%s", &value.to_string(), 1),
+			ChannelUnit::Degrees => t("%s degrees").replacen("%s", &value.to_string(), 1),
+			ChannelUnit::DegreesFixed(d) => t("%s degrees").replacen(
+				"%s",
+				&format!("{:.*}", d as usize, value as f64 / 10f64.powi(d as i32)),
+				1,
+			),
 			ChannelUnit::HexDigit => format!("{:X}", value as u8),
 			ChannelUnit::Fixed(d) => {
 				format!("{:.*}", d as usize, value as f64 / 10f64.powi(d as i32))
@@ -835,7 +880,14 @@ const fn ch(
 	step: i32,
 	unit: ChannelUnit,
 ) -> ChannelDef {
-	ChannelDef { name, system, min, max, step, unit }
+	ChannelDef {
+		name,
+		system,
+		min,
+		max,
+		step,
+		unit,
+	}
 }
 
 /// The channels of a color format, in the order the format itself
@@ -845,6 +897,60 @@ const fn ch(
 /// percent (white's Z is 108.9); LUV's u reaches 175 in sRGB, so
 /// Lab's nominal ±128 would clip real colors there; Hunter Lab's
 /// b reaches −200 at blue. LCH chroma tops out near 134 in sRGB.
+/// Extraction anchor: the channel labels are composed from
+/// table data ("LCH" + "hue"), so every composed label is listed
+/// here once as a literal `t("...")`. A test keeps this list in
+/// step with the labels `channels` actually produces.
+#[doc(hidden)]
+pub fn channel_label_anchors() -> Vec<String> {
+	vec![
+		t("Hex red first digit"),
+		t("Hex red second digit"),
+		t("Hex green first digit"),
+		t("Hex green second digit"),
+		t("Hex blue first digit"),
+		t("Hex blue second digit"),
+		t("HSL saturation"),
+		t("HSL lightness"),
+		t("HSV saturation"),
+		t("HSV value"),
+		t("CMYK cyan"),
+		t("CMYK magenta"),
+		t("CMYK yellow"),
+		t("CMYK black"),
+		t("XYZ x"),
+		t("XYZ y"),
+		t("XYZ z"),
+		t("xyY x"),
+		t("xyY y"),
+		t("xyY luminance"),
+		t("Lab a"),
+		t("Lab b"),
+		t("LCH chroma"),
+		t("LCH hue"),
+		t("LUV u"),
+		t("LUV v"),
+		t("Hunter Lab a"),
+		t("Hunter Lab b"),
+		t("Decimal red byte"),
+		t("Decimal green byte"),
+		t("Decimal blue byte"),
+		t("Binary is a readout, not an editing system: it writes the color out as bits, and bits are not values you can slide. Choose another color format to edit its channels."),
+		t("RGB red"),
+		t("RGB green"),
+		t("RGB blue"),
+		t("Web safe red"),
+		t("Web safe green"),
+		t("Web safe blue"),
+		t("HSL hue"),
+		t("HSV hue"),
+		t("Lab lightness"),
+		t("LCH lightness"),
+		t("LUV lightness"),
+		t("Hunter Lab lightness"),
+	]
+}
+
 pub fn channels(format: ColorFormat) -> ChannelSet {
 	use ChannelUnit::*;
 	let rgb = |system: &'static str, step: i32, unit: ChannelUnit| {
@@ -934,7 +1040,9 @@ pub fn channels(format: ColorFormat) -> ChannelSet {
 /// A color's channel values in a format, in slider units, one per
 /// channel `channels` defines. Empty for binary (a readout).
 pub fn channel_values(format: ColorFormat, color: Srgb) -> Vec<i32> {
-	let ChannelSet::Sliders(defs) = channels(format) else { return Vec::new() };
+	let ChannelSet::Sliders(defs) = channels(format) else {
+		return Vec::new();
+	};
 	let raw: Vec<f64> = match format {
 		ColorFormat::Hex => vec![
 			(color.r >> 4) as f64,
@@ -989,7 +1097,10 @@ pub fn channel_values(format: ColorFormat, color: Srgb) -> Vec<i32> {
 		}
 		ColorFormat::Binary => Vec::new(),
 	};
-	defs.iter().zip(raw).map(|(d, r)| d.clamp(d.units(r))).collect()
+	defs.iter()
+		.zip(raw)
+		.map(|(d, r)| d.clamp(d.units(r)))
+		.collect()
 }
 
 /// The color a format's channel values name, in slider units:
@@ -999,10 +1110,16 @@ pub fn channel_values(format: ColorFormat, color: Srgb) -> Vec<i32> {
 /// has no channels and names black — callers show its readout
 /// note instead of ever calling this.
 pub fn color_from_channels(format: ColorFormat, values: &[i32]) -> Srgb {
-	let ChannelSet::Sliders(defs) = channels(format) else { return Srgb::BLACK };
-	let real = |i: usize| defs.get(i).map_or(0.0, |d| d.real(*values.get(i).unwrap_or(&0)));
+	let ChannelSet::Sliders(defs) = channels(format) else {
+		return Srgb::BLACK;
+	};
+	let real = |i: usize| {
+		defs.get(i)
+			.map_or(0.0, |d| d.real(*values.get(i).unwrap_or(&0)))
+	};
 	let byte = |i: usize| {
-		defs.get(i).map_or(0, |d| d.clamp(*values.get(i).unwrap_or(&0))) as u8
+		defs.get(i)
+			.map_or(0, |d| d.clamp(*values.get(i).unwrap_or(&0))) as u8
 	};
 	match format {
 		ColorFormat::Hex => Srgb::new(
@@ -1011,16 +1128,24 @@ pub fn color_from_channels(format: ColorFormat, values: &[i32]) -> Srgb {
 			(byte(4) << 4) | byte(5),
 		),
 		ColorFormat::Rgb => Srgb::new(byte(0), byte(1), byte(2)),
-		ColorFormat::Decimal => Srgb::from_decimal(
-			(byte(0) as u32) << 16 | (byte(1) as u32) << 8 | byte(2) as u32,
-		),
+		ColorFormat::Decimal => {
+			Srgb::from_decimal((byte(0) as u32) << 16 | (byte(1) as u32) << 8 | byte(2) as u32)
+		}
 		ColorFormat::WebSafe => Srgb::new(byte(0), byte(1), byte(2)).to_web_safe(),
 		ColorFormat::Hsl => srgb_from_hsl(real(0) as f32, real(1) as f32, real(2) as f32),
 		ColorFormat::Hsv => srgb_from_hsv(real(0) as f32, real(1) as f32, real(2) as f32),
 		ColorFormat::Cmyk => Srgb::from_cmyk(real(0), real(1), real(2), real(3)),
-		ColorFormat::Xyz => Srgb::from_xyz(Xyz { x: real(0), y: real(1), z: real(2) }),
+		ColorFormat::Xyz => Srgb::from_xyz(Xyz {
+			x: real(0),
+			y: real(1),
+			z: real(2),
+		}),
 		ColorFormat::XyY => Srgb::from_xyy(real(0), real(1), real(2)),
-		ColorFormat::Lab => Srgb::from_lab(Lab { l: real(0), a: real(1), b: real(2) }),
+		ColorFormat::Lab => Srgb::from_lab(Lab {
+			l: real(0),
+			a: real(1),
+			b: real(2),
+		}),
 		ColorFormat::Lch => Srgb::from_lch(real(0), real(1), real(2)),
 		ColorFormat::Luv => Srgb::from_luv(real(0), real(1), real(2)),
 		ColorFormat::HunterLab => Srgb::from_hunter_lab(real(0), real(1), real(2)),
@@ -1074,12 +1199,18 @@ mod tests {
 	fn xyz_anchors_and_roundtrip() {
 		// White is the D65 white point itself.
 		let w = Srgb::WHITE.to_xyz();
-		assert!(close(w.x, 95.047, 0.05) && close(w.y, 100.0, 0.05) && close(w.z, 108.883, 0.05), "{w:?}");
+		assert!(
+			close(w.x, 95.047, 0.05) && close(w.y, 100.0, 0.05) && close(w.z, 108.883, 0.05),
+			"{w:?}"
+		);
 		let b = Srgb::BLACK.to_xyz();
 		assert!(close(b.x, 0.0, 1e-9) && close(b.y, 0.0, 1e-9) && close(b.z, 0.0, 1e-9));
 		// Pure red's published XYZ (D65): 41.25, 21.27, 1.93.
 		let r = Srgb::new(255, 0, 0).to_xyz();
-		assert!(close(r.x, 41.25, 0.1) && close(r.y, 21.27, 0.1) && close(r.z, 1.93, 0.1), "{r:?}");
+		assert!(
+			close(r.x, 41.25, 0.1) && close(r.y, 21.27, 0.1) && close(r.z, 1.93, 0.1),
+			"{r:?}"
+		);
 		for c in grid() {
 			assert!(channel_close(Srgb::from_xyz(c.to_xyz()), c, 1), "{c}");
 		}
@@ -1107,7 +1238,12 @@ mod tests {
 		assert_eq!(Srgb::BLACK.to_cmyk(), (0.0, 0.0, 0.0, 100.0));
 		assert_eq!(Srgb::WHITE.to_cmyk(), (0.0, 0.0, 0.0, 0.0));
 		let (c, m, y, k) = Srgb::new(255, 0, 0).to_cmyk();
-		assert!(close(c, 0.0, 0.01) && close(m, 100.0, 0.01) && close(y, 100.0, 0.01) && close(k, 0.0, 0.01));
+		assert!(
+			close(c, 0.0, 0.01)
+				&& close(m, 100.0, 0.01)
+				&& close(y, 100.0, 0.01)
+				&& close(k, 0.0, 0.01)
+		);
 		for col in grid() {
 			let (c, m, y, k) = col.to_cmyk();
 			assert!(channel_close(Srgb::from_cmyk(c, m, y, k), col, 1), "{col}");
@@ -1117,12 +1253,21 @@ mod tests {
 	#[test]
 	fn lab_anchors_and_roundtrip() {
 		let w = Srgb::WHITE.to_lab();
-		assert!(close(w.l, 100.0, 0.05) && close(w.a, 0.0, 0.05) && close(w.b, 0.0, 0.05), "{w:?}");
+		assert!(
+			close(w.l, 100.0, 0.05) && close(w.a, 0.0, 0.05) && close(w.b, 0.0, 0.05),
+			"{w:?}"
+		);
 		let b = Srgb::BLACK.to_lab();
-		assert!(close(b.l, 0.0, 0.01) && close(b.a, 0.0, 0.01) && close(b.b, 0.0, 0.01), "{b:?}");
+		assert!(
+			close(b.l, 0.0, 0.01) && close(b.a, 0.0, 0.01) && close(b.b, 0.0, 0.01),
+			"{b:?}"
+		);
 		// Published CIE Lab for sRGB red (D65): about 53.2, 80.1, 67.2.
 		let r = Srgb::new(255, 0, 0).to_lab();
-		assert!(close(r.l, 53.24, 0.3) && close(r.a, 80.09, 0.3) && close(r.b, 67.20, 0.3), "{r:?}");
+		assert!(
+			close(r.l, 53.24, 0.3) && close(r.a, 80.09, 0.3) && close(r.b, 67.20, 0.3),
+			"{r:?}"
+		);
 		for c in grid() {
 			assert!(channel_close(Srgb::from_lab(c.to_lab()), c, 1), "{c}");
 		}
@@ -1142,7 +1287,10 @@ mod tests {
 	#[test]
 	fn luv_roundtrip_and_white() {
 		let (l, u, v) = Srgb::WHITE.to_luv();
-		assert!(close(l, 100.0, 0.05) && close(u, 0.0, 0.1) && close(v, 0.0, 0.1), "{l} {u} {v}");
+		assert!(
+			close(l, 100.0, 0.05) && close(u, 0.0, 0.1) && close(v, 0.0, 0.1),
+			"{l} {u} {v}"
+		);
 		assert_eq!(Srgb::BLACK.to_luv(), (0.0, 0.0, 0.0));
 		for c in grid() {
 			let (l, u, v) = c.to_luv();
@@ -1153,7 +1301,10 @@ mod tests {
 	#[test]
 	fn hunter_lab_white_black_and_roundtrip() {
 		let (l, a, b) = Srgb::WHITE.to_hunter_lab();
-		assert!(close(l, 100.0, 0.1) && close(a, 0.0, 0.15) && close(b, 0.0, 0.15), "{l} {a} {b}");
+		assert!(
+			close(l, 100.0, 0.1) && close(a, 0.0, 0.15) && close(b, 0.0, 0.15),
+			"{l} {a} {b}"
+		);
 		assert_eq!(Srgb::BLACK.to_hunter_lab(), (0.0, 0.0, 0.0));
 		// Red is firmly on the +a side with L near 46.
 		let (l, a, _) = Srgb::new(255, 0, 0).to_hunter_lab();
@@ -1179,9 +1330,18 @@ mod tests {
 			assert_eq!(s.to_web_safe(), s);
 			assert!(s.r % 51 == 0 && s.g % 51 == 0 && s.b % 51 == 0);
 		}
-		assert_eq!(Srgb::new(15, 94, 104).to_binary(), "00001111 01011110 01101000");
-		assert_eq!(Srgb::from_binary("00001111 01011110 01101000"), Some(Srgb::new(15, 94, 104)));
-		assert_eq!(Srgb::from_binary("111111111111111111111111"), Some(Srgb::WHITE));
+		assert_eq!(
+			Srgb::new(15, 94, 104).to_binary(),
+			"00001111 01011110 01101000"
+		);
+		assert_eq!(
+			Srgb::from_binary("00001111 01011110 01101000"),
+			Some(Srgb::new(15, 94, 104))
+		);
+		assert_eq!(
+			Srgb::from_binary("111111111111111111111111"),
+			Some(Srgb::WHITE)
+		);
 		assert_eq!(Srgb::from_binary("1010"), None);
 		assert_eq!(Srgb::from_binary("00001111 01011110 0110100x"), None);
 		for c in grid() {
@@ -1194,21 +1354,37 @@ mod tests {
 		// Published dominant wavelengths of the sRGB primaries (D65):
 		// red about 611 nm, green about 549 nm, blue about 464 nm.
 		let r = Srgb::new(255, 0, 0).dominant_wavelength().unwrap();
-		assert!(!r.complementary && (605.0..=620.0).contains(&r.nanometres), "{r:?}");
+		assert!(
+			!r.complementary && (605.0..=620.0).contains(&r.nanometres),
+			"{r:?}"
+		);
 		assert!(r.purity > 90.0, "{r:?}");
 		let g = Srgb::new(0, 255, 0).dominant_wavelength().unwrap();
-		assert!(!g.complementary && (543.0..=556.0).contains(&g.nanometres), "{g:?}");
+		assert!(
+			!g.complementary && (543.0..=556.0).contains(&g.nanometres),
+			"{g:?}"
+		);
 		let b = Srgb::new(0, 0, 255).dominant_wavelength().unwrap();
-		assert!(!b.complementary && (458.0..=472.0).contains(&b.nanometres), "{b:?}");
+		assert!(
+			!b.complementary && (458.0..=472.0).contains(&b.nanometres),
+			"{b:?}"
+		);
 		// Yellow is a spectrum-side color too, around 570-575.
 		let y = Srgb::new(255, 255, 0).dominant_wavelength().unwrap();
-		assert!(!y.complementary && (565.0..=580.0).contains(&y.nanometres), "{y:?}");
+		assert!(
+			!y.complementary && (565.0..=580.0).contains(&y.nanometres),
+			"{y:?}"
+		);
 		// Magenta sits on the purple line: no dominant wavelength,
 		// only a complementary one (in the greens).
 		let m = Srgb::new(255, 0, 255).dominant_wavelength().unwrap();
 		assert!(m.complementary, "{m:?}");
 		assert!((500.0..=570.0).contains(&m.nanometres), "{m:?}");
-		assert!(m.spoken().contains("complementary wavelength"), "{}", m.spoken());
+		assert!(
+			m.spoken().contains("complementary wavelength"),
+			"{}",
+			m.spoken()
+		);
 		// Grays and white have no wavelength at all.
 		assert_eq!(Srgb::new(120, 120, 120).dominant_wavelength(), None);
 		assert_eq!(Srgb::WHITE.dominant_wavelength(), None);
@@ -1262,7 +1438,10 @@ mod tests {
 		assert_eq!(gray.r, gray.g);
 		assert_eq!(subtract(a, Srgb::BLACK), a);
 		assert_eq!(subtract(a, Srgb::WHITE), Srgb::BLACK);
-		assert_eq!(subtract(Srgb::new(100, 50, 200), Srgb::new(30, 80, 10)), Srgb::new(70, 0, 190));
+		assert_eq!(
+			subtract(Srgb::new(100, 50, 200), Srgb::new(30, 80, 10)),
+			Srgb::new(70, 0, 190)
+		);
 		let ramp = gradient(a, b, 5);
 		assert_eq!(ramp.len(), 5);
 		assert_eq!(ramp[0], a);
@@ -1274,7 +1453,11 @@ mod tests {
 	fn random_color_is_deterministic() {
 		assert_eq!(random_color(42), random_color(42));
 		assert_ne!(random_color(42), random_color(43));
-		assert_eq!(random_color(0), random_color(0), "zero seed is nudged, not stuck");
+		assert_eq!(
+			random_color(0),
+			random_color(0),
+			"zero seed is nudged, not stuck"
+		);
 		let mut rng = XorShift::new(7);
 		let (c1, c2) = (rng.color(), rng.color());
 		assert_ne!(c1, c2, "the stream advances");
@@ -1293,8 +1476,26 @@ mod tests {
 	fn text_readability_reports_each_text_element() {
 		use crate::design::{Design, Shape};
 		let mut d = Design::new(400, 200, Srgb::WHITE);
-		d.shapes.push(Shape::text("Hello", "Arial", 14, 0, 0, 100, 20, Srgb::BLACK));
-		d.shapes.push(Shape::text("Faint", "Arial", 14, 0, 30, 100, 20, Srgb::new(230, 230, 230)));
+		d.shapes.push(Shape::text(
+			"Hello",
+			"Arial",
+			14,
+			0,
+			0,
+			100,
+			20,
+			Srgb::BLACK,
+		));
+		d.shapes.push(Shape::text(
+			"Faint",
+			"Arial",
+			14,
+			0,
+			30,
+			100,
+			20,
+			Srgb::new(230, 230, 230),
+		));
 		let report = text_readability(&d);
 		assert!(report.contains("\"Hello\""), "{report}");
 		assert!(report.contains("easy to read"), "{report}");
@@ -1333,7 +1534,10 @@ mod tests {
 		let (h, _, _) = comp.to_hsl();
 		assert!((h - 270.0).abs() < 8.0, "yellow's RYB complement hue {h}");
 		// Achromatic colors have no hue and come back unchanged.
-		assert_eq!(rotate_hue_ryb(Srgb::new(120, 120, 120), 180.0), Srgb::new(120, 120, 120));
+		assert_eq!(
+			rotate_hue_ryb(Srgb::new(120, 120, 120), 180.0),
+			Srgb::new(120, 120, 120)
+		);
 		// A full turn is identity (within a rounding step).
 		let c = Srgb::new(200, 60, 40);
 		assert!(channel_close(rotate_hue_ryb(c, 360.0), c, 1));
@@ -1377,7 +1581,9 @@ mod tests {
 		let ChannelSet::Sliders(defs) = channels(ColorFormat::WebSafe) else {
 			panic!("web safe has sliders")
 		};
-		assert!(defs.iter().all(|d| d.step == 51 && d.min == 0 && d.max == 255));
+		assert!(defs
+			.iter()
+			.all(|d| d.step == 51 && d.min == 0 && d.max == 255));
 	}
 
 	#[test]
@@ -1386,7 +1592,9 @@ mod tests {
 			panic!("hex has sliders")
 		};
 		assert_eq!(defs.len(), 6);
-		assert!(defs.iter().all(|d| d.min == 0 && d.max == 15 && d.step == 1));
+		assert!(defs
+			.iter()
+			.all(|d| d.min == 0 && d.max == 15 && d.step == 1));
 		// The digits of a color, spelled out: 0xAB is A then B.
 		// The 0x00 and 0xFF edges are in the list on purpose —
 		// a digit at its end must still round-trip exactly.
@@ -1410,7 +1618,11 @@ mod tests {
 				],
 				"{c} digits"
 			);
-			assert_eq!(color_from_channels(ColorFormat::Hex, &values), c, "{c} round trip");
+			assert_eq!(
+				color_from_channels(ColorFormat::Hex, &values),
+				c,
+				"{c} round trip"
+			);
 		}
 		// Setting one digit moves only its own nibble.
 		assert_eq!(
@@ -1432,7 +1644,10 @@ mod tests {
 		assert_eq!(defs(ColorFormat::Hex)[5].label(), "Hex blue second digit");
 		// LCH: lightness in tenths, degrees for hue.
 		assert_eq!(defs(ColorFormat::Lch)[0].format_value(620), "62.0");
-		assert_eq!(defs(ColorFormat::Lch)[2].format_value(1870), "187.0 degrees");
+		assert_eq!(
+			defs(ColorFormat::Lch)[2].format_value(1870),
+			"187.0 degrees"
+		);
 		assert_eq!(defs(ColorFormat::Lch)[2].label(), "LCH hue");
 		// Percents say so.
 		assert_eq!(defs(ColorFormat::Hsl)[1].format_value(75), "75 percent");
@@ -1452,17 +1667,27 @@ mod tests {
 		let c = Srgb::new(15, 94, 104);
 		// Hex's first channel is red's first digit: red 0x0F
 		// with its first digit set to A becomes 0xAF.
-		assert_eq!(set_channel(ColorFormat::Hex, c, 0, 0xA), Srgb::new(0xAF, 94, 104));
+		assert_eq!(
+			set_channel(ColorFormat::Hex, c, 0, 0xA),
+			Srgb::new(0xAF, 94, 104)
+		);
 		// LCH hue: setting the hue channel is from_lch at that hue
 		// (LCH lightness and chroma ride in tenths).
 		let (l, ch, _) = c.to_lch();
 		let t1 = |x: f64| (x * 10.0).round() / 10.0;
-		assert_eq!(set_channel(ColorFormat::Lch, c, 2, 0), Srgb::from_lch(t1(l), t1(ch), 0.0));
+		assert_eq!(
+			set_channel(ColorFormat::Lch, c, 2, 0),
+			Srgb::from_lch(t1(l), t1(ch), 0.0)
+		);
 		// Lab a likewise: 200 tenths is a 20.0.
 		let lab = c.to_lab();
 		assert_eq!(
 			set_channel(ColorFormat::Lab, c, 1, 200),
-			Srgb::from_lab(Lab { l: t1(lab.l), a: 20.0, b: t1(lab.b) })
+			Srgb::from_lab(Lab {
+				l: t1(lab.l),
+				a: 20.0,
+				b: t1(lab.b)
+			})
 		);
 		// CMYK key to 50.
 		let (cm, mm, ym, _) = c.to_cmyk();
@@ -1480,10 +1705,17 @@ mod tests {
 		let xyz = c.to_xyz();
 		assert_eq!(
 			set_channel(ColorFormat::Xyz, c, 1, 5000),
-			Srgb::from_xyz(Xyz { x: (xyz.x * 100.0).round() / 100.0, y: 50.0, z: (xyz.z * 100.0).round() / 100.0 })
+			Srgb::from_xyz(Xyz {
+				x: (xyz.x * 100.0).round() / 100.0,
+				y: 50.0,
+				z: (xyz.z * 100.0).round() / 100.0
+			})
 		);
 		// Decimal's green byte is the packed number's middle byte.
-		assert_eq!(set_channel(ColorFormat::Decimal, c, 1, 0), Srgb::new(15, 0, 104));
+		assert_eq!(
+			set_channel(ColorFormat::Decimal, c, 1, 0),
+			Srgb::new(15, 0, 104)
+		);
 		// Web safe snaps: 51 is a grid point, and setting red to it
 		// gives exactly the snapped color with red 51.
 		assert_eq!(
@@ -1500,13 +1732,21 @@ mod tests {
 		// Exact formats rebuild exactly.
 		for f in [ColorFormat::Hex, ColorFormat::Rgb, ColorFormat::Decimal] {
 			for c in grid() {
-				assert_eq!(color_from_channels(f, &channel_values(f, c)), c, "{} {c}", f.name());
+				assert_eq!(
+					color_from_channels(f, &channel_values(f, c)),
+					c,
+					"{} {c}",
+					f.name()
+				);
 			}
 		}
 		// Web safe rebuilds the snapped color, exactly.
 		for c in grid() {
 			assert_eq!(
-				color_from_channels(ColorFormat::WebSafe, &channel_values(ColorFormat::WebSafe, c)),
+				color_from_channels(
+					ColorFormat::WebSafe,
+					&channel_values(ColorFormat::WebSafe, c)
+				),
 				c.to_web_safe()
 			);
 		}
@@ -1547,7 +1787,9 @@ mod tests {
 			Srgb::new(255, 0, 255),
 		];
 		for f in ColorFormat::ALL {
-			let ChannelSet::Sliders(defs) = channels(*f) else { continue };
+			let ChannelSet::Sliders(defs) = channels(*f) else {
+				continue;
+			};
 			for c in grid().into_iter().chain(extremes) {
 				let values = channel_values(*f, c);
 				assert_eq!(values.len(), defs.len());
@@ -1566,3 +1808,23 @@ mod tests {
 	}
 }
 
+#[cfg(test)]
+mod anchor_tests {
+	use super::*;
+
+	#[test]
+	fn channel_label_anchors_cover_every_channel() {
+		let anchors = channel_label_anchors();
+		for format in crate::ColorFormat::ALL.iter().copied() {
+			if let ChannelSet::Sliders(defs) = channels(format) {
+				for def in &defs {
+					assert!(
+						anchors.iter().any(|a| *a == def.label()),
+						"missing channel label anchor: {}",
+						def.label()
+					);
+				}
+			}
+		}
+	}
+}

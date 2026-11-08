@@ -8,6 +8,8 @@
 //! color stamps it; the stamp travels with the color into the saved
 //! project file.
 
+use patois::t;
+
 use crate::{describe_in, ColorFormat, Srgb};
 
 /// How one palette color was added.
@@ -32,11 +34,13 @@ impl Provenance {
 	/// description in the palette list.
 	pub fn spoken(&self) -> String {
 		match self {
-			Provenance::Starter => "the color Blind Designer starts with".to_string(),
-			Provenance::Typed => "typed in by hand".to_string(),
-			Provenance::Extracted { image } => format!("extracted from image {image}"),
-			Provenance::Generated { scheme } => format!("generated as {scheme}"),
-			Provenance::Imported { source } => format!("imported from {source}"),
+			Provenance::Starter => t("the color Blind Designer starts with"),
+			Provenance::Typed => t("typed in by hand"),
+			Provenance::Extracted { image } => {
+				t("extracted from image %s").replacen("%s", image, 1)
+			}
+			Provenance::Generated { scheme } => t("generated as %s").replacen("%s", scheme, 1),
+			Provenance::Imported { source } => t("imported from %s").replacen("%s", source, 1),
 		}
 	}
 }
@@ -58,7 +62,7 @@ pub fn starter_palette() -> Vec<PaletteColor> {
 pub fn gray_ramp() -> Vec<PaletteColor> {
 	[17u8, 51, 85, 119, 153, 187, 221, 238]
 		.iter()
-		.map(|v| PaletteColor::generated(Srgb::new(*v, *v, *v), "the grayscale start ramp"))
+		.map(|v| PaletteColor::generated(Srgb::new(*v, *v, *v), &t("the grayscale start ramp")))
 		.collect()
 }
 
@@ -73,7 +77,11 @@ pub struct PaletteColor {
 
 impl PaletteColor {
 	pub fn new(color: Srgb, provenance: Provenance) -> PaletteColor {
-		PaletteColor { color, coverage: None, provenance }
+		PaletteColor {
+			color,
+			coverage: None,
+			provenance,
+		}
 	}
 
 	pub fn starter(color: Srgb) -> PaletteColor {
@@ -88,16 +96,28 @@ impl PaletteColor {
 		PaletteColor {
 			color,
 			coverage: Some(coverage),
-			provenance: Provenance::Extracted { image: image.to_string() },
+			provenance: Provenance::Extracted {
+				image: image.to_string(),
+			},
 		}
 	}
 
 	pub fn generated(color: Srgb, scheme: &str) -> PaletteColor {
-		PaletteColor::new(color, Provenance::Generated { scheme: scheme.to_string() })
+		PaletteColor::new(
+			color,
+			Provenance::Generated {
+				scheme: scheme.to_string(),
+			},
+		)
 	}
 
 	pub fn imported(color: Srgb, source: &str) -> PaletteColor {
-		PaletteColor::new(color, Provenance::Imported { source: source.to_string() })
+		PaletteColor::new(
+			color,
+			Provenance::Imported {
+				source: source.to_string(),
+			},
+		)
 	}
 
 	/// The palette-list line for this color: its description in the
@@ -106,7 +126,11 @@ impl PaletteColor {
 	pub fn spoken(&self, format: ColorFormat) -> String {
 		let mut s = describe_in(self.color, format);
 		if let Some(cov) = self.coverage {
-			s.push_str(&format!(", covers {:.0} percent of the image", cov * 100.0));
+			s.push_str(&t(", covers %s percent of the image").replacen(
+				"%s",
+				&format!("{:.0}", cov * 100.0),
+				1,
+			));
 		}
 		s.push_str(&format!(", {}", self.provenance.spoken()));
 		s
@@ -120,15 +144,25 @@ mod tests {
 	#[test]
 	fn every_provenance_speaks_its_origin() {
 		let c = Srgb::new(15, 94, 104);
-		assert!(PaletteColor::starter(c).spoken(ColorFormat::Hex).contains("starts with"));
-		assert!(PaletteColor::typed(c).spoken(ColorFormat::Hex).contains("typed in by hand"));
+		assert!(PaletteColor::starter(c)
+			.spoken(ColorFormat::Hex)
+			.contains("starts with"));
+		assert!(PaletteColor::typed(c)
+			.spoken(ColorFormat::Hex)
+			.contains("typed in by hand"));
 		let ex = PaletteColor::extracted(c, 0.42, "photo.jpg").spoken(ColorFormat::Hex);
 		assert!(ex.contains("extracted from image photo.jpg"), "{ex}");
 		assert!(ex.contains("covers 42 percent of the image"), "{ex}");
 		let gen = PaletteColor::generated(c, "complementary of #3A7CA5").spoken(ColorFormat::Hex);
-		assert!(gen.contains("generated as complementary of #3A7CA5"), "{gen}");
+		assert!(
+			gen.contains("generated as complementary of #3A7CA5"),
+			"{gen}"
+		);
 		let imp = PaletteColor::imported(c, "custom property --brand-1").spoken(ColorFormat::Hex);
-		assert!(imp.contains("imported from custom property --brand-1"), "{imp}");
+		assert!(
+			imp.contains("imported from custom property --brand-1"),
+			"{imp}"
+		);
 	}
 
 	#[test]

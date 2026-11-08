@@ -7,6 +7,8 @@
 //! is the design's memory: read top to bottom, it is the recipe that
 //! recreates the image exactly, and it is what the summary export writes.
 
+use patois::t;
+
 use crate::animation::Frame;
 use crate::design::{Design, Shape, ShapeKind, TextStyle};
 use crate::sliders::ColorAdjust;
@@ -57,8 +59,16 @@ impl DepthRole {
 	}
 
 	/// The spoken word: "background", "midground", and so on.
-	pub fn name(&self) -> &'static str {
-		self.id()
+	/// (The words match the ids today; the ids stay the file
+	/// format, the names are what translation changes.)
+	pub fn name(&self) -> String {
+		match self {
+			DepthRole::Unassigned => t("unassigned"),
+			DepthRole::Background => t("background"),
+			DepthRole::Midground => t("midground"),
+			DepthRole::Foreground => t("foreground"),
+			DepthRole::Sideground => t("sideground"),
+		}
 	}
 
 	/// The order the tactile sheet describes layers in: the
@@ -101,21 +111,71 @@ impl Layer {
 /// (and the app's spoken readout) uses.
 #[derive(Debug, Clone)]
 pub enum Event {
-	CanvasSet { width: u32, height: u32 },
-	BackgroundSet { color: Srgb },
-	LayerAdded { name: String },
-	LayerRenamed { from: String, to: String },
-	LayerRemoved { name: String },
-	LayerVisibility { name: String, visible: bool },
-	ShapeAdded { layer: String, shape: Shape },
-	ShapeRemoved { layer: String, shape: Shape },
-	ShapeShifted { layer: String, index: usize, dx: i32, dy: i32 },
-	ShapeResized { layer: String, index: usize, w: u32, h: u32 },
-	ShapeRotated { layer: String, index: usize, angle: f64 },
-	ShapeRecolored { layer: String, index: usize, color: Srgb },
-	ShapeCaptioned { layer: String, index: usize },
-	ShapeOpacitySet { layer: String, index: usize, opacity: u8 },
-	ShapeBrushSet { layer: String, index: usize, width: u32 },
+	CanvasSet {
+		width: u32,
+		height: u32,
+	},
+	BackgroundSet {
+		color: Srgb,
+	},
+	LayerAdded {
+		name: String,
+	},
+	LayerRenamed {
+		from: String,
+		to: String,
+	},
+	LayerRemoved {
+		name: String,
+	},
+	LayerVisibility {
+		name: String,
+		visible: bool,
+	},
+	ShapeAdded {
+		layer: String,
+		shape: Shape,
+	},
+	ShapeRemoved {
+		layer: String,
+		shape: Shape,
+	},
+	ShapeShifted {
+		layer: String,
+		index: usize,
+		dx: i32,
+		dy: i32,
+	},
+	ShapeResized {
+		layer: String,
+		index: usize,
+		w: u32,
+		h: u32,
+	},
+	ShapeRotated {
+		layer: String,
+		index: usize,
+		angle: f64,
+	},
+	ShapeRecolored {
+		layer: String,
+		index: usize,
+		color: Srgb,
+	},
+	ShapeCaptioned {
+		layer: String,
+		index: usize,
+	},
+	ShapeOpacitySet {
+		layer: String,
+		index: usize,
+		opacity: u8,
+	},
+	ShapeBrushSet {
+		layer: String,
+		index: usize,
+		width: u32,
+	},
 	ShapeColorAdjusted {
 		layer: String,
 		index: usize,
@@ -146,7 +206,10 @@ pub enum Event {
 		fog: i32,
 		hardness: i32,
 	},
-	LayerDepthSet { name: String, role: DepthRole },
+	LayerDepthSet {
+		name: String,
+		role: DepthRole,
+	},
 	DepthColorsAdjusted {
 		role: DepthRole,
 		count: usize,
@@ -162,76 +225,104 @@ pub enum Event {
 		fog: i32,
 		hardness: i32,
 	},
-	ShapeCornerSet { layer: String, index: usize, corner: u8 },
-	ShapeLocked { layer: String, index: usize, locked: bool },
-	TextEdited { layer: String, index: usize },
-	TextLinesSorted { layer: String, index: usize, ascending: bool },
-	TextsDistributed { count: usize, columns: usize },
-	TextGridAdded { count: usize, rows: usize, cols: usize },
-	SceneInserted { name: String, count: usize },
-	ColorTreated { scope: String, count: usize, locked: usize },
-	VariablesSubstituted { count: usize },
-	FrameAdded { index: usize, duration_ms: u32 },
-	FrameDuplicated { index: usize },
-	FrameRemoved { index: usize },
-	FrameMoved { from: usize, to: usize },
-	FrameDurationSet { index: usize, duration_ms: u32 },
-	AllFramesDurationSet { count: usize, duration_ms: u32 },
-	FrameLoaded { index: usize },
-	FrameUpdated { index: usize },
+	ShapeCornerSet {
+		layer: String,
+		index: usize,
+		corner: u8,
+	},
+	ShapeLocked {
+		layer: String,
+		index: usize,
+		locked: bool,
+	},
+	TextEdited {
+		layer: String,
+		index: usize,
+	},
+	TextLinesSorted {
+		layer: String,
+		index: usize,
+		ascending: bool,
+	},
+	TextsDistributed {
+		count: usize,
+		columns: usize,
+	},
+	TextGridAdded {
+		count: usize,
+		rows: usize,
+		cols: usize,
+	},
+	SceneInserted {
+		name: String,
+		count: usize,
+	},
+	ColorTreated {
+		scope: String,
+		count: usize,
+		locked: usize,
+	},
+	VariablesSubstituted {
+		count: usize,
+	},
+	FrameAdded {
+		index: usize,
+		duration_ms: u32,
+	},
+	FrameDuplicated {
+		index: usize,
+	},
+	FrameRemoved {
+		index: usize,
+	},
+	FrameMoved {
+		from: usize,
+		to: usize,
+	},
+	FrameDurationSet {
+		index: usize,
+		duration_ms: u32,
+	},
+	AllFramesDurationSet {
+		count: usize,
+		duration_ms: u32,
+	},
+	FrameLoaded {
+		index: usize,
+	},
+	FrameUpdated {
+		index: usize,
+	},
 }
 
 impl Event {
 	pub fn describe(&self, drawing: &Drawing) -> String {
 		match self {
 			Event::CanvasSet { width, height } => {
-				format!("Set the canvas to {width} by {height} pixels.")
+				t("Set the canvas to %s by %s pixels.").replacen("%s", &(width).to_string(), 1).replacen("%s", &(height).to_string(), 1)
 			}
 			Event::BackgroundSet { color } => {
-				format!("Set the background to {} ({}).", describe(*color), color.to_hex())
+				t("Set the background to %s (%s).").replacen("%s", &(describe(*color)).to_string(), 1).replacen("%s", &(color.to_hex()).to_string(), 1)
 			}
-			Event::LayerAdded { name } => format!("Add layer \"{name}\"."),
-			Event::LayerRenamed { from, to } => format!("Rename layer \"{from}\" to \"{to}\"."),
-			Event::LayerRemoved { name } => format!("Remove layer \"{name}\" and its shapes."),
+			Event::LayerAdded { name } => t("Add layer \"%s\".").replacen("%s", &(name).to_string(), 1),
+			Event::LayerRenamed { from, to } => t("Rename layer \"%s\" to \"%s\".").replacen("%s", &(from).to_string(), 1).replacen("%s", &(to).to_string(), 1),
+			Event::LayerRemoved { name } => t("Remove layer \"%s\" and its shapes.").replacen("%s", &(name).to_string(), 1),
 			Event::LayerVisibility { name, visible } => {
-				format!("{} layer \"{name}\".", if *visible { "Show" } else { "Hide" })
+				t("%s layer \"%s\".").replacen("%s", if *visible { "Show" } else { "Hide" }, 1).replacen("%s", &(name).to_string(), 1)
 			}
 			Event::ShapeAdded { layer, shape } => {
-				format!("On layer \"{layer}\", add {}.", drawing.caption_of(shape))
+				t("On layer \"%s\", add %s.").replacen("%s", &(layer).to_string(), 1).replacen("%s", &(drawing.caption_of(shape)).to_string(), 1)
 			}
 			Event::ShapeRemoved { layer, shape } => {
-				format!("On layer \"{layer}\", remove {}.", drawing.caption_of(shape))
+				t("On layer \"%s\", remove %s.").replacen("%s", &(layer).to_string(), 1).replacen("%s", &(drawing.caption_of(shape)).to_string(), 1)
 			}
-			Event::ShapeShifted { layer, index, dx, dy } => format!(
-				"On layer \"{layer}\", shift shape {} by {dx} across and {dy} down.",
-				index + 1
-			),
-			Event::ShapeResized { layer, index, w, h } => format!(
-				"On layer \"{layer}\", resize shape {} to {w} by {h} pixels.",
-				index + 1
-			),
-			Event::ShapeRotated { layer, index, angle } => format!(
-				"On layer \"{layer}\", rotate shape {} to {angle} degrees.",
-				index + 1
-			),
-			Event::ShapeRecolored { layer, index, color } => format!(
-				"On layer \"{layer}\", recolor shape {} to {} ({}).",
-				index + 1,
-				describe(*color),
-				color.to_hex()
-			),
-			Event::ShapeCaptioned { layer, index } => format!(
-				"On layer \"{layer}\", set the caption of shape {}.",
-				index + 1
-			),
-			Event::ShapeOpacitySet { layer, index, opacity } => format!(
-				"On layer \"{layer}\", set shape {} to {opacity} percent opaque.",
-				index + 1
-			),
-			Event::ShapeBrushSet { layer, index, width } => format!(
-				"On layer \"{layer}\", set the brush width of shape {} to {width} pixels.",
-				index + 1
-			),
+			Event::ShapeShifted { layer, index, dx, dy } => t("On layer \"%s\", shift shape %s by %s across and %s down.").replacen("%s", &(layer).to_string(), 1).replacen("%s", &(index + 1).to_string(), 1).replacen("%s", &(dx).to_string(), 1).replacen("%s", &(dy).to_string(), 1),
+			Event::ShapeResized { layer, index, w, h } => t("On layer \"%s\", resize shape %s to %s by %s pixels.").replacen("%s", &(layer).to_string(), 1).replacen("%s", &(index + 1).to_string(), 1).replacen("%s", &(w).to_string(), 1).replacen("%s", &(h).to_string(), 1),
+			Event::ShapeRotated { layer, index, angle } => t("On layer \"%s\", rotate shape %s to %s degrees.").replacen("%s", &(layer).to_string(), 1).replacen("%s", &(index + 1).to_string(), 1).replacen("%s", &(angle).to_string(), 1),
+			Event::ShapeRecolored { layer, index, color } => t("On layer \"%s\", recolor shape %s to %s (%s).").replacen("%s", &(layer).to_string(), 1).replacen("%s", &(index + 1).to_string(), 1).replacen("%s", &(describe(*color)).to_string(), 1).replacen("%s", &(color.to_hex()).to_string(), 1),
+			Event::ShapeCaptioned { layer, index } => t("On layer \"%s\", set the caption of shape %s.").replacen("%s", &(layer).to_string(), 1).replacen("%s", &(index + 1).to_string(), 1),
+			Event::ShapeOpacitySet { layer, index, opacity } => t("On layer \"%s\", set shape %s to %s percent opaque.").replacen("%s", &(layer).to_string(), 1).replacen("%s", &(index + 1).to_string(), 1).replacen("%s", &(opacity).to_string(), 1),
+			Event::ShapeBrushSet { layer, index, width } => t("On layer \"%s\", set the brush width of shape %s to %s pixels.").replacen("%s", &(layer).to_string(), 1).replacen("%s", &(index + 1).to_string(), 1).replacen("%s", &(width).to_string(), 1),
 			Event::ShapeColorAdjusted {
 				layer,
 				index,
@@ -247,10 +338,7 @@ impl Event {
 				fog,
 				hardness,
 			} => {
-				format!(
-					"On layer \"{layer}\", adjust the color of shape {}: {}.",
-					index + 1,
-					crate::sliders::ColorAdjust {
+				t("On layer \"%s\", adjust the color of shape %s: %s.").replacen("%s", &(layer).to_string(), 1).replacen("%s", &(index + 1).to_string(), 1).replacen("%s", &(crate::sliders::ColorAdjust {
 						shade: *shade,
 						tint: *tint,
 						tone: *tone,
@@ -263,8 +351,7 @@ impl Event {
 						fog: *fog,
 						hardness: *hardness,
 					}
-					.describe()
-				)
+					.describe()).to_string(), 1)
 			}
 			Event::LayerColorsAdjusted {
 				name,
@@ -281,9 +368,7 @@ impl Event {
 				fog,
 				hardness,
 			} => {
-				format!(
-					"Adjust the colors of all {count} elements on layer \"{name}\": {}.",
-					crate::sliders::ColorAdjust {
+				t("Adjust the colors of all %s elements on layer \"%s\": %s.").replacen("%s", &(count).to_string(), 1).replacen("%s", &(name).to_string(), 1).replacen("%s", &(crate::sliders::ColorAdjust {
 						shade: *shade,
 						tint: *tint,
 						tone: *tone,
@@ -296,36 +381,23 @@ impl Event {
 						fog: *fog,
 						hardness: *hardness,
 					}
-					.describe()
-				)
+					.describe()).to_string(), 1)
 			}
-			Event::FrameAdded { index, duration_ms } => format!(
-				"Add animation frame {}: a copy of the canvas as it is now, shown for {duration_ms} milliseconds.",
-				index + 1
-			),
+			Event::FrameAdded { index, duration_ms } => t("Add animation frame %s: a copy of the canvas as it is now, shown for %s milliseconds.").replacen("%s", &(index + 1).to_string(), 1).replacen("%s", &(duration_ms).to_string(), 1),
 			Event::FrameDuplicated { index } => {
-				format!("Duplicate animation frame {}.", index + 1)
+				t("Duplicate animation frame %s.").replacen("%s", &(index + 1).to_string(), 1)
 			}
 			Event::FrameRemoved { index } => {
-				format!("Remove animation frame {}.", index + 1)
+				t("Remove animation frame %s.").replacen("%s", &(index + 1).to_string(), 1)
 			}
-			Event::FrameMoved { from, to } => format!(
-				"Move animation frame {} to position {}.",
-				from + 1,
-				to + 1
-			),
-			Event::FrameDurationSet { index, duration_ms } => format!(
-				"Set animation frame {} to show for {duration_ms} milliseconds.",
-				index + 1
-			),
-			Event::AllFramesDurationSet { count, duration_ms } => format!(
-				"Set all {count} animation frames to show for {duration_ms} milliseconds each."
-			),
+			Event::FrameMoved { from, to } => t("Move animation frame %s to position %s.").replacen("%s", &(from + 1).to_string(), 1).replacen("%s", &(to + 1).to_string(), 1),
+			Event::FrameDurationSet { index, duration_ms } => t("Set animation frame %s to show for %s milliseconds.").replacen("%s", &(index + 1).to_string(), 1).replacen("%s", &(duration_ms).to_string(), 1),
+			Event::AllFramesDurationSet { count, duration_ms } => t("Set all %s animation frames to show for %s milliseconds each.").replacen("%s", &(count).to_string(), 1).replacen("%s", &(duration_ms).to_string(), 1),
 			Event::LayerDepthSet { name, role } => {
 				if *role == DepthRole::Unassigned {
-					format!("Clear the depth role of layer \"{name}\".")
+					t("Clear the depth role of layer \"%s\".").replacen("%s", &(name).to_string(), 1)
 				} else {
-					format!("Set layer \"{name}\" as {}.", role.name())
+					t("Set layer \"%s\" as %s.").replacen("%s", &(name).to_string(), 1).replacen("%s", &(role.name()).to_string(), 1)
 				}
 			}
 			Event::DepthColorsAdjusted {
@@ -343,10 +415,7 @@ impl Event {
 				fog,
 				hardness,
 			} => {
-				format!(
-					"Adjust the colors of all {count} elements on {} layers: {}.",
-					role.name(),
-					crate::sliders::ColorAdjust {
+				t("Adjust the colors of all %s elements on %s layers: %s.").replacen("%s", &(count).to_string(), 1).replacen("%s", &(role.name()).to_string(), 1).replacen("%s", &(crate::sliders::ColorAdjust {
 						shade: *shade,
 						tint: *tint,
 						tone: *tone,
@@ -359,60 +428,25 @@ impl Event {
 						fog: *fog,
 						hardness: *hardness,
 					}
-					.describe()
-				)
+					.describe()).to_string(), 1)
 			}
-			Event::ShapeCornerSet { layer, index, corner } => format!(
-				"On layer \"{layer}\", set shape {}'s corners to {corner} percent rounded.",
-				index + 1
-			),
-			Event::ShapeLocked { layer, index, locked } => format!(
-				"On layer \"{layer}\", {} shape {}: bulk changes {} it.",
-				if *locked { "lock" } else { "unlock" },
-				index + 1,
-				if *locked { "now skip" } else { "reach" }
-			),
-			Event::TextEdited { layer, index } => format!(
-				"On layer \"{layer}\", rewrite text shape {} in the Text Studio: its words and its style.",
-				index + 1
-			),
-			Event::TextLinesSorted { layer, index, ascending } => format!(
-				"On layer \"{layer}\", sort the lines of text shape {} {}.",
-				index + 1,
-				if *ascending { "from A to Z" } else { "from Z to A" }
-			),
-			Event::TextsDistributed { count, columns } => format!(
-				"Arrange {count} text elements into {columns} column{} in reading order.",
-				if *columns == 1 { "" } else { "s" }
-			),
-			Event::TextGridAdded { count, rows, cols } => format!(
-				"Build a text grid from pasted data: {count} text elements in {rows} rows and {cols} columns."
-			),
-			Event::SceneInserted { name, count } => format!(
-				"Insert scene \"{name}\": {count} elements, captioned as part of the scene."
-			),
+			Event::ShapeCornerSet { layer, index, corner } => t("On layer \"%s\", set shape %s's corners to %s percent rounded.").replacen("%s", &(layer).to_string(), 1).replacen("%s", &(index + 1).to_string(), 1).replacen("%s", &(corner).to_string(), 1),
+			Event::ShapeLocked { layer, index, locked } => t("On layer \"%s\", %s shape %s: bulk changes %s it.").replacen("%s", &(layer).to_string(), 1).replacen("%s", if *locked { "lock" } else { "unlock" }, 1).replacen("%s", &(index + 1).to_string(), 1).replacen("%s", if *locked { "now skip" } else { "reach" }, 1),
+			Event::TextEdited { layer, index } => t("On layer \"%s\", rewrite text shape %s in the Text Studio: its words and its style.").replacen("%s", &(layer).to_string(), 1).replacen("%s", &(index + 1).to_string(), 1),
+			Event::TextLinesSorted { layer, index, ascending } => t("On layer \"%s\", sort the lines of text shape %s %s.").replacen("%s", &(layer).to_string(), 1).replacen("%s", &(index + 1).to_string(), 1).replacen("%s", if *ascending { "from A to Z" } else { "from Z to A" }, 1),
+			Event::TextsDistributed { count, columns } => t("Arrange %s text elements into %s column%s in reading order.").replacen("%s", &(count).to_string(), 1).replacen("%s", &(columns).to_string(), 1).replacen("%s", if *columns == 1 { "" } else { "s" }, 1),
+			Event::TextGridAdded { count, rows, cols } => t("Build a text grid from pasted data: %s text elements in %s rows and %s columns.").replacen("%s", &(count).to_string(), 1).replacen("%s", &(rows).to_string(), 1).replacen("%s", &(cols).to_string(), 1),
+			Event::SceneInserted { name, count } => t("Insert scene \"%s\": %s elements, captioned as part of the scene.").replacen("%s", &(name).to_string(), 1).replacen("%s", &(count).to_string(), 1),
 			Event::ColorTreated { scope, count, locked } => {
 				if *locked > 0 {
-					format!(
-						"Colour treatment on {scope}: {count} grayscale shapes took palette colours in paint order, {locked} locked stayed grayscale."
-					)
+					t("Colour treatment on %s: %s grayscale shapes took palette colours in paint order, %s locked stayed grayscale.").replacen("%s", &(scope).to_string(), 1).replacen("%s", &(count).to_string(), 1).replacen("%s", &(locked).to_string(), 1)
 				} else {
-					format!(
-						"Colour treatment on {scope}: {count} grayscale shapes took palette colours in paint order."
-					)
+					t("Colour treatment on %s: %s grayscale shapes took palette colours in paint order.").replacen("%s", &(scope).to_string(), 1).replacen("%s", &(count).to_string(), 1)
 				}
 			}
-			Event::VariablesSubstituted { count } => format!(
-				"Fill in the replacement variables: {count} values substituted."
-			),
-			Event::FrameLoaded { index } => format!(
-				"Load animation frame {} onto the canvas for editing.",
-				index + 1
-			),
-			Event::FrameUpdated { index } => format!(
-				"Replace animation frame {} with the canvas as it is now.",
-				index + 1
-			),
+			Event::VariablesSubstituted { count } => t("Fill in the replacement variables: %s values substituted.").replacen("%s", &(count).to_string(), 1),
+			Event::FrameLoaded { index } => t("Load animation frame %s onto the canvas for editing.").replacen("%s", &(index + 1).to_string(), 1),
+			Event::FrameUpdated { index } => t("Replace animation frame %s with the canvas as it is now.").replacen("%s", &(index + 1).to_string(), 1),
 		}
 	}
 }
@@ -430,16 +464,21 @@ pub struct BulkOutcome {
 }
 
 impl BulkOutcome {
-	pub const ZERO: BulkOutcome = BulkOutcome { changed: 0, locked: 0 };
+	pub const ZERO: BulkOutcome = BulkOutcome {
+		changed: 0,
+		locked: 0,
+	};
 
 	/// The spoken form, for status lines and reports:
 	/// "3 changed, 1 locked stayed the same", or just "3
 	/// changed" when nothing was locked.
 	pub fn spoken(&self) -> String {
 		if self.locked == 0 {
-			format!("{} changed", self.changed)
+			t("%s changed").replacen("%s", &(self.changed).to_string(), 1)
 		} else {
-			format!("{} changed, {} locked stayed the same", self.changed, self.locked)
+			t("%s changed, %s locked stayed the same")
+				.replacen("%s", &(self.changed).to_string(), 1)
+				.replacen("%s", &(self.locked).to_string(), 1)
 		}
 	}
 }
@@ -481,13 +520,20 @@ impl Drawing {
 		};
 		d.log.push(Event::CanvasSet { width, height });
 		d.log.push(Event::BackgroundSet { color: background });
-		d.log.push(Event::LayerAdded { name: "Layer 1".to_string() });
+		d.log.push(Event::LayerAdded {
+			name: "Layer 1".to_string(),
+		});
 		d
 	}
 
 	fn caption_of(&self, shape: &Shape) -> String {
-		Design { width: self.width, height: self.height, background: self.background, shapes: Vec::new() }
-			.caption_for(shape)
+		Design {
+			width: self.width,
+			height: self.height,
+			background: self.background,
+			shapes: Vec::new(),
+		}
+		.caption_for(shape)
 	}
 
 	/// The shape's caption as the flat design computes it (its own
@@ -500,8 +546,13 @@ impl Drawing {
 	/// `Design::describe_plain`): what the elements list shows and the
 	/// app speaks when a shape is created without a caption.
 	pub fn plain_of(&self, shape: &Shape) -> String {
-		Design { width: self.width, height: self.height, background: self.background, shapes: Vec::new() }
-			.describe_plain(shape)
+		Design {
+			width: self.width,
+			height: self.height,
+			background: self.background,
+			shapes: Vec::new(),
+		}
+		.describe_plain(shape)
 	}
 
 	pub fn set_canvas(&mut self, width: u32, height: u32) {
@@ -518,14 +569,21 @@ impl Drawing {
 	/// Adds a layer on top and returns its index.
 	pub fn add_layer(&mut self, name: &str) -> usize {
 		self.layers.push(Layer::new(name));
-		self.log.push(Event::LayerAdded { name: name.to_string() });
+		self.log.push(Event::LayerAdded {
+			name: name.to_string(),
+		});
 		self.layers.len() - 1
 	}
 
 	pub fn rename_layer(&mut self, index: usize, name: &str) -> bool {
-		let Some(layer) = self.layers.get_mut(index) else { return false };
+		let Some(layer) = self.layers.get_mut(index) else {
+			return false;
+		};
 		let from = std::mem::replace(&mut layer.name, name.to_string());
-		self.log.push(Event::LayerRenamed { from, to: name.to_string() });
+		self.log.push(Event::LayerRenamed {
+			from,
+			to: name.to_string(),
+		});
 		true
 	}
 
@@ -541,7 +599,9 @@ impl Drawing {
 	}
 
 	pub fn set_layer_visible(&mut self, index: usize, visible: bool) -> bool {
-		let Some(layer) = self.layers.get_mut(index) else { return false };
+		let Some(layer) = self.layers.get_mut(index) else {
+			return false;
+		};
 		layer.visible = visible;
 		let name = layer.name.clone();
 		self.log.push(Event::LayerVisibility { name, visible });
@@ -553,7 +613,9 @@ impl Drawing {
 	/// report, the tactile sheet's order) say about the layer; it
 	/// never changes how the layer paints.
 	pub fn set_layer_depth(&mut self, index: usize, role: DepthRole) -> bool {
-		let Some(layer) = self.layers.get_mut(index) else { return false };
+		let Some(layer) = self.layers.get_mut(index) else {
+			return false;
+		};
 		layer.depth = role;
 		let name = layer.name.clone();
 		self.log.push(Event::LayerDepthSet { name, role });
@@ -590,13 +652,20 @@ impl Drawing {
 		}
 		let gone = l.shapes.remove(index);
 		let name = l.name.clone();
-		self.log.push(Event::ShapeRemoved { layer: name, shape: gone.clone() });
+		self.log.push(Event::ShapeRemoved {
+			layer: name,
+			shape: gone.clone(),
+		});
 		Some(gone)
 	}
 
 	pub fn shift_shape(&mut self, layer: usize, index: usize, dx: i32, dy: i32) -> bool {
-		let Some(l) = self.layers.get_mut(layer) else { return false };
-		let Some(s) = l.shapes.get_mut(index) else { return false };
+		let Some(l) = self.layers.get_mut(layer) else {
+			return false;
+		};
+		let Some(s) = l.shapes.get_mut(index) else {
+			return false;
+		};
 		s.x += dx;
 		s.y += dy;
 		for p in &mut s.points {
@@ -604,13 +673,22 @@ impl Drawing {
 			p.1 += dy;
 		}
 		let name = l.name.clone();
-		self.log.push(Event::ShapeShifted { layer: name, index, dx, dy });
+		self.log.push(Event::ShapeShifted {
+			layer: name,
+			index,
+			dx,
+			dy,
+		});
 		true
 	}
 
 	pub fn resize_shape(&mut self, layer: usize, index: usize, w: u32, h: u32) -> bool {
-		let Some(l) = self.layers.get_mut(layer) else { return false };
-		let Some(s) = l.shapes.get_mut(index) else { return false };
+		let Some(l) = self.layers.get_mut(layer) else {
+			return false;
+		};
+		let Some(s) = l.shapes.get_mut(index) else {
+			return false;
+		};
 		if s.kind == ShapeKind::Stroke {
 			return false; // a stroke's size is its points; shift or redraw it
 		}
@@ -621,7 +699,12 @@ impl Drawing {
 		// log keeps the final one (see log_slider_event). A resize
 		// after any other change logs fresh, as before.
 		self.log_slider_event(
-			Event::ShapeResized { layer: name.clone(), index, w, h },
+			Event::ShapeResized {
+				layer: name.clone(),
+				index,
+				w,
+				h,
+			},
 			|e| matches!(e, Event::ShapeResized { layer: l, index: i, .. } if *l == name && *i == index),
 		);
 		true
@@ -636,8 +719,12 @@ impl Drawing {
 	/// one log line naming the net move.
 	pub fn set_shape_position(&mut self, layer: usize, index: usize, x: i32, y: i32) -> bool {
 		let (dx, dy, name) = {
-			let Some(l) = self.layers.get_mut(layer) else { return false };
-			let Some(s) = l.shapes.get_mut(index) else { return false };
+			let Some(l) = self.layers.get_mut(layer) else {
+				return false;
+			};
+			let Some(s) = l.shapes.get_mut(index) else {
+				return false;
+			};
 			let (dx, dy) = (x - s.x, y - s.y);
 			s.x = x;
 			s.y = y;
@@ -651,8 +738,12 @@ impl Drawing {
 		// last step is one for the same shape: the logged delta
 		// becomes the travel from where the run began.
 		let (mut dx, mut dy) = (dx, dy);
-		if let Some(Event::ShapeShifted { layer: l, index: i, dx: ox, dy: oy }) =
-			self.log.last()
+		if let Some(Event::ShapeShifted {
+			layer: l,
+			index: i,
+			dx: ox,
+			dy: oy,
+		}) = self.log.last()
 		{
 			if *l == name && *i == index {
 				dx += ox;
@@ -660,7 +751,12 @@ impl Drawing {
 			}
 		}
 		self.log_slider_event(
-			Event::ShapeShifted { layer: name.clone(), index, dx, dy },
+			Event::ShapeShifted {
+				layer: name.clone(),
+				index,
+				dx,
+				dy,
+			},
 			|e| matches!(e, Event::ShapeShifted { layer: l, index: i, .. } if *l == name && *i == index),
 		);
 		true
@@ -668,8 +764,12 @@ impl Drawing {
 
 	pub fn rotate_shape(&mut self, layer: usize, index: usize, angle: f64) -> bool {
 		let name = {
-			let Some(l) = self.layers.get_mut(layer) else { return false };
-			let Some(s) = l.shapes.get_mut(index) else { return false };
+			let Some(l) = self.layers.get_mut(layer) else {
+				return false;
+			};
+			let Some(s) = l.shapes.get_mut(index) else {
+				return false;
+			};
 			s.angle = angle;
 			l.name.clone()
 		};
@@ -677,24 +777,40 @@ impl Drawing {
 		// a rotation slider's drag through many angles keeps the
 		// final one as one log step.
 		self.log_slider_event(
-			Event::ShapeRotated { layer: name.clone(), index, angle },
+			Event::ShapeRotated {
+				layer: name.clone(),
+				index,
+				angle,
+			},
 			|e| matches!(e, Event::ShapeRotated { layer: l, index: i, .. } if *l == name && *i == index),
 		);
 		true
 	}
 
 	pub fn recolor_shape(&mut self, layer: usize, index: usize, color: Srgb) -> bool {
-		let Some(l) = self.layers.get_mut(layer) else { return false };
-		let Some(s) = l.shapes.get_mut(index) else { return false };
+		let Some(l) = self.layers.get_mut(layer) else {
+			return false;
+		};
+		let Some(s) = l.shapes.get_mut(index) else {
+			return false;
+		};
 		s.fill = color;
 		let name = l.name.clone();
-		self.log.push(Event::ShapeRecolored { layer: name, index, color });
+		self.log.push(Event::ShapeRecolored {
+			layer: name,
+			index,
+			color,
+		});
 		true
 	}
 
 	pub fn caption_shape(&mut self, layer: usize, index: usize, caption: String) -> bool {
-		let Some(l) = self.layers.get_mut(layer) else { return false };
-		let Some(s) = l.shapes.get_mut(index) else { return false };
+		let Some(l) = self.layers.get_mut(layer) else {
+			return false;
+		};
+		let Some(s) = l.shapes.get_mut(index) else {
+			return false;
+		};
 		s.caption = Some(caption);
 		let name = l.name.clone();
 		self.log.push(Event::ShapeCaptioned { layer: name, index });
@@ -713,8 +829,12 @@ impl Drawing {
 		style: TextStyle,
 	) -> bool {
 		let name = {
-			let Some(l) = self.layers.get_mut(layer) else { return false };
-			let Some(s) = l.shapes.get_mut(index) else { return false };
+			let Some(l) = self.layers.get_mut(layer) else {
+				return false;
+			};
+			let Some(s) = l.shapes.get_mut(index) else {
+				return false;
+			};
 			if s.kind != ShapeKind::Text {
 				return false;
 			}
@@ -734,8 +854,12 @@ impl Drawing {
 	/// and fails.
 	pub fn sort_text_lines(&mut self, layer: usize, index: usize, ascending: bool) -> bool {
 		let name = {
-			let Some(l) = self.layers.get_mut(layer) else { return false };
-			let Some(s) = l.shapes.get_mut(index) else { return false };
+			let Some(l) = self.layers.get_mut(layer) else {
+				return false;
+			};
+			let Some(s) = l.shapes.get_mut(index) else {
+				return false;
+			};
 			if s.kind != ShapeKind::Text {
 				return false;
 			}
@@ -750,7 +874,11 @@ impl Drawing {
 			s.text = lines.join("\n");
 			l.name.clone()
 		};
-		self.log.push(Event::TextLinesSorted { layer: name, index, ascending });
+		self.log.push(Event::TextLinesSorted {
+			layer: name,
+			index,
+			ascending,
+		});
 		true
 	}
 
@@ -804,7 +932,10 @@ impl Drawing {
 			shape.x = 10 + (i % columns) as i32 * col_w as i32;
 			shape.y = row_y[i / columns];
 		}
-		self.log.push(Event::TextsDistributed { count: positions.len(), columns });
+		self.log.push(Event::TextsDistributed {
+			count: positions.len(),
+			columns,
+		});
 		positions.len()
 	}
 
@@ -815,13 +946,7 @@ impl Drawing {
 	/// land as one logged step. Returns how many were added —
 	/// zero (and no event) when the layer is missing or the
 	/// data holds no words.
-	pub fn add_text_grid(
-		&mut self,
-		layer: usize,
-		data: &str,
-		fill: Srgb,
-		font_size: u32,
-	) -> usize {
+	pub fn add_text_grid(&mut self, layer: usize, data: &str, fill: Srgb, font_size: u32) -> usize {
 		if self.layers.get(layer).is_none() {
 			return 0;
 		}
@@ -830,7 +955,11 @@ impl Drawing {
 			.map(|line| line.split('\t').collect())
 			.collect();
 		let cols = rows.iter().map(|r| r.len()).max().unwrap_or(0);
-		let filled = rows.iter().flat_map(|r| r.iter()).filter(|c| !c.trim().is_empty()).count();
+		let filled = rows
+			.iter()
+			.flat_map(|r| r.iter())
+			.filter(|c| !c.trim().is_empty())
+			.count();
 		if cols == 0 || filled == 0 {
 			return 0;
 		}
@@ -858,7 +987,11 @@ impl Drawing {
 			}
 		}
 		if added > 0 {
-			self.log.push(Event::TextGridAdded { count: added, rows: rows.len(), cols });
+			self.log.push(Event::TextGridAdded {
+				count: added,
+				rows: rows.len(),
+				cols,
+			});
 		}
 		added
 	}
@@ -879,13 +1012,21 @@ impl Drawing {
 	pub fn set_shape_opacity(&mut self, layer: usize, index: usize, opacity: u8) -> bool {
 		let opacity = opacity.min(100);
 		let name = {
-			let Some(l) = self.layers.get_mut(layer) else { return false };
-			let Some(s) = l.shapes.get_mut(index) else { return false };
+			let Some(l) = self.layers.get_mut(layer) else {
+				return false;
+			};
+			let Some(s) = l.shapes.get_mut(index) else {
+				return false;
+			};
 			s.opacity = opacity;
 			l.name.clone()
 		};
 		self.log_slider_event(
-			Event::ShapeOpacitySet { layer: name.clone(), index, opacity },
+			Event::ShapeOpacitySet {
+				layer: name.clone(),
+				index,
+				opacity,
+			},
 			|e| matches!(e, Event::ShapeOpacitySet { layer: l, index: i, .. } if *l == name && *i == index),
 		);
 		true
@@ -899,8 +1040,12 @@ impl Drawing {
 	pub fn set_shape_corner(&mut self, layer: usize, index: usize, corner: u8) -> bool {
 		let corner = corner.min(50);
 		let name = {
-			let Some(l) = self.layers.get_mut(layer) else { return false };
-			let Some(s) = l.shapes.get_mut(index) else { return false };
+			let Some(l) = self.layers.get_mut(layer) else {
+				return false;
+			};
+			let Some(s) = l.shapes.get_mut(index) else {
+				return false;
+			};
 			if s.kind != ShapeKind::Rectangle {
 				return false;
 			}
@@ -908,7 +1053,11 @@ impl Drawing {
 			l.name.clone()
 		};
 		self.log_slider_event(
-			Event::ShapeCornerSet { layer: name.clone(), index, corner },
+			Event::ShapeCornerSet {
+				layer: name.clone(),
+				index,
+				corner,
+			},
 			|e| matches!(e, Event::ShapeCornerSet { layer: l, index: i, .. } if *l == name && *i == index),
 		);
 		true
@@ -919,8 +1068,12 @@ impl Drawing {
 	pub fn set_shape_brush_width(&mut self, layer: usize, index: usize, width: u32) -> bool {
 		let width = width.max(1);
 		let name = {
-			let Some(l) = self.layers.get_mut(layer) else { return false };
-			let Some(s) = l.shapes.get_mut(index) else { return false };
+			let Some(l) = self.layers.get_mut(layer) else {
+				return false;
+			};
+			let Some(s) = l.shapes.get_mut(index) else {
+				return false;
+			};
 			if s.kind != ShapeKind::Stroke {
 				return false;
 			}
@@ -928,7 +1081,11 @@ impl Drawing {
 			l.name.clone()
 		};
 		self.log_slider_event(
-			Event::ShapeBrushSet { layer: name.clone(), index, width },
+			Event::ShapeBrushSet {
+				layer: name.clone(),
+				index,
+				width,
+			},
 			|e| matches!(e, Event::ShapeBrushSet { layer: l, index: i, .. } if *l == name && *i == index),
 		);
 		true
@@ -942,12 +1099,20 @@ impl Drawing {
 	/// the step the user took.
 	pub fn set_shape_locked(&mut self, layer: usize, index: usize, locked: bool) -> bool {
 		let name = {
-			let Some(l) = self.layers.get_mut(layer) else { return false };
-			let Some(s) = l.shapes.get_mut(index) else { return false };
+			let Some(l) = self.layers.get_mut(layer) else {
+				return false;
+			};
+			let Some(s) = l.shapes.get_mut(index) else {
+				return false;
+			};
 			s.locked = locked;
 			l.name.clone()
 		};
-		self.log.push(Event::ShapeLocked { layer: name, index, locked });
+		self.log.push(Event::ShapeLocked {
+			layer: name,
+			index,
+			locked,
+		});
 		true
 	}
 
@@ -964,8 +1129,12 @@ impl Drawing {
 		adjust: ColorAdjust,
 	) -> bool {
 		let name = {
-			let Some(l) = self.layers.get_mut(layer) else { return false };
-			let Some(s) = l.shapes.get_mut(index) else { return false };
+			let Some(l) = self.layers.get_mut(layer) else {
+				return false;
+			};
+			let Some(s) = l.shapes.get_mut(index) else {
+				return false;
+			};
 			s.fill = adjust.apply(base);
 			l.name.clone()
 		};
@@ -996,13 +1165,21 @@ impl Drawing {
 	/// step in the log, like the other slider edits.
 	pub fn set_shape_color_slider(&mut self, layer: usize, index: usize, color: Srgb) -> bool {
 		let name = {
-			let Some(l) = self.layers.get_mut(layer) else { return false };
-			let Some(s) = l.shapes.get_mut(index) else { return false };
+			let Some(l) = self.layers.get_mut(layer) else {
+				return false;
+			};
+			let Some(s) = l.shapes.get_mut(index) else {
+				return false;
+			};
 			s.fill = color;
 			l.name.clone()
 		};
 		self.log_slider_event(
-			Event::ShapeRecolored { layer: name.clone(), index, color },
+			Event::ShapeRecolored {
+				layer: name.clone(),
+				index,
+				color,
+			},
 			|e| matches!(e, Event::ShapeRecolored { layer: l, index: i, .. } if *l == name && *i == index),
 		);
 		true
@@ -1024,7 +1201,9 @@ impl Drawing {
 		adjust: ColorAdjust,
 	) -> BulkOutcome {
 		let (name, outcome) = {
-			let Some(l) = self.layers.get_mut(layer) else { return BulkOutcome::ZERO };
+			let Some(l) = self.layers.get_mut(layer) else {
+				return BulkOutcome::ZERO;
+			};
 			if bases.len() != l.shapes.len() || bases.is_empty() {
 				return BulkOutcome::ZERO;
 			}
@@ -1089,8 +1268,7 @@ impl Drawing {
 		if current.is_empty() || bases.len() != current.len() {
 			return BulkOutcome::ZERO;
 		}
-		let mut sorted: Vec<(usize, usize)> =
-			bases.iter().map(|(li, si, _)| (*li, *si)).collect();
+		let mut sorted: Vec<(usize, usize)> = bases.iter().map(|(li, si, _)| (*li, *si)).collect();
 		sorted.sort_unstable();
 		if sorted != current {
 			return BulkOutcome::ZERO;
@@ -1136,11 +1314,7 @@ impl Drawing {
 	/// the treatment is for the uncoloured work — and locked
 	/// shapes are skipped and counted, like every bulk change.
 	/// Logged as ONE event, and only when something changed.
-	pub fn apply_color_treatment(
-		&mut self,
-		scope: TreatmentScope,
-		colors: &[Srgb],
-	) -> BulkOutcome {
+	pub fn apply_color_treatment(&mut self, scope: TreatmentScope, colors: &[Srgb]) -> BulkOutcome {
 		if colors.is_empty() {
 			return BulkOutcome::ZERO;
 		}
@@ -1151,7 +1325,7 @@ impl Drawing {
 				};
 				(
 					(0..layer.shapes.len()).map(|si| (index, si)).collect(),
-					format!("layer \"{}\"", layer.name),
+					t("layer \"%s\"").replacen("%s", &(layer.name).to_string(), 1),
 				)
 			}
 			TreatmentScope::Depth(role) => (
@@ -1161,7 +1335,7 @@ impl Drawing {
 					.filter(|(_, l)| l.depth == role)
 					.flat_map(|(li, l)| (0..l.shapes.len()).map(move |si| (li, si)))
 					.collect(),
-				format!("the {} depth", role.name()),
+				t("the %s depth").replacen("%s", &(role.name()).to_string(), 1),
 			),
 		};
 		let mut outcome = BulkOutcome::ZERO;
@@ -1210,8 +1384,11 @@ impl Drawing {
 			}
 			for shape in &scene_layer.shapes {
 				let mut placed = shape.clone();
-				placed.caption =
-					Some(format!("{name}: {}", scene.description_of(shape)));
+				placed.caption = Some(t("%s: %s").replacen("%s", name, 1).replacen(
+					"%s",
+					&(scene.description_of(shape)).to_string(),
+					1,
+				));
 				group.push(placed);
 			}
 		}
@@ -1220,7 +1397,10 @@ impl Drawing {
 			return 0;
 		}
 		self.layers[layer].shapes.extend(group);
-		self.log.push(Event::SceneInserted { name: name.to_string(), count });
+		self.log.push(Event::SceneInserted {
+			name: name.to_string(),
+			count,
+		});
 		count
 	}
 
@@ -1248,25 +1428,23 @@ impl Drawing {
 			out.push_str(&format!("{}. {}\n", i + 1, event.describe(self)));
 		}
 		let shapes: usize = self.layers.iter().map(|l| l.shapes.len()).sum();
-		out.push_str(&format!(
-			"\nFinal state: {} layer{}, {} shape{}, canvas {} by {} pixels, background {} ({}).\n",
-			self.layers.len(),
-			if self.layers.len() == 1 { "" } else { "s" },
-			shapes,
-			if shapes == 1 { "" } else { "s" },
-			self.width,
-			self.height,
-			describe(self.background),
-			self.background.to_hex()
-		));
+		out.push_str(&t("\nFinal state: %s layer%s, %s shape%s, canvas %s by %s pixels, background %s (%s).\n").replacen("%s", &(self.layers.len()).to_string(), 1).replacen("%s", if self.layers.len() == 1 { "" } else { "s" }, 1).replacen("%s", &(shapes).to_string(), 1).replacen("%s", if shapes == 1 { "" } else { "s" }, 1).replacen("%s", &(self.width).to_string(), 1).replacen("%s", &(self.height).to_string(), 1).replacen("%s", &(describe(self.background)).to_string(), 1).replacen("%s", &(self.background.to_hex()).to_string(), 1));
 		for layer in &self.layers {
-			out.push_str(&format!(
-				"Layer \"{}\"{}: {} shape{}.\n",
-				layer.name,
-				if layer.visible { "" } else { " (hidden)" },
-				layer.shapes.len(),
-				if layer.shapes.len() == 1 { "" } else { "s" }
-			));
+			out.push_str(
+				&t("Layer \"%s\"%s: %s shape%s.\n")
+					.replacen("%s", &(layer.name).to_string(), 1)
+					.replacen(
+						"%s",
+						if layer.visible { "" } else { " (hidden)" },
+						1,
+					)
+					.replacen("%s", &(layer.shapes.len()).to_string(), 1)
+					.replacen(
+						"%s",
+						if layer.shapes.len() == 1 { "" } else { "s" },
+						1,
+					),
+			);
 			for (i, shape) in layer.shapes.iter().enumerate() {
 				out.push_str(&format!("  {}. {}\n", i + 1, self.caption_of(shape)));
 			}
@@ -1304,8 +1482,16 @@ mod tests {
 		d.set_layer_visible(0, false);
 		let steps: Vec<String> = d.log.iter().map(|e| e.describe(&d)).collect();
 		assert_eq!(steps.len(), 3 + 6);
-		assert!(steps[5].contains("shift shape 1 by 5 across and -2 down"), "{}", steps[5]);
-		assert!(steps[6].contains("rotate shape 1 to 45 degrees"), "{}", steps[6]);
+		assert!(
+			steps[5].contains("shift shape 1 by 5 across and -2 down"),
+			"{}",
+			steps[5]
+		);
+		assert!(
+			steps[6].contains("rotate shape 1 to 45 degrees"),
+			"{}",
+			steps[6]
+		);
 		assert!(steps[7].contains("recolor shape 1"), "{}", steps[7]);
 		assert!(steps[8].contains("Hide layer \"Layer 1\""), "{}", steps[8]);
 		let shape = &d.layers[top].shapes[0];
@@ -1327,8 +1513,14 @@ mod tests {
 		assert_eq!(d.log.len(), before + 1);
 		let step = d.log.last().unwrap().describe(&d);
 		assert!(step.contains("recolor shape 1"), "{step}");
-		assert!(!d.set_shape_color_slider(9, 0, Srgb::BLACK), "no such layer");
-		assert!(!d.set_shape_color_slider(0, 9, Srgb::BLACK), "no such shape");
+		assert!(
+			!d.set_shape_color_slider(9, 0, Srgb::BLACK),
+			"no such layer"
+		);
+		assert!(
+			!d.set_shape_color_slider(0, 9, Srgb::BLACK),
+			"no such shape"
+		);
 	}
 
 	#[test]
@@ -1344,22 +1536,48 @@ mod tests {
 		let palette = [Srgb::new(200, 0, 0), Srgb::new(0, 0, 200)];
 		let before = d.log.len();
 		let out = d.apply_color_treatment(TreatmentScope::Layer(0), &palette);
-		assert_eq!(out, BulkOutcome { changed: 2, locked: 1 });
-		assert_eq!(d.layers[0].shapes[0].fill, palette[0], "first gray takes the first colour");
-		assert_eq!(d.layers[0].shapes[1].fill, red(), "coloured shapes are left alone");
-		assert_eq!(d.layers[0].shapes[2].fill, palette[1], "second gray takes the second colour");
-		assert_eq!(d.layers[0].shapes[3].fill, gray(120), "locked gray stays grayscale");
+		assert_eq!(
+			out,
+			BulkOutcome {
+				changed: 2,
+				locked: 1
+			}
+		);
+		assert_eq!(
+			d.layers[0].shapes[0].fill, palette[0],
+			"first gray takes the first colour"
+		);
+		assert_eq!(
+			d.layers[0].shapes[1].fill,
+			red(),
+			"coloured shapes are left alone"
+		);
+		assert_eq!(
+			d.layers[0].shapes[2].fill, palette[1],
+			"second gray takes the second colour"
+		);
+		assert_eq!(
+			d.layers[0].shapes[3].fill,
+			gray(120),
+			"locked gray stays grayscale"
+		);
 		// One log event for the whole treatment.
 		assert_eq!(d.log.len(), before + 1);
 		let step = d.log.last().unwrap().describe(&d);
-		assert!(step.contains("2 grayscale shapes took palette colours"), "{step}");
+		assert!(
+			step.contains("2 grayscale shapes took palette colours"),
+			"{step}"
+		);
 		assert!(step.contains("1 locked stayed grayscale"), "{step}");
 		// Nothing grayscale and unlocked remains: a second run is a no-op.
 		let out = d.apply_color_treatment(TreatmentScope::Layer(0), &palette);
 		assert_eq!(out.changed, 0);
 		assert_eq!(d.log.len(), before + 1);
 		// An empty palette changes nothing; a missing layer neither.
-		assert_eq!(d.apply_color_treatment(TreatmentScope::Layer(0), &[]), BulkOutcome::ZERO);
+		assert_eq!(
+			d.apply_color_treatment(TreatmentScope::Layer(0), &[]),
+			BulkOutcome::ZERO
+		);
 		assert_eq!(
 			d.apply_color_treatment(TreatmentScope::Layer(9), &palette),
 			BulkOutcome::ZERO
@@ -1374,14 +1592,27 @@ mod tests {
 		d.add_shape(0, Shape::new(ShapeKind::Rectangle, 0, 0, 10, 10, gray(10)));
 		let top = d.add_layer("Front");
 		d.set_layer_depth(top, DepthRole::Foreground);
-		d.add_shape(top, Shape::new(ShapeKind::Rectangle, 0, 0, 10, 10, gray(20)));
-		d.add_shape(top, Shape::new(ShapeKind::Rectangle, 20, 0, 10, 10, gray(30)));
+		d.add_shape(
+			top,
+			Shape::new(ShapeKind::Rectangle, 0, 0, 10, 10, gray(20)),
+		);
+		d.add_shape(
+			top,
+			Shape::new(ShapeKind::Rectangle, 20, 0, 10, 10, gray(30)),
+		);
 		let only = [Srgb::new(10, 200, 10)];
 		let out = d.apply_color_treatment(TreatmentScope::Depth(DepthRole::Foreground), &only);
 		assert_eq!(out.changed, 2);
-		assert_eq!(d.layers[top].shapes[0].fill, only[0], "one colour cycles onto both");
+		assert_eq!(
+			d.layers[top].shapes[0].fill, only[0],
+			"one colour cycles onto both"
+		);
 		assert_eq!(d.layers[top].shapes[1].fill, only[0]);
-		assert_eq!(d.layers[0].shapes[0].fill, gray(10), "the other depth is untouched");
+		assert_eq!(
+			d.layers[0].shapes[0].fill,
+			gray(10),
+			"the other depth is untouched"
+		);
 	}
 
 	#[test]
@@ -1389,7 +1620,10 @@ mod tests {
 		let mut d = Drawing::new(10, 10, Srgb::WHITE);
 		d.add_shape(0, Shape::new(ShapeKind::Rectangle, 0, 0, 10, 10, red()));
 		let top = d.add_layer("Top");
-		d.add_shape(top, Shape::new(ShapeKind::Rectangle, 0, 0, 5, 5, Srgb::new(0, 0, 255)));
+		d.add_shape(
+			top,
+			Shape::new(ShapeKind::Rectangle, 0, 0, 5, 5, Srgb::new(0, 0, 255)),
+		);
 		assert_eq!(d.flatten().shapes.len(), 2);
 		d.set_layer_visible(top, false);
 		let flat = d.flatten();
@@ -1425,7 +1659,10 @@ mod tests {
 	#[test]
 	fn text_and_image_shapes_live_in_layers_and_the_log() {
 		let mut d = Drawing::new(800, 600, Srgb::WHITE);
-		d.add_shape(0, Shape::text("Title", "Arial", 32, 10, 10, 200, 40, Srgb::BLACK));
+		d.add_shape(
+			0,
+			Shape::text("Title", "Arial", 32, 10, 10, 200, 40, Srgb::BLACK),
+		);
 		d.add_shape(0, Shape::image("photo.png", 0, 100, 100, 80, red()));
 		// Both kinds resize by their box and shift like other shapes.
 		assert!(d.resize_shape(0, 0, 300, 50));
@@ -1433,7 +1670,11 @@ mod tests {
 		let steps: Vec<String> = d.log.iter().map(|e| e.describe(&d)).collect();
 		// The text shape's log line reads its phrase (its caption).
 		assert!(steps[3].contains("Title"), "{}", steps[3]);
-		assert!(steps[4].contains("image from file photo.png"), "{}", steps[4]);
+		assert!(
+			steps[4].contains("image from file photo.png"),
+			"{}",
+			steps[4]
+		);
 		let plain = d.plain_of(&d.layers[0].shapes[0]);
 		assert!(plain.contains("text \"Title\""), "{plain}");
 		assert!(plain.contains("32 point"), "{plain}");
@@ -1472,24 +1713,51 @@ mod tests {
 	fn layer_adjustment_recolors_every_shape_as_one_event() {
 		let mut d = Drawing::new(100, 100, Srgb::WHITE);
 		d.add_shape(0, Shape::new(ShapeKind::Rectangle, 5, 5, 10, 10, red()));
-		d.add_shape(0, Shape::new(ShapeKind::Ellipse, 30, 30, 10, 10, Srgb::new(58, 124, 165)));
-		d.add_shape(0, Shape::new(ShapeKind::Rectangle, 60, 60, 10, 10, Srgb::BLACK));
+		d.add_shape(
+			0,
+			Shape::new(ShapeKind::Ellipse, 30, 30, 10, 10, Srgb::new(58, 124, 165)),
+		);
+		d.add_shape(
+			0,
+			Shape::new(ShapeKind::Rectangle, 60, 60, 10, 10, Srgb::BLACK),
+		);
 		let bases: Vec<Srgb> = d.layers[0].shapes.iter().map(|s| s.fill).collect();
 		let logged = d.log.len();
-		let adj = ColorAdjust { shade: 50, ..Default::default() };
+		let adj = ColorAdjust {
+			shade: 50,
+			..Default::default()
+		};
 		// All three shapes adjusted, counted, one log event.
-		assert_eq!(d.adjust_layer_colors(0, &bases, adj), BulkOutcome { changed: 3, locked: 0 });
+		assert_eq!(
+			d.adjust_layer_colors(0, &bases, adj),
+			BulkOutcome {
+				changed: 3,
+				locked: 0
+			}
+		);
 		assert_eq!(d.log.len(), logged + 1);
 		for (shape, base) in d.layers[0].shapes.iter().zip(bases.iter()) {
 			assert_eq!(shape.fill, adj.apply(*base));
 			assert!(shape.fill.to_oklch().l <= base.to_oklch().l);
 		}
 		// Dragging further replaces the event, never adds another.
-		let adj2 = ColorAdjust { shade: 80, ..Default::default() };
-		assert_eq!(d.adjust_layer_colors(0, &bases, adj2), BulkOutcome { changed: 3, locked: 0 });
+		let adj2 = ColorAdjust {
+			shade: 80,
+			..Default::default()
+		};
+		assert_eq!(
+			d.adjust_layer_colors(0, &bases, adj2),
+			BulkOutcome {
+				changed: 3,
+				locked: 0
+			}
+		);
 		assert_eq!(d.log.len(), logged + 1);
 		// A stale snapshot (wrong shape count) changes nothing.
-		assert_eq!(d.adjust_layer_colors(0, &bases[..2], adj), BulkOutcome::ZERO);
+		assert_eq!(
+			d.adjust_layer_colors(0, &bases[..2], adj),
+			BulkOutcome::ZERO
+		);
 		assert_eq!(d.adjust_layer_colors(9, &bases, adj), BulkOutcome::ZERO);
 		// The event describes itself in words.
 		let text = d.log.last().unwrap().describe(&d);
@@ -1502,7 +1770,11 @@ mod tests {
 		let mut d = Drawing::new(40, 40, Srgb::WHITE);
 		d.add_shape(0, Shape::new(ShapeKind::Rectangle, 5, 5, 10, 10, red()));
 		let base = red();
-		let adj = ColorAdjust { tint: 40, warmth: 30, ..Default::default() };
+		let adj = ColorAdjust {
+			tint: 40,
+			warmth: 30,
+			..Default::default()
+		};
 		assert!(d.adjust_shape_color(0, 0, base, adj));
 		assert_eq!(d.layers[0].shapes[0].fill, adj.apply(base));
 		assert_ne!(d.layers[0].shapes[0].fill, base);
@@ -1536,10 +1808,16 @@ mod tests {
 		let mut d = Drawing::new(100, 100, Srgb::WHITE);
 		d.set_layer_depth(0, DepthRole::Background);
 		d.add_shape(0, Shape::new(ShapeKind::Rectangle, 5, 5, 10, 10, red()));
-		d.add_shape(0, Shape::new(ShapeKind::Ellipse, 30, 30, 10, 10, Srgb::new(58, 124, 165)));
+		d.add_shape(
+			0,
+			Shape::new(ShapeKind::Ellipse, 30, 30, 10, 10, Srgb::new(58, 124, 165)),
+		);
 		let near = d.add_layer("Near");
 		d.set_layer_depth(near, DepthRole::Background);
-		d.add_shape(near, Shape::new(ShapeKind::Rectangle, 60, 60, 10, 10, Srgb::BLACK));
+		d.add_shape(
+			near,
+			Shape::new(ShapeKind::Rectangle, 60, 60, 10, 10, Srgb::BLACK),
+		);
 		let front = d.add_layer("Front");
 		d.set_layer_depth(front, DepthRole::Foreground);
 		d.add_shape(front, Shape::new(ShapeKind::Rectangle, 1, 1, 5, 5, red()));
@@ -1549,8 +1827,17 @@ mod tests {
 			.map(|&(li, si)| (li, si, d.layers[li].shapes[si].fill))
 			.collect();
 		let logged = d.log.len();
-		let adj = ColorAdjust { shade: 50, ..Default::default() };
-		assert_eq!(d.adjust_depth_colors(DepthRole::Background, &bases, adj), BulkOutcome { changed: 3, locked: 0 });
+		let adj = ColorAdjust {
+			shade: 50,
+			..Default::default()
+		};
+		assert_eq!(
+			d.adjust_depth_colors(DepthRole::Background, &bases, adj),
+			BulkOutcome {
+				changed: 3,
+				locked: 0
+			}
+		);
 		assert_eq!(d.log.len(), logged + 1, "one event for the whole depth");
 		for (li, si, base) in &bases {
 			assert_eq!(d.layers[*li].shapes[*si].fill, adj.apply(*base));
@@ -1558,24 +1845,45 @@ mod tests {
 		// The foreground shape is not the background's business.
 		assert_eq!(d.layers[front].shapes[0].fill, red());
 		let text = d.log.last().unwrap().describe(&d);
-		assert!(text.contains("all 3 elements on background layers"), "{text}");
+		assert!(
+			text.contains("all 3 elements on background layers"),
+			"{text}"
+		);
 		// Dragging further replaces the event, never adds another.
-		assert_eq!(d.adjust_depth_colors(DepthRole::Background, &bases, adj), BulkOutcome { changed: 3, locked: 0 });
+		assert_eq!(
+			d.adjust_depth_colors(DepthRole::Background, &bases, adj),
+			BulkOutcome {
+				changed: 3,
+				locked: 0
+			}
+		);
 		assert_eq!(d.log.len(), logged + 1);
 		// A stale snapshot (a shape missing, or one too many)
 		// changes nothing, and an empty depth counts zero.
-		assert_eq!(d.adjust_depth_colors(DepthRole::Background, &bases[..2], adj), BulkOutcome::ZERO);
-		assert_eq!(d.adjust_depth_colors(DepthRole::Sideground, &[], adj), BulkOutcome::ZERO);
+		assert_eq!(
+			d.adjust_depth_colors(DepthRole::Background, &bases[..2], adj),
+			BulkOutcome::ZERO
+		);
+		assert_eq!(
+			d.adjust_depth_colors(DepthRole::Sideground, &[], adj),
+			BulkOutcome::ZERO
+		);
 		let wrong: Vec<(usize, usize, Srgb)> =
 			vec![(0, 0, red()), (0, 1, red()), (front, 0, red())];
-		assert_eq!(d.adjust_depth_colors(DepthRole::Background, &wrong, adj), BulkOutcome::ZERO);
+		assert_eq!(
+			d.adjust_depth_colors(DepthRole::Background, &wrong, adj),
+			BulkOutcome::ZERO
+		);
 		assert_eq!(d.layers[0].shapes[0].fill, adj.apply(red()));
 	}
 
 	#[test]
 	fn set_shape_position_moves_points_and_merges_its_log() {
 		let mut d = Drawing::new(200, 200, Srgb::WHITE);
-		d.add_shape(0, Shape::stroke(vec![(10, 10), (30, 10), (30, 30)], 3, red()));
+		d.add_shape(
+			0,
+			Shape::stroke(vec![(10, 10), (30, 10), (30, 30)], 3, red()),
+		);
 		d.add_shape(0, Shape::new(ShapeKind::Rectangle, 100, 100, 20, 20, red()));
 		let logged = d.log.len();
 		// Absolute set: the shape lands where it is put, and a
@@ -1589,7 +1897,10 @@ mod tests {
 		assert!(d.set_shape_position(0, 0, 18, 14));
 		assert_eq!(d.log.len(), logged + 1, "the run is one step");
 		let text = d.log.last().unwrap().describe(&d);
-		assert!(text.contains("shift shape 1 by 8 across and 4 down"), "{text}");
+		assert!(
+			text.contains("shift shape 1 by 8 across and 4 down"),
+			"{text}"
+		);
 		// A set aimed at a different shape starts its own step.
 		assert!(d.set_shape_position(0, 1, 90, 90));
 		assert_eq!(d.log.len(), logged + 2);
@@ -1610,7 +1921,10 @@ mod tests {
 		// Past the end of the slider is fully rounded, not beyond.
 		assert!(d.set_shape_corner(0, 0, 90));
 		assert_eq!(d.layers[0].shapes[0].corner, 50);
-		assert!(!d.set_shape_corner(0, 1, 30), "ellipses have no corners to round");
+		assert!(
+			!d.set_shape_corner(0, 1, 30),
+			"ellipses have no corners to round"
+		);
 		assert!(!d.set_shape_corner(0, 9, 30));
 		// The whole drag is one log step (each set replaces the
 		// last corner event for the shape), and it speaks the
@@ -1629,7 +1943,10 @@ mod tests {
 		let mut scene = Drawing::new(100, 100, Srgb::WHITE);
 		scene.add_shape(0, Shape::new(ShapeKind::Rectangle, 0, 0, 50, 50, red()));
 		let back = scene.add_layer("Back");
-		scene.add_shape(back, Shape::new(ShapeKind::Ellipse, 10, 10, 20, 20, Srgb::BLACK));
+		scene.add_shape(
+			back,
+			Shape::new(ShapeKind::Ellipse, 10, 10, 20, 20, Srgb::BLACK),
+		);
 		let mut captioned = Shape::new(ShapeKind::Rectangle, 60, 60, 10, 10, Srgb::BLACK);
 		captioned.caption = Some("the lighthouse".to_string());
 		scene.add_shape(back, captioned);
@@ -1643,10 +1960,24 @@ mod tests {
 		assert_eq!(shapes.len(), 2);
 		// The hidden scene layer contributed nothing; every
 		// inserted caption carries the scene's name first.
-		assert!(shapes[0].caption.as_deref().unwrap().starts_with("Harbour: "), "{:?}", shapes[0].caption);
-		assert_eq!(shapes[1].caption.as_deref(), Some("Harbour: the lighthouse"));
+		assert!(
+			shapes[0]
+				.caption
+				.as_deref()
+				.unwrap()
+				.starts_with("Harbour: "),
+			"{:?}",
+			shapes[0].caption
+		);
+		assert_eq!(
+			shapes[1].caption.as_deref(),
+			Some("Harbour: the lighthouse")
+		);
 		let text = d.log.last().unwrap().describe(&d);
-		assert!(text.contains("Insert scene \"Harbour\": 2 elements"), "{text}");
+		assert!(
+			text.contains("Insert scene \"Harbour\": 2 elements"),
+			"{text}"
+		);
 		// A scene that paints nothing, and a missing layer, insert
 		// nothing and log nothing.
 		let empty = Drawing::new(10, 10, Srgb::WHITE);
@@ -1676,8 +2007,14 @@ mod tests {
 	fn locked_shapes_are_skipped_by_bulk_adjustments_and_counted() {
 		let mut d = Drawing::new(100, 100, Srgb::WHITE);
 		d.add_shape(0, Shape::new(ShapeKind::Rectangle, 5, 5, 10, 10, red()));
-		d.add_shape(0, Shape::new(ShapeKind::Ellipse, 30, 30, 10, 10, Srgb::new(58, 124, 165)));
-		d.add_shape(0, Shape::new(ShapeKind::Rectangle, 60, 60, 10, 10, Srgb::BLACK));
+		d.add_shape(
+			0,
+			Shape::new(ShapeKind::Ellipse, 30, 30, 10, 10, Srgb::new(58, 124, 165)),
+		);
+		d.add_shape(
+			0,
+			Shape::new(ShapeKind::Rectangle, 60, 60, 10, 10, Srgb::BLACK),
+		);
 		// Locking is itself a logged step, and it speaks plainly.
 		assert!(d.set_shape_locked(0, 1, true));
 		assert!(d.layers[0].shapes[1].locked);
@@ -1690,11 +2027,24 @@ mod tests {
 		// color is untouched, and the counts say so.
 		let bases: Vec<Srgb> = d.layers[0].shapes.iter().map(|s| s.fill).collect();
 		let logged = d.log.len();
-		let adj = ColorAdjust { shade: 50, ..Default::default() };
+		let adj = ColorAdjust {
+			shade: 50,
+			..Default::default()
+		};
 		let outcome = d.adjust_layer_colors(0, &bases, adj);
-		assert_eq!(outcome, BulkOutcome { changed: 2, locked: 1 });
+		assert_eq!(
+			outcome,
+			BulkOutcome {
+				changed: 2,
+				locked: 1
+			}
+		);
 		assert_eq!(outcome.spoken(), "2 changed, 1 locked stayed the same");
-		assert_eq!(d.layers[0].shapes[1].fill, Srgb::new(58, 124, 165), "locked means untouched");
+		assert_eq!(
+			d.layers[0].shapes[1].fill,
+			Srgb::new(58, 124, 165),
+			"locked means untouched"
+		);
 		assert_eq!(d.layers[0].shapes[0].fill, adj.apply(red()));
 		assert_eq!(d.log.len(), logged + 1, "one event for what changed");
 		let text = d.log.last().unwrap().describe(&d);
@@ -1706,7 +2056,13 @@ mod tests {
 		// Unlocking returns the shape to the bulk changes.
 		assert!(d.set_shape_locked(0, 1, false));
 		let bases: Vec<Srgb> = d.layers[0].shapes.iter().map(|s| s.fill).collect();
-		assert_eq!(d.adjust_layer_colors(0, &bases, adj), BulkOutcome { changed: 3, locked: 0 });
+		assert_eq!(
+			d.adjust_layer_colors(0, &bases, adj),
+			BulkOutcome {
+				changed: 3,
+				locked: 0
+			}
+		);
 	}
 
 	#[test]
@@ -1717,16 +2073,28 @@ mod tests {
 		d.set_shape_locked(0, 0, true);
 		let bases: Vec<(usize, usize, Srgb)> = vec![(0, 0, red())];
 		let logged = d.log.len();
-		let adj = ColorAdjust { tint: 40, ..Default::default() };
+		let adj = ColorAdjust {
+			tint: 40,
+			..Default::default()
+		};
 		let outcome = d.adjust_depth_colors(DepthRole::Background, &bases, adj);
-		assert_eq!(outcome, BulkOutcome { changed: 0, locked: 1 });
+		assert_eq!(
+			outcome,
+			BulkOutcome {
+				changed: 0,
+				locked: 1
+			}
+		);
 		assert_eq!(d.layers[0].shapes[0].fill, red());
 		assert_eq!(d.log.len(), logged, "nothing changed, so nothing is logged");
 		// The same promise on the layer path.
 		let layer_bases: Vec<Srgb> = vec![red()];
 		assert_eq!(
 			d.adjust_layer_colors(0, &layer_bases, adj),
-			BulkOutcome { changed: 0, locked: 1 }
+			BulkOutcome {
+				changed: 0,
+				locked: 1
+			}
 		);
 		assert_eq!(d.log.len(), logged);
 	}
@@ -1738,7 +2106,11 @@ mod tests {
 		d.add_shape(0, Shape::text("Draft", "Arial", 14, 0, 0, 80, 20, red()));
 		d.add_shape(0, Shape::new(ShapeKind::Rectangle, 0, 30, 10, 10, red()));
 		let logged = d.log.len();
-		let style = TextStyle { bold: true, heading: Heading::H2, ..Default::default() };
+		let style = TextStyle {
+			bold: true,
+			heading: Heading::H2,
+			..Default::default()
+		};
 		assert!(d.edit_text(0, 0, "Final words", style));
 		assert_eq!(d.log.len(), logged + 1, "one event for the whole edit");
 		let s = &d.layers[0].shapes[0];
@@ -1754,7 +2126,10 @@ mod tests {
 	#[test]
 	fn sorting_text_lines_runs_both_ways() {
 		let mut d = Drawing::new(200, 100, Srgb::WHITE);
-		d.add_shape(0, Shape::text("pear\napple\nplum", "Arial", 14, 0, 0, 80, 60, red()));
+		d.add_shape(
+			0,
+			Shape::text("pear\napple\nplum", "Arial", 14, 0, 0, 80, 60, red()),
+		);
 		assert!(d.sort_text_lines(0, 0, true));
 		assert_eq!(d.layers[0].shapes[0].text, "apple\npear\nplum");
 		assert!(d.sort_text_lines(0, 0, false));
@@ -1780,7 +2155,11 @@ mod tests {
 		// first -> column 1 row 1; second -> column 2 row 1;
 		// third -> column 1 row 2 (below the 20px row + gap).
 		let at = |phrase: &str| {
-			let s = d.layers[0].shapes.iter().find(|s| s.text == phrase).unwrap();
+			let s = d.layers[0]
+				.shapes
+				.iter()
+				.find(|s| s.text == phrase)
+				.unwrap();
 			(s.x, s.y)
 		};
 		assert_eq!(at("first"), (10, 10));
@@ -1788,7 +2167,10 @@ mod tests {
 		assert_eq!(at("third"), (10, 40));
 		// Words and the rectangle are untouched in kind; the
 		// rectangle never moved.
-		assert_eq!((d.layers[0].shapes[3].x, d.layers[0].shapes[3].y), (300, 200));
+		assert_eq!(
+			(d.layers[0].shapes[3].x, d.layers[0].shapes[3].y),
+			(300, 200)
+		);
 		let step = d.log.last().unwrap().describe(&d);
 		assert!(step.contains("3 text elements into 2 columns"), "{step}");
 		// No text at all: nothing placed, nothing logged.
@@ -1814,7 +2196,10 @@ mod tests {
 		assert_eq!((texts[2].x, texts[2].y), (10, 38));
 		assert!(texts.iter().all(|s| s.kind == ShapeKind::Text));
 		let step = d.log.last().unwrap().describe(&d);
-		assert!(step.contains("6 text elements in 4 rows and 2 columns"), "{step}");
+		assert!(
+			step.contains("6 text elements in 4 rows and 2 columns"),
+			"{step}"
+		);
 		// Empty data and a missing layer add nothing, log nothing.
 		assert_eq!(d.add_text_grid(0, "  \n\t ", Srgb::BLACK, 14), 0);
 		assert_eq!(d.add_text_grid(9, "A\tB", Srgb::BLACK, 14), 0);

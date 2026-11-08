@@ -79,6 +79,135 @@ pub static ENTRIES: &[Entry] = &[
 
 /// Look up one term exactly (case-insensitive, surrounding whitespace
 /// ignored). `None` when the dictionary has no such term.
+use patois::t;
+
+impl Entry {
+	/// The term as the app shows it, translated.
+	pub fn display_term(&self) -> String {
+		t(self.term)
+	}
+
+	/// The definition as the app shows it, translated.
+	pub fn display_definition(&self) -> String {
+		t(self.definition)
+	}
+}
+
+/// Extraction anchor: entry terms and definitions are table
+/// data, so each is listed here once as a literal. A test keeps
+/// this list in step with ENTRIES.
+#[doc(hidden)]
+pub fn entry_anchors() -> Vec<String> {
+	vec![
+		t("AA"),
+		t("The standard WCAG contrast level. Normal text passes at a contrast ratio of 4.5 to 1 or more, large text at 3 to 1."),
+		t("AAA"),
+		t("The stricter WCAG contrast level. Normal text passes at a contrast ratio of 7 to 1 or more against its background."),
+		t("achromatic"),
+		t("Having no hue at all: black, white, and the grays between them. In OKLCH an achromatic color has chroma at or near zero, so its hue number means nothing."),
+		t("analogous"),
+		t("A color scheme of neighbors: colors whose hues sit close together, classically within about 30 degrees either side of the base color. Calm and unified, because the hues barely change."),
+		t("brightness"),
+		t("See value. In this app, lightness in OKLCH is the precise measure; brightness is the everyday word for the same idea."),
+		t("brush"),
+		t("The width, in pixels, that a stroke is painted with. A wider brush makes a thicker line along the stroke's points."),
+		t("canvas"),
+		t("The whole picture area, measured in pixels wide by pixels high. Every shape's position is counted from the canvas's top-left corner."),
+		t("caption"),
+		t("A short spoken-style description of a shape or a whole design: what it is, its color in words and numbers, and how it contrasts with the background. A shape with no caption of its own gets one generated; a written caption is never overwritten."),
+		t("chroma"),
+		t("How colorful a color is, apart from how light or what hue it is. Zero chroma is gray; higher chroma is more vivid. In OKLCH, chroma runs from 0 to about 0.4."),
+		t("color name"),
+		t("A plain word for a color family by its hue angle, like teal or magenta. This app names hues by their OKLCH angle, which sits differently from HSL: pure blue is 264 degrees here."),
+		t("complementary"),
+		t("The color exactly opposite on the hue wheel: the base hue plus 180 degrees, with the same lightness and chroma. Complementary pairs have the strongest hue contrast there is."),
+		t("contrast ratio"),
+		t("How strongly two colors differ in luminance, from 1 to 1 (identical) up to 21 to 1 (black against white). It is the number WCAG pass and fail levels are judged by."),
+		t("cool color"),
+		t("A color whose hue leans toward green, blue, or purple. Cool colors tend to feel calm and distant."),
+		t("CSS variables"),
+		t("Named values in a stylesheet, written like --color-1: #3A7CA5;. Exporting a palette as CSS variables hands the exact hex values to a web page, each with its spoken caption as a comment."),
+		t("ellipse"),
+		t("An oval shape, set by the position of its top-left corner and its width and height. Equal width and height make a circle."),
+		t("event log"),
+		t("The numbered list of every change made to a drawing, in order: canvas set, layer added, shape shifted, and so on. Read top to bottom, the log is the recipe that recreates the image exactly."),
+		t("gamut"),
+		t("The full set of colors a system can actually show. A color outside the sRGB gamut cannot be displayed exactly; this app reduces its chroma, holding lightness and hue exact, until it fits."),
+		t("gray"),
+		t("An achromatic color between black and white. Also spelled grey. A color whose chroma is under 0.02 reads as gray whatever its hue number says."),
+		t("hex code"),
+		t("A color written as six hexadecimal digits, like #3A7CA5: red, green, and blue brightness, two digits each, from 00 to FF. A leading # is customary but optional."),
+		t("hue"),
+		t("Which color family a color belongs to, as an angle in degrees from 0 to 360 around the wheel. In OKLCH the pure colors sit at: red 29, orange 57, yellow 110, green 142, teal 195, blue 264, magenta 328."),
+		t("image element"),
+		t("A shape that holds an image file placed in the design, drawn scaled into its box. The project file stores the file's path, not its pixels; if the file is missing when the design is drawn, a framed placeholder in the shape's color shows where it belongs."),
+		t("layer"),
+		t("A named sheet of shapes within a drawing. Layers paint in order, first layer at the back. A hidden layer paints nothing. New shapes land on the current layer."),
+		t("lightness"),
+		t("How light or dark a color is, from 0 (black) to 1 (white), independent of its hue and chroma. In spoken captions it is reported as a percentage."),
+		t("luminance"),
+		t("The measured brightness of a color as screens emit it, from 0.0 for black to 1.0 for white. Contrast ratios are computed from the luminance of the two colors."),
+		t("monochrome"),
+		t("A scheme or image built from one hue, varied only by lightness and chroma: shades, tints, and tones of a single color."),
+		t("muted"),
+		t("A color with low-to-moderate chroma (about 0.02 to 0.06 in OKLCH): softened, grayish, not vivid."),
+		t("OKLCH"),
+		t("The color space this app works in natively: lightness, chroma, and hue angle, designed so equal number steps look like equal color steps. Colors here are never mixed; they are computed by changing these numbers."),
+		t("palette"),
+		t("The working set of colors for a design. Colors enter the palette by hex value, by LCH numbers, by scheme generation from a selected color, or by extraction from an image."),
+		t("palette extraction"),
+		t("Reading an image and reporting its dominant colors as a palette, each with the share of the image it covers. This app quantizes in OKLab space so the split follows perceived differences."),
+		t("pastel"),
+		t("A light, soft color: high lightness with low-to-moderate chroma. Pastels are tints that kept some color."),
+		t("position cue"),
+		t("A sound that tells you where something is: stereo pan follows left-to-right position, pitch follows top-to-bottom position (top of the canvas sounds highest), and a longer tone means a bigger shape."),
+		t("primary colors"),
+		t("In paint, red, yellow, and blue; in light and on screens, red, green, and blue. Screens mix light, so this app's hex values are red-green-blue."),
+		t("provenance"),
+		t("The recorded memory of how a color entered a palette and where it was used: extracted from an image, generated as a complement, typed as hex, and so on."),
+		t("recreation file"),
+		t("The primary export: a step-by-step document generated from the event log that rebuilds the exact image from nothing, followed by the final state's shape list as a check."),
+		t("rectangle"),
+		t("A four-sided shape with right-angle corners, set by its top-left corner position, width, and height. Equal width and height make a square."),
+		t("rotation"),
+		t("Turning a shape around its own center, in degrees clockwise. Rectangles and ellipses rotate; a stroke's points turn with it."),
+		t("saturation"),
+		t("The everyday word for how colorful a color is. In this app chroma is the precise measure; saturation belongs to the HSL and HSV spaces."),
+		t("saved brush"),
+		t("A stroke brush kept under a name in the brush library: its width, its color, and its stamp pattern. Saving a brush means a favorite pen can be applied to new strokes in one choice instead of setting the three values again."),
+		t("scheme"),
+		t("A set of colors derived from one base color by known hue angles: complementary, split complementary, analogous, triadic, tetradic. Because the angles are fixed, every color in a scheme is predictable before it is made."),
+		t("shade"),
+		t("A darker version of a color: same hue and chroma, lightness stepped down toward black."),
+		t("shape"),
+		t("One drawn thing on a layer: a rectangle, an ellipse, or a stroke, with a position, a size, a fill color, and an optional caption and rotation."),
+		t("split complementary"),
+		t("A scheme of the base color plus the two colors 150 degrees either side of its complement: nearly opposite, but with more variety and less tension than a direct complementary pair."),
+		t("sRGB"),
+		t("The standard color system of screens and the web. Every color this app exports is an sRGB color, written as a hex code."),
+		t("stroke"),
+		t("A drawn line through a list of points, painted with a brush of a set width. A stroke's size is its points; it is resized by moving or redrawing, not by width and height."),
+		t("tetradic"),
+		t("A four-color scheme: the base hue plus 60, 180, and 240 degrees — two complementary pairs forming a rectangle on the hue wheel."),
+		t("text element"),
+		t("A shape that holds a phrase of text, placed by measurement like any other shape: a position, a box, a font name, and a point size. Its caption is the phrase itself unless you write a different one. In an exported web page the phrase is real text a screen reader reads."),
+		t("tint"),
+		t("A lighter version of a color: same hue and chroma, lightness stepped up toward white."),
+		t("tone"),
+		t("A softer version of a color: same hue and lightness, chroma scaled down toward gray."),
+		t("triadic"),
+		t("A three-color scheme: the base hue plus 120 and 240 degrees, evenly spaced around the wheel. Bold and balanced at once."),
+		t("value"),
+		t("How light or dark a color is, in painters' language. In this app the precise measure is OKLCH lightness."),
+		t("vivid"),
+		t("A color with high chroma (about 0.12 to 0.20 in OKLCH): strong and saturated-looking. Above that, electric."),
+		t("warm color"),
+		t("A color whose hue leans toward red, orange, or yellow. Warm colors tend to feel close and energetic."),
+		t("WCAG"),
+		t("The Web Content Accessibility Guidelines: the standard behind contrast levels AA and AAA for text against its background."),
+	]
+}
+
 pub fn lookup(term: &str) -> Option<&'static Entry> {
 	let want = term.trim().to_lowercase();
 	ENTRIES.iter().find(|en| en.term.to_lowercase() == want)
@@ -107,9 +236,25 @@ mod tests {
 	#[test]
 	fn the_terms_the_app_itself_uses_are_all_defined() {
 		for term in [
-			"hue", "chroma", "lightness", "OKLCH", "layer", "stroke", "brush", "canvas",
-			"caption", "event log", "recreation file", "palette", "gamut", "contrast ratio",
-			"complementary", "shade", "tint", "tone", "hex code",
+			"hue",
+			"chroma",
+			"lightness",
+			"OKLCH",
+			"layer",
+			"stroke",
+			"brush",
+			"canvas",
+			"caption",
+			"event log",
+			"recreation file",
+			"palette",
+			"gamut",
+			"contrast ratio",
+			"complementary",
+			"shade",
+			"tint",
+			"tone",
+			"hex code",
 		] {
 			assert!(lookup(term).is_some(), "missing term: {term}");
 		}
@@ -141,8 +286,16 @@ mod tests {
 		assert_eq!(terms, sorted);
 		assert!(ENTRIES.len() >= 40, "only {} entries", ENTRIES.len());
 		for en in ENTRIES {
-			assert!(en.definition.len() > 40, "{} has a stub definition", en.term);
-			assert!(en.definition.ends_with('.'), "{} must end a sentence", en.term);
+			assert!(
+				en.definition.len() > 40,
+				"{} has a stub definition",
+				en.term
+			);
+			assert!(
+				en.definition.ends_with('.'),
+				"{} must end a sentence",
+				en.term
+			);
 		}
 	}
 
@@ -153,5 +306,28 @@ mod tests {
 		assert!(lookup("AAA").unwrap().definition.contains("7 to 1"));
 		let hue = lookup("hue").unwrap().definition;
 		assert!(hue.contains("blue 264"), "{hue}");
+	}
+}
+
+#[cfg(test)]
+mod anchor_tests {
+	use super::*;
+
+	#[test]
+	fn entry_anchors_cover_every_entry() {
+		let anchors = entry_anchors();
+		assert_eq!(anchors.len(), ENTRIES.len() * 2);
+		for en in ENTRIES {
+			assert!(
+				anchors.iter().any(|a| a == en.term),
+				"missing term anchor: {}",
+				en.term
+			);
+			assert!(
+				anchors.iter().any(|a| a == en.definition),
+				"missing definition anchor: {}",
+				en.term
+			);
+		}
 	}
 }

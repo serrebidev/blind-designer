@@ -44,6 +44,8 @@
 //! ponytail: hand-rolled format by design — upgrade path is serde_json
 //! if designs ever need to be read by other tools.
 
+use patois::t;
+
 use crate::animation::Frame;
 use crate::design::{Shape, ShapeKind, TextStyle};
 use crate::drawing::{DepthRole, Drawing, Event, Layer};
@@ -109,15 +111,18 @@ pub enum InteractionMode {
 }
 
 impl InteractionMode {
-	pub const ALL: [InteractionMode; 3] =
-		[InteractionMode::Draw, InteractionMode::Slide, InteractionMode::Type];
+	pub const ALL: [InteractionMode; 3] = [
+		InteractionMode::Draw,
+		InteractionMode::Slide,
+		InteractionMode::Type,
+	];
 
 	/// The spoken name, for the Project Options picker.
-	pub fn name(self) -> &'static str {
+	pub fn name(self) -> String {
 		match self {
-			InteractionMode::Draw => "Draw",
-			InteractionMode::Slide => "Slide",
-			InteractionMode::Type => "Type",
+			InteractionMode::Draw => t("Draw"),
+			InteractionMode::Slide => t("Slide"),
+			InteractionMode::Type => t("Type"),
 		}
 	}
 
@@ -194,14 +199,14 @@ impl ProjectStats {
 	/// 0 image elements" — or "no elements" when the canvas is bare.
 	fn kinds_text(&self) -> String {
 		if self.elements == 0 {
-			return "no elements".to_string();
+			return t("no elements");
 		}
 		[
-			counted(self.rectangles, "rectangle", "rectangles"),
-			counted(self.ellipses, "ellipse", "ellipses"),
-			counted(self.strokes, "stroke", "strokes"),
-			counted(self.texts, "text element", "text elements"),
-			counted(self.images, "image element", "image elements"),
+			counted(self.rectangles, &t("rectangle"), &t("rectangles")),
+			counted(self.ellipses, &t("ellipse"), &t("ellipses")),
+			counted(self.strokes, &t("stroke"), &t("strokes")),
+			counted(self.texts, &t("text element"), &t("text elements")),
+			counted(self.images, &t("image element"), &t("image elements")),
 		]
 		.join(", ")
 	}
@@ -209,15 +214,15 @@ impl ProjectStats {
 	/// One line for the main window's statistics readout.
 	pub fn one_line(&self) -> String {
 		let frames = if self.frames == 0 {
-			"no animation frames".to_string()
+			t("no animation frames")
 		} else {
-			counted(self.frames, "animation frame", "animation frames")
+			counted(self.frames, &t("animation frame"), &t("animation frames"))
 		};
 		format!(
 			"Project: {}, {}, {}, {}, canvas {} by {}",
-			counted(self.layers, "layer", "layers"),
-			counted(self.elements, "element", "elements"),
-			counted(self.colors, "palette color", "palette colors"),
+			counted(self.layers, &t("layer"), &t("layers")),
+			counted(self.elements, &t("element"), &t("elements")),
+			counted(self.colors, &t("palette color"), &t("palette colors")),
 			frames,
 			self.canvas_width,
 			self.canvas_height,
@@ -226,21 +231,14 @@ impl ProjectStats {
 
 	/// The full readout: every count on its own line, in plain words.
 	pub fn report(&self) -> String {
-		format!(
-			"Project statistics\n\
-			 Canvas: {} by {} pixels\n\
-			 Layers: {}\n\
-			 Elements: {} ({})\n\
-			 Palette colors: {}\n\
-			 Animation frames: {}",
-			self.canvas_width,
-			self.canvas_height,
-			self.layers,
-			self.elements,
-			self.kinds_text(),
-			self.colors,
-			self.frames,
-		)
+		t("Project statistics\nCanvas: %s by %s pixels\nLayers: %s\nElements: %s (%s)\nPalette colors: %s\nAnimation frames: %s")
+			.replacen("%s", &self.canvas_width.to_string(), 1)
+			.replacen("%s", &self.canvas_height.to_string(), 1)
+			.replacen("%s", &self.layers.to_string(), 1)
+			.replacen("%s", &self.elements.to_string(), 1)
+			.replacen("%s", &self.kinds_text(), 1)
+			.replacen("%s", &self.colors.to_string(), 1)
+			.replacen("%s", &self.frames.to_string(), 1)
 	}
 }
 
@@ -275,13 +273,17 @@ pub(crate) fn tokens(line: &str) -> Result<Vec<String>, String> {
 			let mut tok = String::new();
 			loop {
 				match chars.next() {
-					None => return Err(format!("unterminated string in line: {line}")),
+					None => {
+						return Err(t("unterminated string in line: %s").replacen("%s", line, 1))
+					}
 					Some('"') => break,
 					Some('\\') => match chars.next() {
 						Some('n') => tok.push('\n'),
 						Some('t') => tok.push('\t'),
 						Some(other) => tok.push(other),
-						None => return Err(format!("dangling escape in line: {line}")),
+						None => {
+							return Err(t("dangling escape in line: %s").replacen("%s", line, 1))
+						}
 					},
 					Some(other) => tok.push(other),
 				}
@@ -358,7 +360,11 @@ fn shape_fields(s: &Shape) -> String {
 	let points = if s.points.is_empty() {
 		"-".to_string()
 	} else {
-		s.points.iter().map(|(x, y)| format!("{x},{y}")).collect::<Vec<_>>().join(";")
+		s.points
+			.iter()
+			.map(|(x, y)| format!("{x},{y}"))
+			.collect::<Vec<_>>()
+			.join(";")
 	};
 	let caption = match &s.caption {
 		None => "-".to_string(),
@@ -416,7 +422,10 @@ fn shape_fields(s: &Shape) -> String {
 
 fn parse_shape(toks: &[String]) -> Result<Shape, String> {
 	if toks.len() < 10 {
-		return Err(format!("a shape needs at least 10 fields, got {}", toks.len()));
+		return Err(format!(
+			"a shape needs at least 10 fields, got {}",
+			toks.len()
+		));
 	}
 	let kind = match toks[0].as_str() {
 		"rectangle" => ShapeKind::Rectangle,
@@ -442,15 +451,19 @@ fn parse_shape(toks: &[String]) -> Result<Shape, String> {
 	};
 	let mut shape = Shape {
 		kind,
-		x: num(&toks, 1, "shape x")?,
-		y: num(&toks, 2, "shape y")?,
-		w: num(&toks, 3, "shape width")?,
-		h: num(&toks, 4, "shape height")?,
-		fill: hex(&toks, 5)?,
+		x: num(toks, 1, "shape x")?,
+		y: num(toks, 2, "shape y")?,
+		w: num(toks, 3, "shape width")?,
+		h: num(toks, 4, "shape height")?,
+		fill: hex(toks, 5)?,
 		points,
-		brush: num(&toks, 7, "brush width")?,
-		angle: num(&toks, 6, "angle")?,
-		caption: if toks[9] == "-" { None } else { Some(toks[9].clone()) },
+		brush: num(toks, 7, "brush width")?,
+		angle: num(toks, 6, "angle")?,
+		caption: if toks[9] == "-" {
+			None
+		} else {
+			Some(toks[9].clone())
+		},
 		pattern: String::new(),
 		text: String::new(),
 		font: String::new(),
@@ -731,9 +744,14 @@ fn parse_event(toks: &[String]) -> Result<Event, String> {
 			width: num(toks, 2, "canvas width")?,
 			height: num(toks, 3, "canvas height")?,
 		}),
-		Some("background") => Ok(Event::BackgroundSet { color: hex(toks, 2)? }),
+		Some("background") => Ok(Event::BackgroundSet {
+			color: hex(toks, 2)?,
+		}),
 		Some("layer-added") => Ok(Event::LayerAdded { name: name(2)? }),
-		Some("layer-renamed") => Ok(Event::LayerRenamed { from: name(2)?, to: name(3)? }),
+		Some("layer-renamed") => Ok(Event::LayerRenamed {
+			from: name(2)?,
+			to: name(3)?,
+		}),
 		Some("layer-removed") => Ok(Event::LayerRemoved { name: name(2)? }),
 		Some("layer-visibility") => Ok(Event::LayerVisibility {
 			name: name(2)?,
@@ -939,8 +957,9 @@ fn parse_layer(
 		// every file written before depth roles existed.
 		depth: match toks.get(4) {
 			None => DepthRole::Unassigned,
-			Some(id) => DepthRole::from_id(id)
-				.ok_or_else(|| format!("unknown depth role: {id}"))?,
+			Some(id) => {
+				DepthRole::from_id(id).ok_or_else(|| format!("unknown depth role: {id}"))?
+			}
 		},
 		shapes: Vec::new(),
 	};
@@ -1060,8 +1079,9 @@ impl Project {
 		let all: Vec<&str> = text.lines().collect();
 		let pos = std::cell::Cell::new(0usize);
 		let mut next = |what: &str| -> Result<Vec<String>, String> {
-			let line =
-				all.get(pos.get()).ok_or_else(|| format!("file ends before {what}"))?;
+			let line = all
+				.get(pos.get())
+				.ok_or_else(|| format!("file ends before {what}"))?;
 			pos.set(pos.get() + 1);
 			tokens(line)
 		};
@@ -1073,7 +1093,10 @@ impl Project {
 		if canvas.first().map(String::as_str) != Some("canvas") {
 			return Err("missing canvas line".to_string());
 		}
-		let (width, height) = (num(&canvas, 1, "canvas width")?, num(&canvas, 2, "canvas height")?);
+		let (width, height) = (
+			num(&canvas, 1, "canvas width")?,
+			num(&canvas, 2, "canvas height")?,
+		);
 		let bg = next("the background")?;
 		if bg.first().map(String::as_str) != Some("background") {
 			return Err("missing background line".to_string());
@@ -1172,8 +1195,7 @@ impl Project {
 						if toks.first().map(String::as_str) != Some("slider") {
 							return Err("missing pinned slider line".to_string());
 						}
-						pinned_sliders
-							.push(toks.get(1).ok_or("missing slider id")?.clone());
+						pinned_sliders.push(toks.get(1).ok_or("missing slider id")?.clone());
 					}
 					// The adjustment target and the page jump may
 					// follow the pins, in the order to_text writes.
@@ -1216,8 +1238,7 @@ impl Project {
 						if toks.first().map(String::as_str) != Some("goal-answer") {
 							return Err("missing goal answer line".to_string());
 						}
-						let question =
-							toks.get(1).ok_or("missing goal question")?.clone();
+						let question = toks.get(1).ok_or("missing goal question")?.clone();
 						let answer = match toks.get(2).map(String::as_str) {
 							Some("-") | None => None,
 							Some(a) => Some(a.to_string()),
@@ -1234,7 +1255,14 @@ impl Project {
 			return Err("missing end marker".to_string());
 		}
 		Ok(Project {
-			drawing: Drawing { width, height, background, layers, log, frames },
+			drawing: Drawing {
+				width,
+				height,
+				background,
+				layers,
+				log,
+				frames,
+			},
 			palette,
 			pinned_sliders,
 			slider_target,
@@ -1264,17 +1292,33 @@ mod tests {
 			stats.one_line(),
 			"Project: 1 layer, 0 elements, 0 palette colors, no animation frames, canvas 800 by 600"
 		);
-		assert!(stats.report().contains("Elements: 0 (no elements)"), "{}", stats.report());
+		assert!(
+			stats.report().contains("Elements: 0 (no elements)"),
+			"{}",
+			stats.report()
+		);
 	}
 
 	#[test]
 	fn stats_count_every_element_kind_and_frames() {
 		let mut d = Drawing::new(640, 480, Srgb::WHITE);
-		d.add_shape(0, Shape::new(ShapeKind::Rectangle, 0, 0, 10, 10, Srgb::BLACK));
-		d.add_shape(0, Shape::new(ShapeKind::Rectangle, 20, 0, 10, 10, Srgb::BLACK));
-		d.add_shape(0, Shape::new(ShapeKind::Ellipse, 40, 0, 10, 10, Srgb::BLACK));
+		d.add_shape(
+			0,
+			Shape::new(ShapeKind::Rectangle, 0, 0, 10, 10, Srgb::BLACK),
+		);
+		d.add_shape(
+			0,
+			Shape::new(ShapeKind::Rectangle, 20, 0, 10, 10, Srgb::BLACK),
+		);
+		d.add_shape(
+			0,
+			Shape::new(ShapeKind::Ellipse, 40, 0, 10, 10, Srgb::BLACK),
+		);
 		d.add_shape(0, Shape::stroke(vec![(0, 0), (5, 5)], 3, Srgb::BLACK));
-		d.add_shape(0, Shape::text("hi", "Arial", 24, 0, 20, 30, 30, Srgb::BLACK));
+		d.add_shape(
+			0,
+			Shape::text("hi", "Arial", 24, 0, 20, 30, 30, Srgb::BLACK),
+		);
 		d.add_shape(0, Shape::image("a.png", 0, 60, 30, 30, Srgb::BLACK));
 		d.add_frame();
 		let stats = ProjectStats::gather(&d, 4);
@@ -1291,7 +1335,10 @@ mod tests {
 		assert!(line.contains("1 animation frame"), "{line}");
 		assert!(line.contains("canvas 640 by 480"), "{line}");
 		let report = stats.report();
-		assert!(report.contains("2 rectangles, 1 ellipse, 1 stroke, 1 text element, 1 image element"), "{report}");
+		assert!(
+			report.contains("2 rectangles, 1 ellipse, 1 stroke, 1 text element, 1 image element"),
+			"{report}"
+		);
 	}
 
 	/// A drawing that exercises every moving part: two layers (one
@@ -1302,10 +1349,20 @@ mod tests {
 		d.set_canvas(1024, 768);
 		d.set_background(Srgb::new(238, 238, 238));
 		let sky = d.add_layer("Sky \"top\" \\ layer");
-		let mut rect = Shape::new(ShapeKind::Rectangle, 10, 20, 100, 50, Srgb::new(15, 94, 104));
+		let mut rect = Shape::new(
+			ShapeKind::Rectangle,
+			10,
+			20,
+			100,
+			50,
+			Srgb::new(15, 94, 104),
+		);
 		rect.caption = Some("a \"quoted\" caption\nwith a newline".to_string());
 		d.add_shape(sky, rect);
-		d.add_shape(sky, Shape::stroke(vec![(1, 2), (30, 40), (50, 8)], 7, Srgb::new(255, 128, 0)));
+		d.add_shape(
+			sky,
+			Shape::stroke(vec![(1, 2), (30, 40), (50, 8)], 7, Srgb::new(255, 128, 0)),
+		);
 		d.shift_shape(sky, 0, 5, -3);
 		d.resize_shape(sky, 0, 120, 60);
 		d.rotate_shape(sky, 0, 33.25);
@@ -1314,7 +1371,10 @@ mod tests {
 		d.rename_layer(0, "Ground");
 		d.set_layer_visible(0, false);
 		let gone = d.add_layer("Scratch");
-		d.add_shape(gone, Shape::new(ShapeKind::Ellipse, 0, 0, 9, 9, Srgb::BLACK));
+		d.add_shape(
+			gone,
+			Shape::new(ShapeKind::Ellipse, 0, 0, 9, 9, Srgb::BLACK),
+		);
 		d.remove_shape(gone, 0);
 		d.remove_layer(gone);
 		Project {
@@ -1352,7 +1412,10 @@ mod tests {
 		assert_eq!(sky.name, "Sky \"top\" \\ layer");
 		assert!(!back.drawing.layers[0].visible);
 		let rect = &sky.shapes[0];
-		assert_eq!(rect.caption.as_deref(), Some("a \"quoted\" caption\nwith a newline"));
+		assert_eq!(
+			rect.caption.as_deref(),
+			Some("a \"quoted\" caption\nwith a newline")
+		);
 		assert_eq!(rect.angle, 33.25);
 		assert_eq!((rect.x, rect.y, rect.w, rect.h), (15, 17, 120, 60));
 		let stroke = &sky.shapes[1];
@@ -1362,7 +1425,9 @@ mod tests {
 		assert_eq!(stroke.caption.as_deref(), Some("the sun path"));
 		let extracted = &back.palette[2];
 		assert_eq!(extracted.coverage, Some(0.42));
-		assert!(extracted.spoken(ColorFormat::Hex).contains("extracted from image photo.jpg"));
+		assert!(extracted
+			.spoken(ColorFormat::Hex)
+			.contains("extracted from image photo.jpg"));
 	}
 
 	#[test]
@@ -1386,12 +1451,36 @@ mod tests {
 	#[test]
 	fn text_image_and_patterned_shapes_round_trip() {
 		let mut d = Drawing::new(800, 600, Srgb::WHITE);
-		d.add_shape(0, Shape::text("Hello world", "Comic Sans MS", 28, 10, 20, 300, 40, Srgb::BLACK));
-		d.add_shape(0, Shape::image("/pics/my photo.png", 50, 60, 200, 100, Srgb::new(255, 0, 0)));
+		d.add_shape(
+			0,
+			Shape::text(
+				"Hello world",
+				"Comic Sans MS",
+				28,
+				10,
+				20,
+				300,
+				40,
+				Srgb::BLACK,
+			),
+		);
+		d.add_shape(
+			0,
+			Shape::image("/pics/my photo.png", 50, 60, 200, 100, Srgb::new(255, 0, 0)),
+		);
 		let mut dashed = Shape::stroke(vec![(1, 1), (90, 90)], 5, Srgb::new(0, 0, 255));
 		dashed.pattern = "dashed".to_string();
 		d.add_shape(0, dashed);
-		let project = Project { drawing: d, palette: Vec::new(), pinned_sliders: Vec::new(), slider_target: AdjustTarget::BaseColor, page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT, goal: None, grayscale_start: false, interaction_mode: InteractionMode::Type };
+		let project = Project {
+			drawing: d,
+			palette: Vec::new(),
+			pinned_sliders: Vec::new(),
+			slider_target: AdjustTarget::BaseColor,
+			page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT,
+			goal: None,
+			grayscale_start: false,
+			interaction_mode: InteractionMode::Type,
+		};
 		let text = project.to_text();
 		let back = Project::from_text(&text).expect("the new kinds read back");
 		assert_eq!(back.to_text(), text);
@@ -1435,14 +1524,26 @@ end
 	#[test]
 	fn animation_frames_round_trip() {
 		let mut d = Drawing::new(100, 100, Srgb::WHITE);
-		d.add_shape(0, Shape::new(ShapeKind::Ellipse, 40, 40, 20, 20, Srgb::new(200, 40, 30)));
+		d.add_shape(
+			0,
+			Shape::new(ShapeKind::Ellipse, 40, 40, 20, 20, Srgb::new(200, 40, 30)),
+		);
 		d.add_frame();
 		d.set_frame_duration(0, 250);
 		d.shift_shape(0, 0, 20, 0);
 		d.set_background(Srgb::BLACK);
 		d.add_layer("Back");
 		d.add_frame();
-		let project = Project { drawing: d, palette: Vec::new(), pinned_sliders: Vec::new(), slider_target: AdjustTarget::BaseColor, page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT, goal: None, grayscale_start: false, interaction_mode: InteractionMode::Type };
+		let project = Project {
+			drawing: d,
+			palette: Vec::new(),
+			pinned_sliders: Vec::new(),
+			slider_target: AdjustTarget::BaseColor,
+			page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT,
+			goal: None,
+			grayscale_start: false,
+			interaction_mode: InteractionMode::Type,
+		};
 		let text = project.to_text();
 		assert!(text.contains("frames 2\n"), "{text}");
 		let back = Project::from_text(&text).expect("a project with frames reads back");
@@ -1457,10 +1558,22 @@ end
 		assert_eq!(back.drawing.frames[1].layers[0].shapes[0].x, 60);
 		// The frame operations are log events and round-trip too
 		// (byte-for-byte equality above covers it; say it out loud).
-		let steps: Vec<String> =
-			back.drawing.log.iter().map(|e| e.describe(&back.drawing)).collect();
-		assert!(steps.iter().any(|s| s.contains("Add animation frame 1")), "{steps:?}");
-		assert!(steps.iter().any(|s| s.contains("Set animation frame 1 to show for 250")), "{steps:?}");
+		let steps: Vec<String> = back
+			.drawing
+			.log
+			.iter()
+			.map(|e| e.describe(&back.drawing))
+			.collect();
+		assert!(
+			steps.iter().any(|s| s.contains("Add animation frame 1")),
+			"{steps:?}"
+		);
+		assert!(
+			steps
+				.iter()
+				.any(|s| s.contains("Set animation frame 1 to show for 250")),
+			"{steps:?}"
+		);
 	}
 
 	#[test]
@@ -1493,8 +1606,11 @@ end
 	#[test]
 	fn pinned_sliders_target_and_page_jump_round_trip() {
 		let mut project = rich_project();
-		project.pinned_sliders =
-			vec!["brush-width".to_string(), "adjust-fog".to_string(), "frame-duration".to_string()];
+		project.pinned_sliders = vec![
+			"brush-width".to_string(),
+			"adjust-fog".to_string(),
+			"frame-duration".to_string(),
+		];
 		project.slider_target = AdjustTarget::Layer;
 		project.page_jump_percent = 25;
 		let text = project.to_text();
@@ -1511,7 +1627,11 @@ end
 		// Defaults all the way down: no section, like every file
 		// written before sliders existed.
 		let project = rich_project();
-		assert!(!project.to_text().contains("slider"), "{}", project.to_text());
+		assert!(
+			!project.to_text().contains("slider"),
+			"{}",
+			project.to_text()
+		);
 		let back = Project::from_text(&project.to_text()).unwrap();
 		assert!(back.pinned_sliders.is_empty());
 		assert_eq!(back.slider_target, AdjustTarget::BaseColor);
@@ -1532,7 +1652,10 @@ end
 			text.contains("goal-answer \"What will the writing be?\" \"A sign or label\"\n"),
 			"{text}"
 		);
-		assert!(text.contains("goal-answer \"How will it be read?\" -\n"), "{text}");
+		assert!(
+			text.contains("goal-answer \"How will it be read?\" -\n"),
+			"{text}"
+		);
 		assert!(text.contains("slider-grayscale-start\n"), "{text}");
 		let back = Project::from_text(&text).unwrap();
 		assert_eq!(back.to_text(), text, "byte for byte");
@@ -1644,7 +1767,10 @@ end
 			interaction_mode: InteractionMode::Type,
 		};
 		let text = project.to_text();
-		assert!(text.contains("event color-treated \"layer \\\"Layer 1\\\"\" 1 0\n"), "{text}");
+		assert!(
+			text.contains("event color-treated \"layer \\\"Layer 1\\\"\" 1 0\n"),
+			"{text}"
+		);
 		let back = Project::from_text(&text).unwrap();
 		assert_eq!(back.to_text(), text);
 		assert_eq!(back.drawing.summary(), project.drawing.summary());
@@ -1685,13 +1811,31 @@ end
 		veil.opacity = 25;
 		d.add_shape(0, veil);
 		d.add_shape(0, Shape::new(ShapeKind::Ellipse, 5, 5, 20, 20, Srgb::WHITE));
-		let project = Project { drawing: d, palette: Vec::new(), pinned_sliders: Vec::new(), slider_target: AdjustTarget::BaseColor, page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT, goal: None, grayscale_start: false, interaction_mode: InteractionMode::Type };
+		let project = Project {
+			drawing: d,
+			palette: Vec::new(),
+			pinned_sliders: Vec::new(),
+			slider_target: AdjustTarget::BaseColor,
+			page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT,
+			goal: None,
+			grayscale_start: false,
+			interaction_mode: InteractionMode::Type,
+		};
 		let text = project.to_text();
 		// The translucent shapes carry their percent last; the
 		// fully opaque ellipse's line is exactly the old shape.
-		assert!(text.contains("shape rectangle 10 10 50 50 #000000 0.0 3 - - 40\n"), "{text}");
-		assert!(text.contains("shape stroke 1 1 89 89 #0000FF 0.0 5 1,1;90,90 - \"dashed\" 25\n"), "{text}");
-		assert!(text.contains("shape ellipse 5 5 20 20 #FFFFFF 0.0 3 - -\n"), "{text}");
+		assert!(
+			text.contains("shape rectangle 10 10 50 50 #000000 0.0 3 - - 40\n"),
+			"{text}"
+		);
+		assert!(
+			text.contains("shape stroke 1 1 89 89 #0000FF 0.0 5 1,1;90,90 - \"dashed\" 25\n"),
+			"{text}"
+		);
+		assert!(
+			text.contains("shape ellipse 5 5 20 20 #FFFFFF 0.0 3 - -\n"),
+			"{text}"
+		);
 		let back = Project::from_text(&text).expect("translucent shapes read back");
 		assert_eq!(back.to_text(), text);
 		let shapes = &back.drawing.layers[0].shapes;
@@ -1705,7 +1849,10 @@ end
 	fn shape_lock_round_trips_as_a_trailing_word() {
 		let mut d = Drawing::new(800, 600, Srgb::WHITE);
 		// A plain locked rectangle: the word alone, nothing else.
-		d.add_shape(0, Shape::new(ShapeKind::Rectangle, 10, 10, 50, 50, Srgb::BLACK));
+		d.add_shape(
+			0,
+			Shape::new(ShapeKind::Rectangle, 10, 10, 50, 50, Srgb::BLACK),
+		);
 		d.set_shape_locked(0, 0, true);
 		// A locked rounded translucent rectangle: lock last,
 		// after opacity and corner.
@@ -1722,14 +1869,38 @@ end
 		d.set_shape_locked(0, 2, true);
 		// An unlocked shape: nothing extra, byte-identical.
 		d.add_shape(0, Shape::new(ShapeKind::Ellipse, 5, 5, 20, 20, Srgb::WHITE));
-		let project = Project { drawing: d, palette: Vec::new(), pinned_sliders: Vec::new(), slider_target: AdjustTarget::BaseColor, page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT, goal: None, grayscale_start: false, interaction_mode: InteractionMode::Type };
+		let project = Project {
+			drawing: d,
+			palette: Vec::new(),
+			pinned_sliders: Vec::new(),
+			slider_target: AdjustTarget::BaseColor,
+			page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT,
+			goal: None,
+			grayscale_start: false,
+			interaction_mode: InteractionMode::Type,
+		};
 		let text = project.to_text();
-		assert!(text.contains("shape rectangle 10 10 50 50 #000000 0.0 3 - - locked\n"), "{text}");
-		assert!(text.contains("shape rectangle 100 10 50 50 #000000 0.0 3 - - 40 r30 locked\n"), "{text}");
-		assert!(text.contains("shape stroke 1 1 89 89 #0000FF 0.0 5 1,1;90,90 - \"dashed\" locked\n"), "{text}");
-		assert!(text.contains("shape ellipse 5 5 20 20 #FFFFFF 0.0 3 - -\n"), "{text}");
+		assert!(
+			text.contains("shape rectangle 10 10 50 50 #000000 0.0 3 - - locked\n"),
+			"{text}"
+		);
+		assert!(
+			text.contains("shape rectangle 100 10 50 50 #000000 0.0 3 - - 40 r30 locked\n"),
+			"{text}"
+		);
+		assert!(
+			text.contains("shape stroke 1 1 89 89 #0000FF 0.0 5 1,1;90,90 - \"dashed\" locked\n"),
+			"{text}"
+		);
+		assert!(
+			text.contains("shape ellipse 5 5 20 20 #FFFFFF 0.0 3 - -\n"),
+			"{text}"
+		);
 		// The lock steps are events in the log.
-		assert!(text.contains("event shape-locked \"Layer 1\" 0 locked\n"), "{text}");
+		assert!(
+			text.contains("event shape-locked \"Layer 1\" 0 locked\n"),
+			"{text}"
+		);
 		let back = Project::from_text(&text).expect("locked shapes read back");
 		assert_eq!(back.to_text(), text);
 		let shapes = &back.drawing.layers[0].shapes;
@@ -1741,8 +1912,14 @@ end
 		let mut back = back;
 		back.drawing.set_shape_locked(0, 0, false);
 		let text = back.to_text();
-		assert!(text.contains("event shape-locked \"Layer 1\" 0 unlocked\n"), "{text}");
-		assert!(!text.contains("shape rectangle 10 10 50 50 #000000 0.0 3 - - locked\n"), "{text}");
+		assert!(
+			text.contains("event shape-locked \"Layer 1\" 0 unlocked\n"),
+			"{text}"
+		);
+		assert!(
+			!text.contains("shape rectangle 10 10 50 50 #000000 0.0 3 - - locked\n"),
+			"{text}"
+		);
 	}
 
 	#[test]
@@ -1752,15 +1929,33 @@ end
 		let near = d.add_layer("Near");
 		d.set_layer_depth(near, DepthRole::Foreground);
 		d.add_layer("Plain");
-		let project = Project { drawing: d, palette: Vec::new(), pinned_sliders: Vec::new(), slider_target: AdjustTarget::BaseColor, page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT, goal: None, grayscale_start: false, interaction_mode: InteractionMode::Type };
+		let project = Project {
+			drawing: d,
+			palette: Vec::new(),
+			pinned_sliders: Vec::new(),
+			slider_target: AdjustTarget::BaseColor,
+			page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT,
+			goal: None,
+			grayscale_start: false,
+			interaction_mode: InteractionMode::Type,
+		};
 		let text = project.to_text();
 		// Role-carrying layers name the role last; the unassigned
 		// layer's line is exactly the old shape.
-		assert!(text.contains("layer \"Layer 1\" visible 0 background\n"), "{text}");
-		assert!(text.contains("layer \"Near\" visible 0 foreground\n"), "{text}");
+		assert!(
+			text.contains("layer \"Layer 1\" visible 0 background\n"),
+			"{text}"
+		);
+		assert!(
+			text.contains("layer \"Near\" visible 0 foreground\n"),
+			"{text}"
+		);
 		assert!(text.contains("layer \"Plain\" visible 0\n"), "{text}");
 		// The depth event is in the log too.
-		assert!(text.contains("event layer-depth \"Layer 1\" background\n"), "{text}");
+		assert!(
+			text.contains("event layer-depth \"Layer 1\" background\n"),
+			"{text}"
+		);
 		let back = Project::from_text(&text).expect("depth roles read back");
 		assert_eq!(back.to_text(), text);
 		assert_eq!(back.drawing.layers[0].depth, DepthRole::Background);
@@ -1803,17 +1998,41 @@ end
 		ghost_round.corner = 50;
 		ghost_round.opacity = 40;
 		d.add_shape(0, ghost_round);
-		d.add_shape(0, Shape::new(ShapeKind::Rectangle, 130, 10, 50, 50, Srgb::BLACK));
+		d.add_shape(
+			0,
+			Shape::new(ShapeKind::Rectangle, 130, 10, 50, 50, Srgb::BLACK),
+		);
 		d.set_shape_corner(0, 0, 30);
-		let project = Project { drawing: d, palette: Vec::new(), pinned_sliders: Vec::new(), slider_target: AdjustTarget::BaseColor, page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT, goal: None, grayscale_start: false, interaction_mode: InteractionMode::Type };
+		let project = Project {
+			drawing: d,
+			palette: Vec::new(),
+			pinned_sliders: Vec::new(),
+			slider_target: AdjustTarget::BaseColor,
+			page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT,
+			goal: None,
+			grayscale_start: false,
+			interaction_mode: InteractionMode::Type,
+		};
 		let text = project.to_text();
 		// A fully opaque rounded rectangle writes its opacity so
 		// the corner can follow it; the sharp rectangle's line is
 		// exactly the old shape.
-		assert!(text.contains("shape rectangle 10 10 50 50 #000000 0.0 3 - - 100 r30\n"), "{text}");
-		assert!(text.contains("shape rectangle 70 10 50 50 #000000 0.0 3 - - 40 r50\n"), "{text}");
-		assert!(text.contains("shape rectangle 130 10 50 50 #000000 0.0 3 - -\n"), "{text}");
-		assert!(text.contains("event shape-corner \"Layer 1\" 0 30\n"), "{text}");
+		assert!(
+			text.contains("shape rectangle 10 10 50 50 #000000 0.0 3 - - 100 r30\n"),
+			"{text}"
+		);
+		assert!(
+			text.contains("shape rectangle 70 10 50 50 #000000 0.0 3 - - 40 r50\n"),
+			"{text}"
+		);
+		assert!(
+			text.contains("shape rectangle 130 10 50 50 #000000 0.0 3 - -\n"),
+			"{text}"
+		);
+		assert!(
+			text.contains("event shape-corner \"Layer 1\" 0 30\n"),
+			"{text}"
+		);
 		let back = Project::from_text(&text).expect("rounded shapes read back");
 		assert_eq!(back.to_text(), text);
 		let shapes = &back.drawing.layers[0].shapes;
@@ -1828,18 +2047,35 @@ end
 	fn depth_adjustment_events_round_trip_in_the_log() {
 		let mut d = Drawing::new(100, 100, Srgb::WHITE);
 		d.set_layer_depth(0, DepthRole::Midground);
-		d.add_shape(0, Shape::new(ShapeKind::Rectangle, 5, 5, 10, 10, Srgb::new(200, 40, 30)));
-		let bases: Vec<(usize, usize, Srgb)> =
-			vec![(0, 0, d.layers[0].shapes[0].fill)];
+		d.add_shape(
+			0,
+			Shape::new(ShapeKind::Rectangle, 5, 5, 10, 10, Srgb::new(200, 40, 30)),
+		);
+		let bases: Vec<(usize, usize, Srgb)> = vec![(0, 0, d.layers[0].shapes[0].fill)];
 		assert_eq!(
 			d.adjust_depth_colors(
 				DepthRole::Midground,
 				&bases,
-				crate::sliders::ColorAdjust { fog: 25, ..Default::default() },
+				crate::sliders::ColorAdjust {
+					fog: 25,
+					..Default::default()
+				},
 			),
-			crate::drawing::BulkOutcome { changed: 1, locked: 0 }
+			crate::drawing::BulkOutcome {
+				changed: 1,
+				locked: 0
+			}
 		);
-		let project = Project { drawing: d, palette: Vec::new(), pinned_sliders: Vec::new(), slider_target: AdjustTarget::BaseColor, page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT, goal: None, grayscale_start: false, interaction_mode: InteractionMode::Type };
+		let project = Project {
+			drawing: d,
+			palette: Vec::new(),
+			pinned_sliders: Vec::new(),
+			slider_target: AdjustTarget::BaseColor,
+			page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT,
+			goal: None,
+			grayscale_start: false,
+			interaction_mode: InteractionMode::Type,
+		};
 		let text = project.to_text();
 		assert!(text.contains("event depth-adjusted midground 1"), "{text}");
 		let back = Project::from_text(&text).expect("depth events read back");
@@ -1851,38 +2087,98 @@ end
 		// Build a scene and save it the way File, Save Scene does:
 		// a project whose drawing is the scene.
 		let mut scene = Drawing::new(300, 200, Srgb::WHITE);
-		scene.add_shape(0, Shape::new(ShapeKind::Rectangle, 0, 150, 300, 50, Srgb::new(30, 60, 120)));
-		scene.add_shape(0, Shape::new(ShapeKind::Ellipse, 240, 20, 40, 40, Srgb::new(255, 205, 0)));
-		let scene_project = Project { drawing: scene, palette: Vec::new(), pinned_sliders: Vec::new(), slider_target: AdjustTarget::BaseColor, page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT, goal: None, grayscale_start: false, interaction_mode: InteractionMode::Type };
+		scene.add_shape(
+			0,
+			Shape::new(
+				ShapeKind::Rectangle,
+				0,
+				150,
+				300,
+				50,
+				Srgb::new(30, 60, 120),
+			),
+		);
+		scene.add_shape(
+			0,
+			Shape::new(ShapeKind::Ellipse, 240, 20, 40, 40, Srgb::new(255, 205, 0)),
+		);
+		let scene_project = Project {
+			drawing: scene,
+			palette: Vec::new(),
+			pinned_sliders: Vec::new(),
+			slider_target: AdjustTarget::BaseColor,
+			page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT,
+			goal: None,
+			grayscale_start: false,
+			interaction_mode: InteractionMode::Type,
+		};
 		let scene_text = scene_project.to_text();
 		// Later: open the scene file and insert it into a design.
 		let loaded = Project::from_text(&scene_text).expect("a scene file reads back");
 		let mut d = Drawing::new(800, 600, Srgb::WHITE);
 		assert_eq!(d.insert_scene(0, &loaded.drawing, "Harbour"), 2);
-		let project = Project { drawing: d, palette: Vec::new(), pinned_sliders: Vec::new(), slider_target: AdjustTarget::BaseColor, page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT, goal: None, grayscale_start: false, interaction_mode: InteractionMode::Type };
+		let project = Project {
+			drawing: d,
+			palette: Vec::new(),
+			pinned_sliders: Vec::new(),
+			slider_target: AdjustTarget::BaseColor,
+			page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT,
+			goal: None,
+			grayscale_start: false,
+			interaction_mode: InteractionMode::Type,
+		};
 		let text = project.to_text();
-		assert!(text.contains("event scene-inserted \"Harbour\" 2\n"), "{text}");
+		assert!(
+			text.contains("event scene-inserted \"Harbour\" 2\n"),
+			"{text}"
+		);
 		let back = Project::from_text(&text).expect("a design holding a scene reads back");
 		assert_eq!(back.to_text(), text);
 		let shapes = &back.drawing.layers[0].shapes;
 		assert_eq!(shapes.len(), 2);
-		assert!(shapes.iter().all(|s| s.caption.as_deref().is_some_and(|c| c.starts_with("Harbour: "))));
+		assert!(shapes.iter().all(|s| s
+			.caption
+			.as_deref()
+			.is_some_and(|c| c.starts_with("Harbour: "))));
 	}
 
 	#[test]
 	fn slider_events_round_trip_in_the_log() {
 		let mut d = Drawing::new(100, 100, Srgb::WHITE);
-		d.add_shape(0, Shape::new(ShapeKind::Rectangle, 5, 5, 10, 10, Srgb::new(200, 40, 30)));
+		d.add_shape(
+			0,
+			Shape::new(ShapeKind::Rectangle, 5, 5, 10, 10, Srgb::new(200, 40, 30)),
+		);
 		d.set_shape_opacity(0, 0, 45);
 		d.adjust_shape_color(
 			0,
 			0,
 			Srgb::new(200, 40, 30),
-			crate::sliders::ColorAdjust { shade: 10, fog: -20, ..Default::default() },
+			crate::sliders::ColorAdjust {
+				shade: 10,
+				fog: -20,
+				..Default::default()
+			},
 		);
 		let bases: Vec<Srgb> = d.layers[0].shapes.iter().map(|s| s.fill).collect();
-		d.adjust_layer_colors(0, &bases, crate::sliders::ColorAdjust { warmth: 15, ..Default::default() });
-		let project = Project { drawing: d, palette: Vec::new(), pinned_sliders: Vec::new(), slider_target: AdjustTarget::BaseColor, page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT, goal: None, grayscale_start: false, interaction_mode: InteractionMode::Type };
+		d.adjust_layer_colors(
+			0,
+			&bases,
+			crate::sliders::ColorAdjust {
+				warmth: 15,
+				..Default::default()
+			},
+		);
+		let project = Project {
+			drawing: d,
+			palette: Vec::new(),
+			pinned_sliders: Vec::new(),
+			slider_target: AdjustTarget::BaseColor,
+			page_jump_percent: DEFAULT_PAGE_JUMP_PERCENT,
+			goal: None,
+			grayscale_start: false,
+			interaction_mode: InteractionMode::Type,
+		};
 		let text = project.to_text();
 		assert!(text.contains("event shape-opacity"), "{text}");
 		assert!(text.contains("event shape-adjusted"), "{text}");
@@ -1905,7 +2201,10 @@ end
 			..Default::default()
 		};
 		d.add_shape(0, styled);
-		d.add_shape(0, Shape::text("Plain", "Arial", 12, 0, 40, 100, 20, Srgb::BLACK));
+		d.add_shape(
+			0,
+			Shape::text("Plain", "Arial", 12, 0, 40, 100, 20, Srgb::BLACK),
+		);
 		assert!(d.edit_text(0, 0, "Title", d.layers[0].shapes[0].style));
 		let project = Project {
 			drawing: d,
@@ -1925,8 +2224,15 @@ end
 		assert!(!plain_line.contains("style:"), "{plain_line}");
 		assert!(text.contains("event text-edited"), "{text}");
 		let back = Project::from_text(&text).expect("styled text reads back");
-		assert_eq!(back.drawing.layers[0].shapes[0].style, project.drawing.layers[0].shapes[0].style);
-		assert_eq!(back.to_text(), text, "the file is stable under a round trip");
+		assert_eq!(
+			back.drawing.layers[0].shapes[0].style,
+			project.drawing.layers[0].shapes[0].style
+		);
+		assert_eq!(
+			back.to_text(),
+			text,
+			"the file is stable under a round trip"
+		);
 		// A malformed style token is an error, not a silent drop.
 		let broken = text.replacen("style:bi-h1-center", "style:bx-h1-center", 1);
 		assert!(Project::from_text(&broken).is_err());

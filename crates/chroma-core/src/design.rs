@@ -7,6 +7,8 @@
 //! with a hand-written caption keeps it untouched. Generation only ever
 //! fills gaps, never overwrites.
 
+use patois::t;
+
 use crate::{color_words, describe, font, Srgb};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -19,13 +21,13 @@ pub enum ShapeKind {
 }
 
 impl ShapeKind {
-	pub fn name(self) -> &'static str {
+	pub fn name(self) -> String {
 		match self {
-			ShapeKind::Rectangle => "rectangle",
-			ShapeKind::Ellipse => "ellipse",
-			ShapeKind::Stroke => "stroke",
-			ShapeKind::Text => "text",
-			ShapeKind::Image => "image",
+			ShapeKind::Rectangle => t("rectangle"),
+			ShapeKind::Ellipse => t("ellipse"),
+			ShapeKind::Stroke => t("stroke"),
+			ShapeKind::Text => t("text"),
+			ShapeKind::Image => t("image"),
 		}
 	}
 }
@@ -49,12 +51,12 @@ impl Heading {
 	pub const ALL: [Heading; 4] = [Heading::Body, Heading::H1, Heading::H2, Heading::H3];
 
 	/// The spoken name: "body text", "heading 1", and so on.
-	pub fn name(self) -> &'static str {
+	pub fn name(self) -> String {
 		match self {
-			Heading::Body => "body text",
-			Heading::H1 => "heading 1",
-			Heading::H2 => "heading 2",
-			Heading::H3 => "heading 3",
+			Heading::Body => t("body text"),
+			Heading::H1 => t("heading 1"),
+			Heading::H2 => t("heading 2"),
+			Heading::H3 => t("heading 3"),
 		}
 	}
 
@@ -87,20 +89,20 @@ impl TextAlign {
 	pub const ALL: [TextAlign; 3] = [TextAlign::Left, TextAlign::Center, TextAlign::Right];
 
 	/// The spoken name: "left", "centered", "right-aligned".
-	pub fn name(self) -> &'static str {
+	pub fn name(self) -> String {
 		match self {
-			TextAlign::Left => "left",
-			TextAlign::Center => "centered",
-			TextAlign::Right => "right-aligned",
+			TextAlign::Left => t("left"),
+			TextAlign::Center => t("centered"),
+			TextAlign::Right => t("right-aligned"),
 		}
 	}
 
 	/// The plain chooser label: "Left", "Center", "Right".
-	pub fn label(self) -> &'static str {
+	pub fn label(self) -> String {
 		match self {
-			TextAlign::Left => "Left",
-			TextAlign::Center => "Center",
-			TextAlign::Right => "Right",
+			TextAlign::Left => t("Left"),
+			TextAlign::Center => t("Center"),
+			TextAlign::Right => t("Right"),
 		}
 	}
 
@@ -150,16 +152,16 @@ impl TextStyle {
 	/// "italic", "underlined", "heading 1", "centered" — only
 	/// the parts that differ from plain body text, in a stable
 	/// order. Empty for the default style.
-	pub fn words(&self) -> Vec<&'static str> {
+	pub fn words(&self) -> Vec<String> {
 		let mut out = Vec::new();
 		if self.bold {
-			out.push("bold");
+			out.push(t("bold"));
 		}
 		if self.italic {
-			out.push("italic");
+			out.push(t("italic"));
 		}
 		if self.underline {
-			out.push("underlined");
+			out.push(t("underlined"));
 		}
 		if self.heading != Heading::Body {
 			out.push(self.heading.name());
@@ -186,7 +188,11 @@ impl TextStyle {
 		if self.underline {
 			flags.push('u');
 		}
-		format!("style:{flags}-{}-{}", self.heading.token(), self.align.token())
+		format!(
+			"style:{flags}-{}-{}",
+			self.heading.token(),
+			self.align.token()
+		)
 	}
 
 	/// Parse a file token written by `file_token`.
@@ -199,7 +205,11 @@ impl TextStyle {
 		if parts.next().is_some() {
 			return None;
 		}
-		let mut style = TextStyle { heading, align, ..Default::default() };
+		let mut style = TextStyle {
+			heading,
+			align,
+			..Default::default()
+		};
 		for c in flags.chars() {
 			match c {
 				'b' => style.bold = true,
@@ -342,12 +352,7 @@ impl Shape {
 	/// A stroke drawn with a pointer: the raw path the hand
 	/// travelled, thinned by `sample_points` at `min_dist`
 	/// pixels, painted with the given brush width and color.
-	pub fn stroke_from_points(
-		raw: &[(i32, i32)],
-		min_dist: i32,
-		brush: u32,
-		fill: Srgb,
-	) -> Shape {
+	pub fn stroke_from_points(raw: &[(i32, i32)], min_dist: i32, brush: u32, fill: Srgb) -> Shape {
 		Shape::stroke(sample_points(raw, min_dist), brush, fill)
 	}
 }
@@ -387,7 +392,10 @@ pub fn sample_points(raw: &[(i32, i32)], min_dist: i32) -> Vec<(i32, i32)> {
 impl Shape {
 	/// Centre the rotation and measurements turn around.
 	pub fn center(&self) -> (f64, f64) {
-		(self.x as f64 + self.w as f64 / 2.0, self.y as f64 + self.h as f64 / 2.0)
+		(
+			self.x as f64 + self.w as f64 / 2.0,
+			self.y as f64 + self.h as f64 / 2.0,
+		)
 	}
 }
 
@@ -395,13 +403,7 @@ impl Shape {
 /// exactly — the design's promise that output colors are palette
 /// colors. Below full opacity the color blends with the pixel
 /// already painted, in paint order.
-fn put_shape_pixel(
-	img: &mut image::RgbImage,
-	x: u32,
-	y: u32,
-	px: image::Rgb<u8>,
-	opacity: u8,
-) {
+fn put_shape_pixel(img: &mut image::RgbImage, x: u32, y: u32, px: image::Rgb<u8>, opacity: u8) {
 	if opacity >= 100 {
 		img.put_pixel(x, y, px);
 		return;
@@ -409,7 +411,11 @@ fn put_shape_pixel(
 	let old = img.get_pixel(x, y);
 	let a = opacity as u32;
 	let mix = |new: u8, old: u8| ((new as u32 * a + old as u32 * (100 - a)) / 100) as u8;
-	img.put_pixel(x, y, image::Rgb([mix(px[0], old[0]), mix(px[1], old[1]), mix(px[2], old[2])]));
+	img.put_pixel(
+		x,
+		y,
+		image::Rgb([mix(px[0], old[0]), mix(px[1], old[1]), mix(px[2], old[2])]),
+	);
 }
 
 /// Is a point at shape-local coordinates (lx, ly) — offsets from
@@ -445,13 +451,18 @@ pub struct Design {
 
 impl Design {
 	pub fn new(width: u32, height: u32, background: Srgb) -> Design {
-		Design { width, height, background, shapes: Vec::new() }
+		Design {
+			width,
+			height,
+			background,
+			shapes: Vec::new(),
+		}
 	}
 
 	/// The hue relationship between two colors, in words, when it is one of
 	/// the classic predictable ones. `None` when there is no clean relation
 	/// (or either color is achromatic and hue means nothing).
-	pub fn relation(a: Srgb, b: Srgb) -> Option<&'static str> {
+	pub fn relation(a: Srgb, b: Srgb) -> Option<String> {
 		let (oa, ob) = (a.to_oklch(), b.to_oklch());
 		if oa.c < 0.02 || ob.c < 0.02 {
 			return None;
@@ -459,10 +470,10 @@ impl Design {
 		let d = (oa.h - ob.h).abs();
 		let d = if d > 180.0 { 360.0 - d } else { d };
 		match d {
-			x if x <= 10.0 => Some("same hue as"),
-			x if (x - 30.0).abs() <= 10.0 => Some("analogous to"),
-			x if (x - 120.0).abs() <= 10.0 => Some("triadic with"),
-			x if (x - 180.0).abs() <= 10.0 => Some("complementary to"),
+			x if x <= 10.0 => Some(t("same hue as")),
+			x if (x - 30.0).abs() <= 10.0 => Some(t("analogous to")),
+			x if (x - 120.0).abs() <= 10.0 => Some(t("triadic with")),
+			x if (x - 180.0).abs() <= 10.0 => Some(t("complementary to")),
 			_ => None,
 		}
 	}
@@ -479,53 +490,53 @@ impl Design {
 			return shape.text.clone();
 		}
 		if shape.kind == ShapeKind::Image {
-			return format!(
-				"image from file {}, {} by {} pixels at {}, {}",
-				image_file_name(&shape.image_path),
-				shape.w,
-				shape.h,
-				shape.x,
-				shape.y
-			);
+			return t("image from file %s, %s by %s pixels at %s, %s")
+				.replacen("%s", &(image_file_name(&shape.image_path)).to_string(), 1)
+				.replacen("%s", &(shape.w).to_string(), 1)
+				.replacen("%s", &(shape.h).to_string(), 1)
+				.replacen("%s", &(shape.x).to_string(), 1)
+				.replacen("%s", &(shape.y).to_string(), 1);
 		}
 		let mut s = if shape.kind == ShapeKind::Stroke {
-			format!(
-				"stroke through {} points with a {} pixel brush, in {}",
-				shape.points.len(),
-				shape.brush,
-				describe(shape.fill)
-			)
+			t("stroke through %s points with a %s pixel brush, in %s")
+				.replacen("%s", &(shape.points.len()).to_string(), 1)
+				.replacen("%s", &(shape.brush).to_string(), 1)
+				.replacen("%s", &(describe(shape.fill)).to_string(), 1)
 		} else {
-			format!(
-				"{} filled with {}, {} by {} pixels at {}, {}",
-				shape.kind.name(),
-				describe(shape.fill),
-				shape.w,
-				shape.h,
-				shape.x,
-				shape.y
-			)
+			t("%s filled with %s, %s by %s pixels at %s, %s")
+				.replacen("%s", &(shape.kind.name()).to_string(), 1)
+				.replacen("%s", &(describe(shape.fill)).to_string(), 1)
+				.replacen("%s", &(shape.w).to_string(), 1)
+				.replacen("%s", &(shape.h).to_string(), 1)
+				.replacen("%s", &(shape.x).to_string(), 1)
+				.replacen("%s", &(shape.y).to_string(), 1)
 		};
 		if shape.angle != 0.0 {
-			s.push_str(&format!("; rotated {} degrees", shape.angle));
+			s.push_str(&t("; rotated %s degrees").replacen("%s", &(shape.angle).to_string(), 1));
 		}
 		if let Some(rel) = Self::relation(shape.fill, self.background) {
-			s.push_str(&format!("; {} the background {}", rel, describe(self.background)));
+			s.push_str(
+				&t("; %s the background %s")
+					.replacen("%s", &(rel).to_string(), 1)
+					.replacen("%s", &(describe(self.background)).to_string(), 1),
+			);
 		}
 		let ratio = shape.fill.contrast(self.background);
-		s.push_str(&format!("; contrast against background {:.1} to 1", ratio));
+		s.push_str(&t("; contrast against background %s to 1").replacen(
+			"%s",
+			&format!("{:.1}", ratio),
+			1,
+		));
 		s
 	}
 
 	/// Captions for the whole design: a one-line header plus one line per
 	/// shape, in paint order.
 	pub fn caption_sheet(&self) -> String {
-		let mut out = format!(
-			"Design {} by {} pixels, background {}.\n",
-			self.width,
-			self.height,
-			describe(self.background)
-		);
+		let mut out = t("Design %s by %s pixels, background %s.\n")
+			.replacen("%s", &(self.width).to_string(), 1)
+			.replacen("%s", &(self.height).to_string(), 1)
+			.replacen("%s", &(describe(self.background)).to_string(), 1);
 		for (i, shape) in self.shapes.iter().enumerate() {
 			out.push_str(&format!("{}. {}\n", i + 1, self.caption_for(shape)));
 		}
@@ -536,7 +547,7 @@ impl Design {
 	/// over the canvas — "top left", "center", "bottom right",
 	/// "top center", "middle left" and so on. Fractions are 0.0 at the
 	/// left/top edge to 1.0 at the right/bottom.
-	pub fn position_word(nx: f32, ny: f32) -> &'static str {
+	pub fn position_word(nx: f32, ny: f32) -> String {
 		let col = if nx < 1.0 / 3.0 {
 			0
 		} else if nx < 2.0 / 3.0 {
@@ -552,19 +563,19 @@ impl Design {
 			2
 		};
 		match (row, col) {
-			(0, 0) => "top left",
-			(0, 1) => "top center",
-			(0, 2) => "top right",
-			(1, 0) => "middle left",
-			(1, 1) => "center",
-			(1, 2) => "middle right",
-			(2, 0) => "bottom left",
-			(2, 1) => "bottom center",
-			_ => "bottom right",
+			(0, 0) => t("top left"),
+			(0, 1) => t("top center"),
+			(0, 2) => t("top right"),
+			(1, 0) => t("middle left"),
+			(1, 1) => t("center"),
+			(1, 2) => t("middle right"),
+			(2, 0) => t("bottom left"),
+			(2, 1) => t("bottom center"),
+			_ => t("bottom right"),
 		}
 	}
 
-	fn spot(&self, x: f64, y: f64) -> &'static str {
+	fn spot(&self, x: f64, y: f64) -> String {
 		Self::position_word(
 			(x / self.width.max(1) as f64) as f32,
 			(y / self.height.max(1) as f64) as f32,
@@ -584,45 +595,54 @@ impl Design {
 		let mut out = match shape.kind {
 			ShapeKind::Stroke => {
 				if shape.points.len() < 2 {
-					format!("single brush dot at {at}, {words}")
+					t("single brush dot at %s, %s")
+						.replacen("%s", &(at).to_string(), 1)
+						.replacen("%s", &(words).to_string(), 1)
 				} else {
-				let (fx, fy) = shape.points[0];
-				let (lx, ly) = shape.points[shape.points.len() - 1];
-				let from = self.spot(fx as f64, fy as f64);
-				let to = self.spot(lx as f64, ly as f64);
-				let (dx, dy) = (lx - fx, ly - fy);
-				let dir = if dx.abs() <= 2 && dy.abs() > 2 {
-					"vertical"
-				} else if dy < -2 {
-					"rising"
-				} else if dy > 2 {
-					"falling"
-				} else {
-					"level"
-				};
-				let len = ((dx as f64).powi(2) + (dy as f64).powi(2)).sqrt();
-				let diag =
-					((self.width as f64).powi(2) + (self.height as f64).powi(2)).sqrt();
-				let size = if len < diag * 0.2 {
-					"short"
-				} else if len < diag * 0.55 {
-					"medium-length"
-				} else {
-					"long"
-				};
-				let mut s =
-					format!("{size} {dir} stroke from {from} to {to}, {words}");
-				if !shape.pattern.is_empty() && shape.pattern != "solid" {
-					s.push_str(&format!(", {} pattern", shape.pattern));
-				}
-				s
+					let (fx, fy) = shape.points[0];
+					let (lx, ly) = shape.points[shape.points.len() - 1];
+					let from = self.spot(fx as f64, fy as f64);
+					let to = self.spot(lx as f64, ly as f64);
+					let (dx, dy) = (lx - fx, ly - fy);
+					let dir = if dx.abs() <= 2 && dy.abs() > 2 {
+						"vertical"
+					} else if dy < -2 {
+						"rising"
+					} else if dy > 2 {
+						"falling"
+					} else {
+						"level"
+					};
+					let len = ((dx as f64).powi(2) + (dy as f64).powi(2)).sqrt();
+					let diag = ((self.width as f64).powi(2) + (self.height as f64).powi(2)).sqrt();
+					let size = if len < diag * 0.2 {
+						"short"
+					} else if len < diag * 0.55 {
+						"medium-length"
+					} else {
+						"long"
+					};
+					let mut s = t("%s %s stroke from %s to %s, %s")
+						.replacen("%s", size, 1)
+						.replacen("%s", dir, 1)
+						.replacen("%s", &(from).to_string(), 1)
+						.replacen("%s", &(to).to_string(), 1)
+						.replacen("%s", &(words).to_string(), 1);
+					if !shape.pattern.is_empty() && shape.pattern != "solid" {
+						s.push_str(&t(", %s pattern").replacen(
+							"%s",
+							&(shape.pattern).to_string(),
+							1,
+						));
+					}
+					s
 				}
 			}
 			ShapeKind::Text => {
 				let font = if shape.font.is_empty() {
-					"the default font".to_string()
+					t("the default font")
 				} else {
-					format!("{} font", shape.font)
+					t("%s font").replacen("%s", &(shape.font).to_string(), 1)
 				};
 				let style_words = shape.style.words();
 				let style = if style_words.is_empty() {
@@ -630,17 +650,19 @@ impl Design {
 				} else {
 					format!(", {}", style_words.join(", "))
 				};
-				format!(
-					"text \"{}\" in {font} at {} point{style}, at {at}, {words}",
-					shape.text, shape.font_size
-				)
+				t("text \"%s\" in %s at %s point%s, at %s, %s")
+					.replacen("%s", &(shape.text).to_string(), 1)
+					.replacen("%s", &(font).to_string(), 1)
+					.replacen("%s", &(shape.font_size).to_string(), 1)
+					.replacen("%s", &(style).to_string(), 1)
+					.replacen("%s", &(at).to_string(), 1)
+					.replacen("%s", &(words).to_string(), 1)
 			}
-			ShapeKind::Image => format!(
-				"image {} at {at} ({} by {} pixels)",
-				image_file_name(&shape.image_path),
-				shape.w,
-				shape.h
-			),
+			ShapeKind::Image => t("image %s at %s (%s by %s pixels)")
+				.replacen("%s", &(image_file_name(&shape.image_path)).to_string(), 1)
+				.replacen("%s", &(at).to_string(), 1)
+				.replacen("%s", &(shape.w).to_string(), 1)
+				.replacen("%s", &(shape.h).to_string(), 1),
 			kind => {
 				let area = (shape.w as f64 * shape.h as f64)
 					/ (self.width.max(1) as f64 * self.height.max(1) as f64);
@@ -653,23 +675,26 @@ impl Design {
 				} else {
 					"huge"
 				};
-				let (kind_word, corners) =
-					if kind == ShapeKind::Rectangle && shape.corner > 0 {
-						(
-							"rounded rectangle",
-							format!(", corners {} percent", shape.corner),
-						)
-					} else {
-						(kind.name(), String::new())
-					};
-				format!(
-					"{size} {words} {kind_word} at {at} ({} by {} pixels){corners}",
-					shape.w, shape.h
-				)
+				let (kind_word, corners) = if kind == ShapeKind::Rectangle && shape.corner > 0 {
+					(
+						t("rounded rectangle"),
+						t(", corners %s percent").replacen("%s", &(shape.corner).to_string(), 1),
+					)
+				} else {
+					(kind.name(), String::new())
+				};
+				t("%s %s %s at %s (%s by %s pixels)%s")
+					.replacen("%s", size, 1)
+					.replacen("%s", &(words).to_string(), 1)
+					.replacen("%s", &(kind_word).to_string(), 1)
+					.replacen("%s", &(at).to_string(), 1)
+					.replacen("%s", &(shape.w).to_string(), 1)
+					.replacen("%s", &(shape.h).to_string(), 1)
+					.replacen("%s", &(corners).to_string(), 1)
 			}
 		};
 		if shape.opacity < 100 {
-			out.push_str(&format!(", {} percent opaque", shape.opacity));
+			out.push_str(&t(", %s percent opaque").replacen("%s", &(shape.opacity).to_string(), 1));
 		}
 		out
 	}
@@ -738,8 +763,7 @@ impl Design {
 				let (cx, cy) = shape.center();
 				let rad = ((shape.w as f64 / 2.0).powi(2) + (shape.h as f64 / 2.0).powi(2))
 					.sqrt()
-					.ceil() as i32
-					+ 1;
+					.ceil() as i32 + 1;
 				let (sin, cos) = (-shape.angle).to_radians().sin_cos();
 				for y in (cy as i32 - rad).max(0)..(cy as i32 + rad).min(self.height as i32) {
 					for x in (cx as i32 - rad).max(0)..(cx as i32 + rad).min(self.width as i32) {
@@ -750,8 +774,7 @@ impl Design {
 							_ => {
 								let (rx, ry) = (shape.w as f64 / 2.0, shape.h as f64 / 2.0);
 								rx > 0.0
-									&& ry > 0.0
-									&& (lx / rx) * (lx / rx) + (ly / ry) * (ly / ry) <= 1.0
+									&& ry > 0.0 && (lx / rx) * (lx / rx) + (ly / ry) * (ly / ry) <= 1.0
 							}
 						};
 						if inside {
@@ -874,13 +897,7 @@ impl Design {
 										ly + row as i32 * scale + dy,
 									);
 									if x >= 0 && y >= 0 && x < iw && y < ih {
-										put_shape_pixel(
-											img,
-											x as u32,
-											y as u32,
-											px,
-											shape.opacity,
-										);
+										put_shape_pixel(img, x as u32, y as u32, px, shape.opacity);
 									}
 								}
 							}
@@ -1022,7 +1039,8 @@ mod tests {
 	#[test]
 	fn render_at_full_opacity_is_exact() {
 		let mut d = Design::new(4, 4, Srgb::WHITE);
-		d.shapes.push(Shape::new(ShapeKind::Rectangle, 0, 0, 4, 4, Srgb::BLACK));
+		d.shapes
+			.push(Shape::new(ShapeKind::Rectangle, 0, 0, 4, 4, Srgb::BLACK));
 		assert_eq!(d.shapes[0].opacity, 100, "shapes start fully opaque");
 		assert_eq!(*d.render().get_pixel(2, 2), image::Rgb([0, 0, 0]));
 	}
@@ -1049,7 +1067,9 @@ mod tests {
 		assert!(plain.contains("rounded rectangle"), "{plain}");
 		assert!(plain.contains("corners 50 percent"), "{plain}");
 		let sharp = Design::new(40, 40, Srgb::WHITE);
-		assert!(!sharp.describe_plain(&Shape::new(ShapeKind::Rectangle, 0, 0, 5, 5, Srgb::BLACK)).contains("rounded"));
+		assert!(!sharp
+			.describe_plain(&Shape::new(ShapeKind::Rectangle, 0, 0, 5, 5, Srgb::BLACK))
+			.contains("rounded"));
 		// Ellipses ignore the corner field entirely.
 		let mut e = Design::new(40, 40, Srgb::WHITE);
 		let mut ball = Shape::new(ShapeKind::Ellipse, 10, 10, 20, 20, Srgb::BLACK);
@@ -1062,18 +1082,38 @@ mod tests {
 	fn plain_description_mentions_opacity_only_below_full() {
 		let d = Design::new(100, 100, Srgb::WHITE);
 		let mut s = Shape::new(ShapeKind::Rectangle, 10, 10, 20, 20, Srgb::BLACK);
-		assert!(!d.describe_plain(&s).contains("opaque"), "{}", d.describe_plain(&s));
+		assert!(
+			!d.describe_plain(&s).contains("opaque"),
+			"{}",
+			d.describe_plain(&s)
+		);
 		s.opacity = 40;
-		assert!(d.describe_plain(&s).ends_with(", 40 percent opaque"), "{}", d.describe_plain(&s));
+		assert!(
+			d.describe_plain(&s).ends_with(", 40 percent opaque"),
+			"{}",
+			d.describe_plain(&s)
+		);
 	}
 
 	#[test]
 	fn render_paints_shapes_in_order() {
 		let mut d = Design::new(10, 10, Srgb::WHITE);
-		d.shapes
-			.push(Shape::new(ShapeKind::Rectangle, 0, 0, 10, 10, Srgb::new(255, 0, 0)));
-		d.shapes
-			.push(Shape::new(ShapeKind::Ellipse, 2, 2, 6, 6, Srgb::new(0, 0, 255)));
+		d.shapes.push(Shape::new(
+			ShapeKind::Rectangle,
+			0,
+			0,
+			10,
+			10,
+			Srgb::new(255, 0, 0),
+		));
+		d.shapes.push(Shape::new(
+			ShapeKind::Ellipse,
+			2,
+			2,
+			6,
+			6,
+			Srgb::new(0, 0, 255),
+		));
 		let img = d.render();
 		assert_eq!(img.get_pixel(0, 0), &image::Rgb([255, 0, 0]));
 		assert_eq!(img.get_pixel(5, 5), &image::Rgb([0, 0, 255])); // ellipse center
@@ -1095,8 +1135,8 @@ mod tests {
 	fn relation_detects_complementary() {
 		let base = Srgb::new(200, 60, 40);
 		let comp = base.to_oklch().complementary().to_srgb();
-		assert_eq!(Design::relation(base, comp), Some("complementary to"));
-		assert_eq!(Design::relation(base, base), Some("same hue as"));
+		assert_eq!(Design::relation(base, comp), Some("complementary to".to_string()));
+		assert_eq!(Design::relation(base, base), Some("same hue as".to_string()));
 		assert_eq!(Design::relation(base, Srgb::WHITE), None);
 	}
 
@@ -1132,7 +1172,8 @@ mod tests {
 			.unwrap();
 		let path_str = path.to_string_lossy().into_owned();
 		let mut d = Design::new(40, 40, Srgb::WHITE);
-		d.shapes.push(Shape::image(&path_str, 5, 5, 8, 8, Srgb::new(255, 0, 0)));
+		d.shapes
+			.push(Shape::image(&path_str, 5, 5, 8, 8, Srgb::new(255, 0, 0)));
 		let img = d.render();
 		assert_eq!(img.get_pixel(6, 6), &image::Rgb([10, 200, 30]));
 		assert_eq!(img.get_pixel(0, 0), &image::Rgb([255, 255, 255]));
@@ -1142,8 +1183,14 @@ mod tests {
 		std::fs::remove_file(&path).ok();
 		// A missing file: the placeholder outline shows, in fill color.
 		let mut d2 = Design::new(40, 40, Srgb::WHITE);
-		d2.shapes
-			.push(Shape::image("/no/such/file.png", 5, 5, 10, 10, Srgb::new(255, 0, 0)));
+		d2.shapes.push(Shape::image(
+			"/no/such/file.png",
+			5,
+			5,
+			10,
+			10,
+			Srgb::new(255, 0, 0),
+		));
 		let img2 = d2.render();
 		assert_eq!(img2.get_pixel(5, 5), &image::Rgb([255, 0, 0])); // corner of the frame
 		assert_eq!(img2.get_pixel(20, 20), &image::Rgb([255, 255, 255])); // outside the box
@@ -1192,7 +1239,10 @@ mod tests {
 		let dashed = count("dashed");
 		let dotted = count("dotted");
 		assert!(solid > 100, "solid stroke painted only {solid} pixels");
-		assert!(dashed < solid && dashed > solid / 3, "dashed {dashed} vs solid {solid}");
+		assert!(
+			dashed < solid && dashed > solid / 3,
+			"dashed {dashed} vs solid {solid}"
+		);
 		assert!(dotted < dashed, "dotted {dotted} vs dashed {dashed}");
 	}
 
@@ -1246,9 +1296,15 @@ mod tests {
 			..Default::default()
 		};
 		let words = d.describe_plain(&styled);
-		assert!(words.contains("bold, underlined, heading 1, centered"), "{words}");
+		assert!(
+			words.contains("bold, underlined, heading 1, centered"),
+			"{words}"
+		);
 		// The file token round-trips through its parser.
-		assert_eq!(TextStyle::from_file_token(&styled.style.file_token()), Some(styled.style));
+		assert_eq!(
+			TextStyle::from_file_token(&styled.style.file_token()),
+			Some(styled.style)
+		);
 		assert_eq!(styled.style.file_token(), "style:bu-h1-center");
 		assert_eq!(
 			TextStyle::from_file_token("style:-body-left"),
@@ -1268,16 +1324,29 @@ mod tests {
 			d.render()
 		};
 		let count = |img: &image::RgbImage| {
-			img.pixels().filter(|p| **p == image::Rgb([0, 0, 0])).count()
+			img.pixels()
+				.filter(|p| **p == image::Rgb([0, 0, 0]))
+				.count()
 		};
 		let plain = render(TextStyle::default());
 		// Bold paints the glyph twice over: strictly more ink.
-		let bold = render(TextStyle { bold: true, ..Default::default() });
-		assert!(count(&bold) > count(&plain), "bold {} vs plain {}", count(&bold), count(&plain));
+		let bold = render(TextStyle {
+			bold: true,
+			..Default::default()
+		});
+		assert!(
+			count(&bold) > count(&plain),
+			"bold {} vs plain {}",
+			count(&bold),
+			count(&plain)
+		);
 		// Underline adds a rule BELOW the glyph rows (glyph rows
 		// end at y = 4 + 7*2 = 18 at this scale; the rule sits
 		// at 4 + 14 + 1 = 19).
-		let under = render(TextStyle { underline: true, ..Default::default() });
+		let under = render(TextStyle {
+			underline: true,
+			..Default::default()
+		});
 		assert_eq!(*under.get_pixel(10, 19), image::Rgb([0, 0, 0]));
 		assert_eq!(*plain.get_pixel(10, 19), image::Rgb([255, 255, 255]));
 		// Centered: the narrow glyph moves to the middle of its
@@ -1286,7 +1355,10 @@ mod tests {
 		// x = 55 + 4 = 59 when the 10-pixel line is centered in
 		// the 100-pixel box starting at 10.
 		assert_eq!(*plain.get_pixel(14, 6), image::Rgb([0, 0, 0]));
-		let centered = render(TextStyle { align: TextAlign::Center, ..Default::default() });
+		let centered = render(TextStyle {
+			align: TextAlign::Center,
+			..Default::default()
+		});
 		assert_eq!(*centered.get_pixel(14, 6), image::Rgb([255, 255, 255]));
 		assert_eq!(*centered.get_pixel(59, 6), image::Rgb([0, 0, 0]));
 		assert!(count(&centered) == count(&plain));
@@ -1295,12 +1367,17 @@ mod tests {
 	#[test]
 	fn multi_line_text_paints_every_line() {
 		let mut d = Design::new(200, 80, Srgb::WHITE);
-		d.shapes.push(Shape::text("A\nB", "Arial", 14, 2, 2, 100, 60, Srgb::BLACK));
+		d.shapes
+			.push(Shape::text("A\nB", "Arial", 14, 2, 2, 100, 60, Srgb::BLACK));
 		let img = d.render();
 		// Line one at the top; line two a glyph height plus gap
 		// lower (step 18 at scale 2), its own pixels present.
 		assert_eq!(*img.get_pixel(2, 2), image::Rgb([255, 255, 255])); // 'A' top row is 01110: first cell clear
-		assert!(img.pixels().filter(|p| **p == image::Rgb([0, 0, 0])).count() > 20);
+		assert!(
+			img.pixels()
+				.filter(|p| **p == image::Rgb([0, 0, 0]))
+				.count() > 20
+		);
 		let second_line_ink = (0..40).any(|x| *img.get_pixel(x, 2 + 18) == image::Rgb([0, 0, 0]));
 		assert!(second_line_ink, "second line painted nothing");
 	}
@@ -1308,10 +1385,22 @@ mod tests {
 	#[test]
 	fn css_export_lists_each_color_once() {
 		let mut d = Design::new(10, 10, Srgb::new(15, 94, 104));
-		d.shapes
-			.push(Shape::new(ShapeKind::Rectangle, 0, 0, 5, 5, Srgb::new(15, 94, 104)));
-		d.shapes
-			.push(Shape::new(ShapeKind::Rectangle, 5, 5, 5, 5, Srgb::new(255, 128, 0)));
+		d.shapes.push(Shape::new(
+			ShapeKind::Rectangle,
+			0,
+			0,
+			5,
+			5,
+			Srgb::new(15, 94, 104),
+		));
+		d.shapes.push(Shape::new(
+			ShapeKind::Rectangle,
+			5,
+			5,
+			5,
+			5,
+			Srgb::new(255, 128, 0),
+		));
 		let css = d.to_css("brand");
 		assert_eq!(css.matches("--brand-").count(), 2);
 		assert!(css.contains("#0F5E68"));

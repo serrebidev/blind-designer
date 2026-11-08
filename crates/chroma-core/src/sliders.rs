@@ -18,6 +18,8 @@
 //! pins NONE (Elshara: "none, start from scratch") — sliders are
 //! added through Project Options, never imposed.
 
+use patois::t;
+
 use crate::animation::{MAX_FRAME_MS, MIN_FRAME_MS};
 use crate::Srgb;
 
@@ -112,6 +114,13 @@ impl SliderDef {
 		value.clamp(self.min, self.max)
 	}
 
+	/// The name as the app shows and speaks it, translated.
+	/// `name` itself stays the English source string: it is the
+	/// translation key, and tests and lookups use it as-is.
+	pub fn display_name(&self) -> String {
+		t(self.name)
+	}
+
 	/// Is this one of the color-adjustment sliders (the five
 	/// parametric ones plus the six descriptor ones)?
 	pub fn is_adjustment(&self) -> bool {
@@ -138,105 +147,103 @@ impl SliderDef {
 		match self.target {
 			SliderTarget::BrushWidth | SliderTarget::StrokeWidth => {
 				if value == 1 {
-					"1 pixel".to_string()
+					t("1 pixel")
 				} else {
-					format!("{value} pixels")
+					t("%s pixels").replacen("%s", &(value).to_string(), 1)
 				}
 			}
-			SliderTarget::ColorRed
-			| SliderTarget::ColorGreen
-			| SliderTarget::ColorBlue => format!("{value} of 255"),
-			SliderTarget::ColorChannels => {
-				"one slider per channel of the current color format".to_string()
+			SliderTarget::ColorRed | SliderTarget::ColorGreen | SliderTarget::ColorBlue => {
+				t("%s of 255").replacen("%s", &(value).to_string(), 1)
 			}
-			SliderTarget::CurrentAlpha | SliderTarget::ElementOpacity => {
-				opacity_words(value)
-			}
-			SliderTarget::ElementScale => format!("{value} percent"),
+			SliderTarget::ColorChannels => t("one slider per channel of the current color format"),
+			SliderTarget::CurrentAlpha | SliderTarget::ElementOpacity => opacity_words(value),
+			SliderTarget::ElementScale => t("%s percent").replacen("%s", &(value).to_string(), 1),
 			SliderTarget::ElementRoundedness => match value {
-				0 => "sharp corners".to_string(),
-				50 => "fully rounded".to_string(),
-				v => format!("corners {v} percent"),
+				0 => t("sharp corners"),
+				50 => t("fully rounded"),
+				v => t("corners %s percent").replacen("%s", &(v).to_string(), 1),
 			},
-			SliderTarget::FrameDuration => format!("{value} milliseconds"),
+			SliderTarget::FrameDuration => {
+				t("%s milliseconds").replacen("%s", &(value).to_string(), 1)
+			}
 			SliderTarget::ExtractCount => {
 				if value == 1 {
-					"1 color".to_string()
+					t("1 color")
 				} else {
-					format!("{value} colors")
+					t("%s colors").replacen("%s", &(value).to_string(), 1)
 				}
 			}
-			SliderTarget::TactileColumns => format!("{value} columns"),
-			SliderTarget::TactileRows => format!("{value} rows"),
+			SliderTarget::TactileColumns => t("%s columns").replacen("%s", &(value).to_string(), 1),
+			SliderTarget::TactileRows => t("%s rows").replacen("%s", &(value).to_string(), 1),
 			SliderTarget::SoundVolume => match value {
-				0 => "silent".to_string(),
-				100 => "full volume".to_string(),
-				v => format!("{v} percent"),
+				0 => t("silent"),
+				100 => t("full volume"),
+				v => t("%s percent").replacen("%s", &(v).to_string(), 1),
 			},
 			SliderTarget::AdjustShade => {
 				if value == 0 {
-					"no darkening".to_string()
+					t("no darkening")
 				} else {
-					format!("{value} percent darker")
+					t("%s percent darker").replacen("%s", &(value).to_string(), 1)
 				}
 			}
 			SliderTarget::AdjustTint => {
 				if value == 0 {
-					"no lightening".to_string()
+					t("no lightening")
 				} else {
-					format!("{value} percent lighter")
+					t("%s percent lighter").replacen("%s", &(value).to_string(), 1)
 				}
 			}
 			SliderTarget::AdjustTone => {
 				if value == 0 {
-					"no softening".to_string()
+					t("no softening")
 				} else {
-					format!("{value} percent softer")
+					t("%s percent softer").replacen("%s", &(value).to_string(), 1)
 				}
 			}
 			SliderTarget::AdjustChroma => {
 				if value == 0 {
-					"no change".to_string()
+					t("no change")
 				} else {
-					format!("{value} percent more vivid")
+					t("%s percent more vivid").replacen("%s", &(value).to_string(), 1)
 				}
 			}
 			SliderTarget::AdjustUndertone => {
 				if value == 0 {
-					"no shift".to_string()
+					t("no shift")
 				} else {
-					format!("{} degrees", undertone_degrees(value))
+					t("%s degrees").replacen("%s", &(undertone_degrees(value)).to_string(), 1)
 				}
 			}
 			SliderTarget::AdjustWarmth => match value {
-				0 => "neutral".to_string(),
-				v if v > 0 => format!("{v} percent warmer"),
-				v => format!("{} percent cooler", -v),
+				0 => t("neutral"),
+				v if v > 0 => t("%s percent warmer").replacen("%s", &(v).to_string(), 1),
+				v => t("%s percent cooler").replacen("%s", &(-v).to_string(), 1),
 			},
 			SliderTarget::AdjustVibrancy => match value {
-				0 => "no change".to_string(),
-				v if v > 0 => format!("{v} percent more vibrant"),
-				v => format!("{} percent duller", -v),
+				0 => t("no change"),
+				v if v > 0 => t("%s percent more vibrant").replacen("%s", &(v).to_string(), 1),
+				v => t("%s percent duller").replacen("%s", &(-v).to_string(), 1),
 			},
 			SliderTarget::AdjustBrightness => match value {
-				0 => "no change".to_string(),
-				v if v > 0 => format!("{v} percent brighter"),
-				v => format!("{} percent darker", -v),
+				0 => t("no change"),
+				v if v > 0 => t("%s percent brighter").replacen("%s", &(v).to_string(), 1),
+				v => t("%s percent darker").replacen("%s", &(-v).to_string(), 1),
 			},
 			SliderTarget::AdjustClarity => match value {
-				0 => "no change".to_string(),
-				v if v > 0 => format!("{v} percent clearer"),
-				v => format!("{} percent flatter", -v),
+				0 => t("no change"),
+				v if v > 0 => t("%s percent clearer").replacen("%s", &(v).to_string(), 1),
+				v => t("%s percent flatter").replacen("%s", &(-v).to_string(), 1),
 			},
 			SliderTarget::AdjustFog => match value {
-				0 => "no fog".to_string(),
-				v if v > 0 => format!("{v} percent foggier"),
-				v => format!("{} percent less fog", -v),
+				0 => t("no fog"),
+				v if v > 0 => t("%s percent foggier").replacen("%s", &(v).to_string(), 1),
+				v => t("%s percent less fog").replacen("%s", &(-v).to_string(), 1),
 			},
 			SliderTarget::AdjustHardness => match value {
-				0 => "no change".to_string(),
-				v if v > 0 => format!("{v} percent harder"),
-				v => format!("{} percent softer", -v),
+				0 => t("no change"),
+				v if v > 0 => t("%s percent harder").replacen("%s", &(v).to_string(), 1),
+				v => t("%s percent softer").replacen("%s", &(-v).to_string(), 1),
 			},
 		}
 	}
@@ -246,9 +253,9 @@ impl SliderDef {
 /// is a percent opaque.
 fn opacity_words(percent: i32) -> String {
 	match percent {
-		100 => "fully opaque".to_string(),
-		0 => "fully transparent".to_string(),
-		v => format!("{v} percent opaque"),
+		100 => t("fully opaque"),
+		0 => t("fully transparent"),
+		v => t("%s percent opaque").replacen("%s", &(v).to_string(), 1),
 	}
 }
 
@@ -266,7 +273,14 @@ const fn def(
 	step: i32,
 	target: SliderTarget,
 ) -> SliderDef {
-	SliderDef { id, name, min, max, step, target }
+	SliderDef {
+		id,
+		name,
+		min,
+		max,
+		step,
+		target,
+	}
 }
 
 /// Every slider the app knows, in the order Project Options lists
@@ -274,10 +288,31 @@ const fn def(
 /// element, then the project-wide values, then the color
 /// adjustments — parametric first, descriptors after.
 pub const SLIDERS: &[SliderDef] = &[
-	def("brush-width", "Brush width", 1, 200, 1, SliderTarget::BrushWidth),
+	def(
+		"brush-width",
+		"Brush width",
+		1,
+		200,
+		1,
+		SliderTarget::BrushWidth,
+	),
 	def("color-red", "Color red", 0, 255, 1, SliderTarget::ColorRed),
-	def("color-green", "Color green", 0, 255, 1, SliderTarget::ColorGreen),
-	def("color-blue", "Color blue", 0, 255, 1, SliderTarget::ColorBlue),
+	def(
+		"color-green",
+		"Color green",
+		0,
+		255,
+		1,
+		SliderTarget::ColorGreen,
+	),
+	def(
+		"color-blue",
+		"Color blue",
+		0,
+		255,
+		1,
+		SliderTarget::ColorBlue,
+	),
 	def(
 		"color-channels",
 		"Color channels (always on the Sliders tab)",
@@ -286,11 +321,46 @@ pub const SLIDERS: &[SliderDef] = &[
 		1,
 		SliderTarget::ColorChannels,
 	),
-	def("transparency", "Transparency", 0, 100, 1, SliderTarget::CurrentAlpha),
-	def("element-opacity", "Element transparency", 0, 100, 1, SliderTarget::ElementOpacity),
-	def("element-scale", "Element scale", 10, 400, 1, SliderTarget::ElementScale),
-	def("element-roundedness", "Roundedness", 0, 50, 1, SliderTarget::ElementRoundedness),
-	def("stroke-width", "Stroke width", 1, 200, 1, SliderTarget::StrokeWidth),
+	def(
+		"transparency",
+		"Transparency",
+		0,
+		100,
+		1,
+		SliderTarget::CurrentAlpha,
+	),
+	def(
+		"element-opacity",
+		"Element transparency",
+		0,
+		100,
+		1,
+		SliderTarget::ElementOpacity,
+	),
+	def(
+		"element-scale",
+		"Element scale",
+		10,
+		400,
+		1,
+		SliderTarget::ElementScale,
+	),
+	def(
+		"element-roundedness",
+		"Roundedness",
+		0,
+		50,
+		1,
+		SliderTarget::ElementRoundedness,
+	),
+	def(
+		"stroke-width",
+		"Stroke width",
+		1,
+		200,
+		1,
+		SliderTarget::StrokeWidth,
+	),
 	def(
 		"frame-duration",
 		"Frame duration",
@@ -299,22 +369,149 @@ pub const SLIDERS: &[SliderDef] = &[
 		10,
 		SliderTarget::FrameDuration,
 	),
-	def("extract-count", "Extract colors count", 1, 64, 1, SliderTarget::ExtractCount),
-	def("tactile-columns", "Tactile grid columns", 1, 80, 1, SliderTarget::TactileColumns),
-	def("tactile-rows", "Tactile grid rows", 1, 60, 1, SliderTarget::TactileRows),
-	def("sound-volume", "Sound cue volume", 0, 100, 1, SliderTarget::SoundVolume),
-	def("adjust-shade", "Shade", 0, 100, 1, SliderTarget::AdjustShade),
+	def(
+		"extract-count",
+		"Extract colors count",
+		1,
+		64,
+		1,
+		SliderTarget::ExtractCount,
+	),
+	def(
+		"tactile-columns",
+		"Tactile grid columns",
+		1,
+		80,
+		1,
+		SliderTarget::TactileColumns,
+	),
+	def(
+		"tactile-rows",
+		"Tactile grid rows",
+		1,
+		60,
+		1,
+		SliderTarget::TactileRows,
+	),
+	def(
+		"sound-volume",
+		"Sound cue volume",
+		0,
+		100,
+		1,
+		SliderTarget::SoundVolume,
+	),
+	def(
+		"adjust-shade",
+		"Shade",
+		0,
+		100,
+		1,
+		SliderTarget::AdjustShade,
+	),
 	def("adjust-tint", "Tint", 0, 100, 1, SliderTarget::AdjustTint),
 	def("adjust-tone", "Tone", 0, 100, 1, SliderTarget::AdjustTone),
-	def("adjust-chroma", "Chroma", 0, 100, 1, SliderTarget::AdjustChroma),
-	def("adjust-undertone", "Undertone", -100, 100, 1, SliderTarget::AdjustUndertone),
-	def("adjust-warmth", "Temperature", -100, 100, 1, SliderTarget::AdjustWarmth),
-	def("adjust-vibrancy", "Vibrancy", -100, 100, 1, SliderTarget::AdjustVibrancy),
-	def("adjust-brightness", "Brightness", -100, 100, 1, SliderTarget::AdjustBrightness),
-	def("adjust-clarity", "Clarity", -100, 100, 1, SliderTarget::AdjustClarity),
-	def("adjust-fog", "Fogginess", -100, 100, 1, SliderTarget::AdjustFog),
-	def("adjust-hardness", "Hardness", -100, 100, 1, SliderTarget::AdjustHardness),
+	def(
+		"adjust-chroma",
+		"Chroma",
+		0,
+		100,
+		1,
+		SliderTarget::AdjustChroma,
+	),
+	def(
+		"adjust-undertone",
+		"Undertone",
+		-100,
+		100,
+		1,
+		SliderTarget::AdjustUndertone,
+	),
+	def(
+		"adjust-warmth",
+		"Temperature",
+		-100,
+		100,
+		1,
+		SliderTarget::AdjustWarmth,
+	),
+	def(
+		"adjust-vibrancy",
+		"Vibrancy",
+		-100,
+		100,
+		1,
+		SliderTarget::AdjustVibrancy,
+	),
+	def(
+		"adjust-brightness",
+		"Brightness",
+		-100,
+		100,
+		1,
+		SliderTarget::AdjustBrightness,
+	),
+	def(
+		"adjust-clarity",
+		"Clarity",
+		-100,
+		100,
+		1,
+		SliderTarget::AdjustClarity,
+	),
+	def(
+		"adjust-fog",
+		"Fogginess",
+		-100,
+		100,
+		1,
+		SliderTarget::AdjustFog,
+	),
+	def(
+		"adjust-hardness",
+		"Hardness",
+		-100,
+		100,
+		1,
+		SliderTarget::AdjustHardness,
+	),
 ];
+
+/// Extraction anchor: xgettext only collects literal `t("...")`
+/// calls, and the SLIDERS table above is data, so every table name
+/// is listed here once as a literal. A test keeps this list in
+/// step with the table.
+#[doc(hidden)]
+pub fn slider_name_anchors() -> Vec<String> {
+	vec![
+		t("Brush width"),
+		t("Color red"),
+		t("Color green"),
+		t("Color blue"),
+		t("Color channels (always on the Sliders tab)"),
+		t("Transparency"),
+		t("Element transparency"),
+		t("Element scale"),
+		t("Roundedness"),
+		t("Stroke width"),
+		t("Frame duration"),
+		t("Extract colors count"),
+		t("Tactile grid columns"),
+		t("Tactile grid rows"),
+		t("Sound cue volume"),
+		t("Shade"),
+		t("Tint"),
+		t("Tone"),
+		t("Chroma"),
+		t("Undertone"),
+		t("Temperature"),
+		t("Vibrancy"),
+		t("Brightness"),
+		t("Clarity"),
+		t("Fogginess"),
+		t("Hardness"),
+	]
+}
 
 /// The Page Up/Down jump for a slider: `percent` of its range
 /// (the project's page-jump setting, 10 percent by default),
@@ -341,7 +538,9 @@ pub fn default_pins() -> Vec<&'static str> {
 /// The live announcement for a slider change: what changed, in
 /// words, and that everything else stayed the same.
 pub fn change_announcement(def: &SliderDef, value: i32) -> String {
-	format!("{} {}. Everything else unchanged.", def.name, def.format(value))
+	t("%s %s. Everything else unchanged.")
+		.replacen("%s", &(def.display_name()).to_string(), 1)
+		.replacen("%s", &(def.format(value)).to_string(), 1)
 }
 
 /// An element's size at `percent` of its base size, never smaller
@@ -395,14 +594,14 @@ impl AdjustTarget {
 	}
 
 	/// The spoken name the target chooser shows.
-	pub fn name(&self) -> &'static str {
+	pub fn name(&self) -> String {
 		match self {
-			AdjustTarget::BaseColor => "Current color",
-			AdjustTarget::Element => "Selected element",
-			AdjustTarget::Layer => "Current layer",
-			AdjustTarget::DepthBackground => "Background layers",
-			AdjustTarget::DepthMidground => "Midground layers",
-			AdjustTarget::DepthForeground => "Foreground layers",
+			AdjustTarget::BaseColor => t("Current color"),
+			AdjustTarget::Element => t("Selected element"),
+			AdjustTarget::Layer => t("Current layer"),
+			AdjustTarget::DepthBackground => t("Background layers"),
+			AdjustTarget::DepthMidground => t("Midground layers"),
+			AdjustTarget::DepthForeground => t("Foreground layers"),
 		}
 	}
 
@@ -599,56 +798,73 @@ impl ColorAdjust {
 	/// are actually doing something, in slider order.
 	pub fn describe(&self) -> String {
 		if self.is_zero() {
-			return "no adjustment".to_string();
+			return t("no adjustment");
 		}
 		let mut parts: Vec<String> = Vec::new();
 		if self.shade > 0 {
-			parts.push(format!("shaded {} percent", self.shade));
+			parts.push(t("shaded %s percent").replacen("%s", &(self.shade).to_string(), 1));
 		}
 		if self.tint > 0 {
-			parts.push(format!("tinted {} percent", self.tint));
+			parts.push(t("tinted %s percent").replacen("%s", &(self.tint).to_string(), 1));
 		}
 		if self.tone > 0 {
-			parts.push(format!("toned down {} percent", self.tone));
+			parts.push(t("toned down %s percent").replacen("%s", &(self.tone).to_string(), 1));
 		}
 		if self.chroma > 0 {
-			parts.push(format!("chroma raised {} percent", self.chroma));
+			parts.push(t("chroma raised %s percent").replacen("%s", &(self.chroma).to_string(), 1));
 		}
 		if self.undertone != 0 {
-			parts.push(format!(
-				"undertone shifted {} degrees",
-				undertone_degrees(self.undertone)
+			parts.push(t("undertone shifted %s degrees").replacen(
+				"%s",
+				&(undertone_degrees(self.undertone)).to_string(),
+				1,
 			));
 		}
 		if self.warmth > 0 {
-			parts.push(format!("warmed {} percent", self.warmth));
+			parts.push(t("warmed %s percent").replacen("%s", &(self.warmth).to_string(), 1));
 		} else if self.warmth < 0 {
-			parts.push(format!("cooled {} percent", -self.warmth));
+			parts.push(t("cooled %s percent").replacen("%s", &(-self.warmth).to_string(), 1));
 		}
 		if self.vibrancy > 0 {
-			parts.push(format!("made {} percent more vibrant", self.vibrancy));
+			parts.push(t("made %s percent more vibrant").replacen(
+				"%s",
+				&(self.vibrancy).to_string(),
+				1,
+			));
 		} else if self.vibrancy < 0 {
-			parts.push(format!("dulled {} percent", -self.vibrancy));
+			parts.push(t("dulled %s percent").replacen("%s", &(-self.vibrancy).to_string(), 1));
 		}
 		if self.brightness > 0 {
-			parts.push(format!("brightened {} percent", self.brightness));
+			parts.push(t("brightened %s percent").replacen(
+				"%s",
+				&(self.brightness).to_string(),
+				1,
+			));
 		} else if self.brightness < 0 {
-			parts.push(format!("darkened {} percent", -self.brightness));
+			parts.push(t("darkened %s percent").replacen("%s", &(-self.brightness).to_string(), 1));
 		}
 		if self.clarity > 0 {
-			parts.push(format!("clarity raised {} percent", self.clarity));
+			parts.push(t("clarity raised %s percent").replacen(
+				"%s",
+				&(self.clarity).to_string(),
+				1,
+			));
 		} else if self.clarity < 0 {
-			parts.push(format!("contrast flattened {} percent", -self.clarity));
+			parts.push(t("contrast flattened %s percent").replacen(
+				"%s",
+				&(-self.clarity).to_string(),
+				1,
+			));
 		}
 		if self.fog > 0 {
-			parts.push(format!("fogged {} percent", self.fog));
+			parts.push(t("fogged %s percent").replacen("%s", &(self.fog).to_string(), 1));
 		} else if self.fog < 0 {
-			parts.push(format!("defogged {} percent", -self.fog));
+			parts.push(t("defogged %s percent").replacen("%s", &(-self.fog).to_string(), 1));
 		}
 		if self.hardness > 0 {
-			parts.push(format!("hardened {} percent", self.hardness));
+			parts.push(t("hardened %s percent").replacen("%s", &(self.hardness).to_string(), 1));
 		} else if self.hardness < 0 {
-			parts.push(format!("softened {} percent", -self.hardness));
+			parts.push(t("softened %s percent").replacen("%s", &(-self.hardness).to_string(), 1));
 		}
 		parts.join(", ")
 	}
@@ -663,15 +879,28 @@ mod tests {
 		for (i, d) in SLIDERS.iter().enumerate() {
 			assert!(d.min < d.max, "{} has an empty range", d.id);
 			assert!(d.step >= 1, "{} has no fine step", d.id);
-			assert!(!SLIDERS[i + 1..].iter().any(|o| o.id == d.id), "duplicate id {}", d.id);
+			assert!(
+				!SLIDERS[i + 1..].iter().any(|o| o.id == d.id),
+				"duplicate id {}",
+				d.id
+			);
 			assert_eq!(slider_by_id(d.id).map(|s| s.target), Some(d.target));
 		}
 		assert!(slider_by_id("no-such-slider").is_none());
 		// The ranges the dialogs have always used come from here.
 		let frame = slider_by_id("frame-duration").unwrap();
-		assert_eq!((frame.min, frame.max), (MIN_FRAME_MS as i32, MAX_FRAME_MS as i32));
-		assert_eq!(slider_by_id("extract-count").map(|d| (d.min, d.max)), Some((1, 64)));
-		assert_eq!(slider_by_id("brush-width").map(|d| (d.min, d.max)), Some((1, 200)));
+		assert_eq!(
+			(frame.min, frame.max),
+			(MIN_FRAME_MS as i32, MAX_FRAME_MS as i32)
+		);
+		assert_eq!(
+			slider_by_id("extract-count").map(|d| (d.min, d.max)),
+			Some((1, 64))
+		);
+		assert_eq!(
+			slider_by_id("brush-width").map(|d| (d.min, d.max)),
+			Some((1, 200))
+		);
 	}
 
 	#[test]
@@ -752,50 +981,126 @@ mod tests {
 	#[test]
 	fn shade_darkens_and_tint_lightens() {
 		let base = sky().to_oklch();
-		let shaded = ColorAdjust { shade: 50, ..Default::default() }.apply(sky()).to_oklch();
-		assert!(shaded.l < base.l - 0.1, "shade 50 should halve lightness: {} vs {}", shaded.l, base.l);
-		let tinted = ColorAdjust { tint: 50, ..Default::default() }.apply(sky()).to_oklch();
-		assert!(tinted.l > base.l + 0.1, "tint 50 should step halfway to white");
+		let shaded = ColorAdjust {
+			shade: 50,
+			..Default::default()
+		}
+		.apply(sky())
+		.to_oklch();
+		assert!(
+			shaded.l < base.l - 0.1,
+			"shade 50 should halve lightness: {} vs {}",
+			shaded.l,
+			base.l
+		);
+		let tinted = ColorAdjust {
+			tint: 50,
+			..Default::default()
+		}
+		.apply(sky())
+		.to_oklch();
+		assert!(
+			tinted.l > base.l + 0.1,
+			"tint 50 should step halfway to white"
+		);
 		// Full shade is lightness zero and full tint is white,
 		// like the ladders (lightness zero quantizes to a hair
 		// above pure black in sRGB, exactly as the ladder does).
-		let black = ColorAdjust { shade: 100, ..Default::default() }.apply(sky());
+		let black = ColorAdjust {
+			shade: 100,
+			..Default::default()
+		}
+		.apply(sky());
 		assert!(black.r <= 2 && black.g <= 2 && black.b <= 2, "{black:?}");
-		assert_eq!(ColorAdjust { tint: 100, ..Default::default() }.apply(sky()), Srgb::WHITE);
+		assert_eq!(
+			ColorAdjust {
+				tint: 100,
+				..Default::default()
+			}
+			.apply(sky()),
+			Srgb::WHITE
+		);
 	}
 
 	#[test]
 	fn tone_softens_and_chroma_vivifies() {
 		let base = sky().to_oklch();
-		let toned = ColorAdjust { tone: 50, ..Default::default() }.apply(sky()).to_oklch();
-		assert!(toned.c < base.c * 0.6, "tone 50 should halve chroma: {} vs {}", toned.c, base.c);
+		let toned = ColorAdjust {
+			tone: 50,
+			..Default::default()
+		}
+		.apply(sky())
+		.to_oklch();
+		assert!(
+			toned.c < base.c * 0.6,
+			"tone 50 should halve chroma: {} vs {}",
+			toned.c,
+			base.c
+		);
 		assert_eq!(
-			ColorAdjust { tone: 100, ..Default::default() }.apply(sky()).to_oklch().c,
+			ColorAdjust {
+				tone: 100,
+				..Default::default()
+			}
+			.apply(sky())
+			.to_oklch()
+			.c,
 			0.0,
 			"full tone is gray"
 		);
-		let vivid = ColorAdjust { chroma: 50, ..Default::default() }.apply(sky()).to_oklch();
-		assert!(vivid.c > base.c * 1.3, "chroma 50 should raise chroma: {} vs {}", vivid.c, base.c);
+		let vivid = ColorAdjust {
+			chroma: 50,
+			..Default::default()
+		}
+		.apply(sky())
+		.to_oklch();
+		assert!(
+			vivid.c > base.c * 1.3,
+			"chroma 50 should raise chroma: {} vs {}",
+			vivid.c,
+			base.c
+		);
 	}
 
 	#[test]
 	fn undertone_rotates_the_hue() {
 		let base = sky().to_oklch();
-		let shifted =
-			ColorAdjust { undertone: 100, ..Default::default() }.apply(sky()).to_oklch();
+		let shifted = ColorAdjust {
+			undertone: 100,
+			..Default::default()
+		}
+		.apply(sky())
+		.to_oklch();
 		let diff = (shifted.h - base.h).rem_euclid(360.0);
-		assert!((diff - 30.0).abs() < 3.0, "undertone 100 should rotate +30 degrees, got {diff}");
-		let back =
-			ColorAdjust { undertone: -100, ..Default::default() }.apply(sky()).to_oklch();
+		assert!(
+			(diff - 30.0).abs() < 3.0,
+			"undertone 100 should rotate +30 degrees, got {diff}"
+		);
+		let back = ColorAdjust {
+			undertone: -100,
+			..Default::default()
+		}
+		.apply(sky())
+		.to_oklch();
 		let diff = (back.h - base.h).rem_euclid(360.0);
-		assert!((diff - 330.0).abs() < 3.0, "undertone -100 should rotate -30 degrees, got {diff}");
+		assert!(
+			(diff - 330.0).abs() < 3.0,
+			"undertone -100 should rotate -30 degrees, got {diff}"
+		);
 	}
 
 	#[test]
 	fn adjustments_describe_in_words() {
 		assert_eq!(ColorAdjust::default().describe(), "no adjustment");
-		let adj = ColorAdjust { shade: 20, undertone: 50, ..Default::default() };
-		assert_eq!(adj.describe(), "shaded 20 percent, undertone shifted 15 degrees");
+		let adj = ColorAdjust {
+			shade: 20,
+			undertone: 50,
+			..Default::default()
+		};
+		assert_eq!(
+			adj.describe(),
+			"shaded 20 percent, undertone shifted 15 degrees"
+		);
 	}
 
 	#[test]
@@ -835,22 +1140,58 @@ mod tests {
 			let d = (h - pole).rem_euclid(360.0);
 			d.min(360.0 - d)
 		};
-		let warmed = ColorAdjust { warmth: 100, ..Default::default() }.apply(sky()).to_oklch();
-		assert!(dist(warmed.h, 57.0) < dist(base.h, 57.0) - 20.0, "warm should close on orange");
-		let cooled = ColorAdjust { warmth: -100, ..Default::default() }.apply(sky()).to_oklch();
-		assert!(dist(cooled.h, 264.0) <= dist(base.h, 264.0) + 1.0, "cool stays near blue");
+		let warmed = ColorAdjust {
+			warmth: 100,
+			..Default::default()
+		}
+		.apply(sky())
+		.to_oklch();
+		assert!(
+			dist(warmed.h, 57.0) < dist(base.h, 57.0) - 20.0,
+			"warm should close on orange"
+		);
+		let cooled = ColorAdjust {
+			warmth: -100,
+			..Default::default()
+		}
+		.apply(sky())
+		.to_oklch();
+		assert!(
+			dist(cooled.h, 264.0) <= dist(base.h, 264.0) + 1.0,
+			"cool stays near blue"
+		);
 	}
 
 	#[test]
 	fn vibrancy_and_brightness_move_both_ways() {
 		let base = sky().to_oklch();
-		let vivid = ColorAdjust { vibrancy: 50, ..Default::default() }.apply(sky()).to_oklch();
+		let vivid = ColorAdjust {
+			vibrancy: 50,
+			..Default::default()
+		}
+		.apply(sky())
+		.to_oklch();
 		assert!(vivid.c > base.c * 1.3, "vibrancy up raises chroma");
-		let dull = ColorAdjust { vibrancy: -50, ..Default::default() }.apply(sky()).to_oklch();
+		let dull = ColorAdjust {
+			vibrancy: -50,
+			..Default::default()
+		}
+		.apply(sky())
+		.to_oklch();
 		assert!(dull.c < base.c * 0.6, "vibrancy down dulls");
-		let bright = ColorAdjust { brightness: 50, ..Default::default() }.apply(sky()).to_oklch();
+		let bright = ColorAdjust {
+			brightness: 50,
+			..Default::default()
+		}
+		.apply(sky())
+		.to_oklch();
 		assert!(bright.l > base.l + 0.1, "brightness up lightens");
-		let dark = ColorAdjust { brightness: -50, ..Default::default() }.apply(sky()).to_oklch();
+		let dark = ColorAdjust {
+			brightness: -50,
+			..Default::default()
+		}
+		.apply(sky())
+		.to_oklch();
 		assert!(dark.l < base.l - 0.1, "brightness down darkens");
 	}
 
@@ -858,30 +1199,61 @@ mod tests {
 	fn clarity_pushes_lightness_away_from_the_middle() {
 		// A dark color gets darker, a light color lighter.
 		let dark = Srgb::new(30, 30, 40).to_oklch();
-		let pushed =
-			ColorAdjust { clarity: 60, ..Default::default() }.apply(Srgb::new(30, 30, 40)).to_oklch();
+		let pushed = ColorAdjust {
+			clarity: 60,
+			..Default::default()
+		}
+		.apply(Srgb::new(30, 30, 40))
+		.to_oklch();
 		assert!(pushed.l < dark.l, "clarity darkens a dark color further");
-		let flat =
-			ColorAdjust { clarity: -60, ..Default::default() }.apply(Srgb::new(30, 30, 40)).to_oklch();
+		let flat = ColorAdjust {
+			clarity: -60,
+			..Default::default()
+		}
+		.apply(Srgb::new(30, 30, 40))
+		.to_oklch();
 		assert!(flat.l > dark.l, "negative clarity draws toward the middle");
 	}
 
 	#[test]
 	fn fog_drains_chroma_toward_the_haze() {
 		let base = sky().to_oklch();
-		let fogged = ColorAdjust { fog: 60, ..Default::default() }.apply(sky()).to_oklch();
+		let fogged = ColorAdjust {
+			fog: 60,
+			..Default::default()
+		}
+		.apply(sky())
+		.to_oklch();
 		assert!(fogged.c < base.c * 0.5, "fog drains chroma");
-		assert!((fogged.l - 0.72).abs() < (base.l - 0.72).abs(), "fog pulls lightness to the haze");
-		let cleared = ColorAdjust { fog: -60, ..Default::default() }.apply(sky()).to_oklch();
+		assert!(
+			(fogged.l - 0.72).abs() < (base.l - 0.72).abs(),
+			"fog pulls lightness to the haze"
+		);
+		let cleared = ColorAdjust {
+			fog: -60,
+			..Default::default()
+		}
+		.apply(sky())
+		.to_oklch();
 		assert!(cleared.c > base.c, "negative fog restores chroma");
 	}
 
 	#[test]
 	fn hardness_raises_chroma_and_contrast_softness_lowers_them() {
 		let base = sky().to_oklch();
-		let hard = ColorAdjust { hardness: 50, ..Default::default() }.apply(sky()).to_oklch();
+		let hard = ColorAdjust {
+			hardness: 50,
+			..Default::default()
+		}
+		.apply(sky())
+		.to_oklch();
 		assert!(hard.c > base.c * 1.2, "hard raises chroma");
-		let soft = ColorAdjust { hardness: -50, ..Default::default() }.apply(sky()).to_oklch();
+		let soft = ColorAdjust {
+			hardness: -50,
+			..Default::default()
+		}
+		.apply(sky())
+		.to_oklch();
 		assert!(soft.c < base.c * 0.6, "soft lowers chroma");
 	}
 
@@ -905,7 +1277,10 @@ mod tests {
 			Some(crate::drawing::DepthRole::Background)
 		);
 		assert_eq!(AdjustTarget::Layer.depth_role(), None);
-		assert_eq!(AdjustTarget::from_id("depth-foreground"), Some(AdjustTarget::DepthForeground));
+		assert_eq!(
+			AdjustTarget::from_id("depth-foreground"),
+			Some(AdjustTarget::DepthForeground)
+		);
 	}
 
 	#[test]
@@ -914,5 +1289,26 @@ mod tests {
 			assert_eq!(AdjustTarget::from_id(t.id()), Some(t));
 		}
 		assert_eq!(AdjustTarget::from_id("bogus"), None);
+	}
+}
+
+#[cfg(test)]
+mod anchor_tests {
+	use super::*;
+
+	#[test]
+	fn slider_name_anchors_match_the_table() {
+		let mut table: Vec<&str> = SLIDERS.iter().map(|d| d.name).collect();
+		let mut anchors: Vec<String> = slider_name_anchors();
+		assert_eq!(
+			anchors.len(),
+			table.len(),
+			"anchor count must match the slider table"
+		);
+		table.sort_unstable();
+		anchors.sort();
+		for (want, got) in table.iter().zip(anchors.iter()) {
+			assert_eq!(*want, got.as_str());
+		}
 	}
 }

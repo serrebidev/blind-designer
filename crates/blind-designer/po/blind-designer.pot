@@ -1,0 +1,4474 @@
+# SOME DESCRIPTIVE TITLE.
+# Copyright (C) YEAR THE PACKAGE'S COPYRIGHT HOLDER
+# This file is distributed under the same license as the blind-designer package.
+# FIRST AUTHOR <EMAIL@ADDRESS>, YEAR.
+#
+#, fuzzy
+msgid ""
+msgstr ""
+"Project-Id-Version: blind-designer 0.19.0\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-11-07 17:21-0700\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language-Team: LANGUAGE <LL@li.org>\n"
+"Language: \n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+msgid "Across"
+msgstr ""
+
+msgid "Down"
+msgstr ""
+
+msgid "Width"
+msgstr ""
+
+msgid "Height"
+msgstr ""
+
+msgid "Rotation"
+msgstr ""
+
+msgid "Roundedness"
+msgstr ""
+
+msgid "%s degrees"
+msgstr ""
+
+msgid "%s percent"
+msgstr ""
+
+msgid "%s pixels"
+msgstr ""
+
+msgid "contrast on the design background %s to 1: AA normal text %s, AA large text %s, AAA normal text %s"
+msgstr ""
+
+msgid "%s. Complementary: %s (%s). %s"
+msgstr ""
+
+msgid "Save design"
+msgstr ""
+
+msgid "Blind Designer design (*.bdd)"
+msgstr ""
+
+msgid "Saved design to %s"
+msgstr ""
+
+msgid "Save failed: %s"
+msgstr ""
+
+msgid "This project has unsaved changes. Save it before you %s? \t\t\t Choose Save to save it first, Don't Save to %s and lose \t\t\t the changes, or Cancel to stay with this project."
+msgstr ""
+
+msgid "Unsaved changes"
+msgstr ""
+
+msgid "Save"
+msgstr ""
+
+msgid "Don't Save"
+msgstr ""
+
+msgid "Selected: %s"
+msgstr ""
+
+msgid "The starter colors are already in the palette."
+msgstr ""
+
+msgid "Loaded starter colors: %s"
+msgstr ""
+
+msgid "no element selected"
+msgstr ""
+
+msgid "no stroke selected"
+msgstr ""
+
+msgid "no rectangle selected"
+msgstr ""
+
+msgid "no frames yet"
+msgstr ""
+
+msgid "not available"
+msgstr ""
+
+msgid "Select an element to edit its color channels."
+msgstr ""
+
+msgid "Channel sliders edit one color at a time: set the color adjustments target to Current color or Selected element to use them."
+msgstr ""
+
+msgid "Color channels"
+msgstr ""
+
+msgid "Channel format"
+msgstr ""
+
+msgid "no color to edit"
+msgstr ""
+
+msgid "Shape parts of the selected element"
+msgstr ""
+
+msgid "A stroke's size is its points; move it or add a new one."
+msgstr ""
+
+msgid "Select an element first."
+msgstr ""
+
+msgid "%s. Everything else unchanged."
+msgstr ""
+
+msgid "Select a stroke first."
+msgstr ""
+
+msgid "Recognize Shape works on a selected stroke: draw one with the pointer, or add a stroke by its points."
+msgstr ""
+
+msgid "Recognized line"
+msgstr ""
+
+msgid "Recognized rectangle"
+msgstr ""
+
+msgid "Recognized ellipse"
+msgstr ""
+
+msgid "Recognized triangle"
+msgstr ""
+
+msgid "That stroke was not recognized as a known shape; it stays exactly as drawn."
+msgstr ""
+
+msgid "Sliders"
+msgstr ""
+
+msgid "Color adjustments act on"
+msgstr ""
+
+msgid "Inspector: color"
+msgstr ""
+
+msgid "Color inspector"
+msgstr ""
+
+msgid "Palette"
+msgstr ""
+
+msgid "Elements"
+msgstr ""
+
+msgid "Lists"
+msgstr ""
+
+msgid "A stroke's size is its points; it does not scale."
+msgstr ""
+
+msgid "Stroke width acts on a selected stroke."
+msgstr ""
+
+msgid "Select a rectangle first."
+msgstr ""
+
+msgid "No animation frames yet: add one in Design, Animation."
+msgstr ""
+
+msgid "%s %s."
+msgstr ""
+
+msgid "That element is gone."
+msgstr ""
+
+msgid "Select an element to adjust first."
+msgstr ""
+
+msgid "This project has no current layer."
+msgstr ""
+
+msgid "Nothing to adjust."
+msgstr ""
+
+msgid "The current layer has no elements to adjust."
+msgstr ""
+
+msgid "%s element%s changed%s."
+msgstr ""
+
+msgid "Every element the adjustment reached is locked; nothing changed%s"
+msgstr ""
+
+msgid "That layer changed under the adjustment; move the slider to start again."
+msgstr ""
+
+msgid "No layer is tagged %s yet: tag one in Design, Layers."
+msgstr ""
+
+msgid "%s element%s changed across the %s layers%s."
+msgstr ""
+
+msgid "Those layers changed under the adjustment; move the slider to start again."
+msgstr ""
+
+msgid ", %s locked stayed the same"
+msgstr ""
+
+msgid "Project Options"
+msgstr ""
+
+msgid "Sliders pinned to this project's Sliders tab (check the ones to keep; with none checked, the tab shows every slider)"
+msgstr ""
+
+msgid "Interaction mode (one surface at a time: Draw, Slide or Type)"
+msgstr ""
+
+msgid "Page Up and Page Down jump, percent of each slider's range"
+msgstr ""
+
+msgid "Grayscale start (build in grayscale; colours come later, per part, layer or depth)"
+msgstr ""
+
+msgid "Load Gray Ramp"
+msgstr ""
+
+msgid "Load Starter Colors"
+msgstr ""
+
+msgid "OK"
+msgstr ""
+
+msgid "Cancel"
+msgstr ""
+
+msgid "The gray ramp is already in the palette."
+msgstr ""
+
+msgid "Loaded the gray ramp: %s grays, near-black to near-white, for grayscale work."
+msgstr ""
+
+msgid "Project options saved: %s slider%s pinned to the Sliders tab.%s%s%s"
+msgstr ""
+
+msgid "Added %s (%s): %s"
+msgstr ""
+
+msgid "Position: numbers like 120, 80, or words like top left, center, a bit right"
+msgstr ""
+
+msgid "Size: numbers like 200 by 100, or words like a bit wider, a bit taller"
+msgstr ""
+
+msgid "%s by %s"
+msgstr ""
+
+msgid "Color: a name like sky blue, or a hex code"
+msgstr ""
+
+msgid "I could not understand that position. Use numbers like 120, 80, or words like top left, center, a bit right."
+msgstr ""
+
+msgid "I could not understand that size. Use numbers like 200 by 100, or words like a bit wider."
+msgstr ""
+
+msgid "I could not understand that color. Use a name like sky blue, or a hex code like 87CEEB."
+msgstr ""
+
+msgid "Added %s."
+msgstr ""
+
+msgid "The brush library could not be saved: %s"
+msgstr ""
+
+msgid "Layer %s"
+msgstr ""
+
+msgid ": %s (%s shapes)"
+msgstr ""
+
+msgid "Layers"
+msgstr ""
+
+msgid "Depth role of the selected layer"
+msgstr ""
+
+msgid "No depth role"
+msgstr ""
+
+msgid "Background"
+msgstr ""
+
+msgid "Midground"
+msgstr ""
+
+msgid "Foreground"
+msgstr ""
+
+msgid "Sideground"
+msgstr ""
+
+msgid "Add Layer…"
+msgstr ""
+
+msgid "Rename…"
+msgstr ""
+
+msgid "Remove"
+msgstr ""
+
+msgid "Show / Hide"
+msgstr ""
+
+msgid "Set Current"
+msgstr ""
+
+msgid "Close"
+msgstr ""
+
+msgid "Add layer"
+msgstr ""
+
+msgid "Layer name"
+msgstr ""
+
+msgid "Rename layer"
+msgstr ""
+
+msgid "A drawing always keeps one layer."
+msgstr ""
+
+msgid "New shapes now land on layer \"%s\"."
+msgstr ""
+
+msgid "Frame %s: %s milliseconds. %s"
+msgstr ""
+
+msgid "Animation"
+msgstr ""
+
+msgid "Animation frames"
+msgstr ""
+
+msgid "Add Frame (Copy of Canvas)"
+msgstr ""
+
+msgid "Duplicate"
+msgstr ""
+
+msgid "Delete"
+msgstr ""
+
+msgid "Move Up"
+msgstr ""
+
+msgid "Move Down"
+msgstr ""
+
+msgid "Set Duration…"
+msgstr ""
+
+msgid "Load into Canvas"
+msgstr ""
+
+msgid "Replace with Canvas"
+msgstr ""
+
+msgid "No animation frames yet. Add Frame captures the canvas as frame 1; change the canvas and capture again to build the film."
+msgstr ""
+
+msgid "That frame is already first."
+msgstr ""
+
+msgid "That frame is already last."
+msgstr ""
+
+msgid "Frame duration"
+msgstr ""
+
+msgid "Duration in milliseconds"
+msgstr ""
+
+msgid " Caption: %s"
+msgstr ""
+
+msgid "Rename Caption…"
+msgstr ""
+
+msgid "Describe"
+msgstr ""
+
+msgid "Move…"
+msgstr ""
+
+msgid "Resize…"
+msgstr ""
+
+msgid "Recolor…"
+msgstr ""
+
+msgid "Rename caption"
+msgstr ""
+
+msgid "Caption for this element"
+msgstr ""
+
+msgid "Caption unchanged: an empty caption keeps the automatic description."
+msgstr ""
+
+msgid "%s. Full description: %s"
+msgstr ""
+
+msgid "Move element"
+msgstr ""
+
+msgid "New position: numbers like 120, 80, or words like top left, center, a bit right"
+msgstr ""
+
+msgid "New size: numbers like 200 by 100, or words like a bit wider, a bit taller"
+msgstr ""
+
+msgid "Corners: 0 is sharp, 50 is fully rounded"
+msgstr ""
+
+msgid "Resize element"
+msgstr ""
+
+msgid "Corners take a number from 0 (sharp) to 50 (fully rounded); nothing was changed."
+msgstr ""
+
+msgid "Recolor element"
+msgstr ""
+
+msgid "New color: a name like sky blue, or a hex code"
+msgstr ""
+
+msgid "Brush Library"
+msgstr ""
+
+msgid "Brush library"
+msgstr ""
+
+msgid "Apply"
+msgstr ""
+
+msgid "Brush applied: %s. New strokes will use it."
+msgstr ""
+
+msgid "Deleted brush \"%s\" from the library."
+msgstr ""
+
+msgid "Design Terms Dictionary"
+msgstr ""
+
+msgid "Search terms"
+msgstr ""
+
+msgid "Search"
+msgstr ""
+
+msgid "Dictionary terms"
+msgstr ""
+
+msgid "Definition"
+msgstr ""
+
+msgid "%s dictionary terms match."
+msgstr ""
+
+msgid "No term matches that search."
+msgstr ""
+
+msgid "No dictionary term matches that search."
+msgstr ""
+
+msgid "Help and Worked Examples"
+msgstr ""
+
+msgid "Help and worked examples"
+msgstr ""
+
+msgid "Inspector: element"
+msgstr ""
+
+msgid "Element inspector"
+msgstr ""
+
+msgid "Inspect Color…"
+msgstr ""
+
+msgid "Set as Background"
+msgstr ""
+
+msgid "Remove Color"
+msgstr ""
+
+msgid "Add Color by Hex…"
+msgstr ""
+
+msgid "Extract from Image…"
+msgstr ""
+
+msgid "Inspect Selected…"
+msgstr ""
+
+msgid "Element Wizard…"
+msgstr ""
+
+msgid "Lock/Unlock Selected"
+msgstr ""
+
+msgid "Rotate…"
+msgstr ""
+
+msgid "Set to Palette Color"
+msgstr ""
+
+msgid "Remove Shape"
+msgstr ""
+
+msgid "Add Rectangle…"
+msgstr ""
+
+msgid "Add Ellipse…"
+msgstr ""
+
+msgid "Add Stroke…"
+msgstr ""
+
+msgid "Add Text…"
+msgstr ""
+
+msgid "Add Image…"
+msgstr ""
+
+msgid "Add Symbol…"
+msgstr ""
+
+msgid "Inspect Layer…"
+msgstr ""
+
+msgid "Layers…"
+msgstr ""
+
+msgid "Project Options… (choose pinned sliders)"
+msgstr ""
+
+msgid "%s is now the brush color: the next element drawn uses it."
+msgstr ""
+
+msgid "%s %s the palette and is now the brush color."
+msgstr ""
+
+msgid "on layer \"%s\", right after the selected element"
+msgstr ""
+
+msgid "at the centre of the canvas on layer \"%s\""
+msgstr ""
+
+msgid "Copied the %s %s."
+msgstr ""
+
+msgid "%s symbol"
+msgstr ""
+
+msgid "The %s symbol was stamped at the centre of the canvas on layer \"%s\", in the brush color."
+msgstr ""
+
+msgid "The design is now the %s template. It is a normal design now: edit it, then Save Design to keep it."
+msgstr ""
+
+msgid "Search and Insert"
+msgstr ""
+
+msgid "Search for"
+msgstr ""
+
+msgid "Results"
+msgstr ""
+
+msgid "Insert"
+msgstr ""
+
+msgid "Inserted"
+msgstr ""
+
+msgid "What was inserted"
+msgstr ""
+
+msgid "A pattern is woven from two palette colors, and this project has none yet: add a color or load the starter colors first."
+msgstr ""
+
+msgid "New from Pattern"
+msgstr ""
+
+msgid "Pattern"
+msgstr ""
+
+msgid "First color (the marks)"
+msgstr ""
+
+msgid "Second color (the ground)"
+msgstr ""
+
+msgid "Start Pattern Design"
+msgstr ""
+
+msgid "Started a new %s design from the two colors. It is a normal design now: edit it, then Save Design to keep it."
+msgstr ""
+
+msgid "Viewability"
+msgstr ""
+
+msgid "Viewing angle in degrees (0 is straight on from the front)"
+msgstr ""
+
+msgid "Depth to judge"
+msgstr ""
+
+msgid "How the design reads from %s degrees"
+msgstr ""
+
+msgid "Step 1 of 1"
+msgstr ""
+
+msgid "Back"
+msgstr ""
+
+msgid "Next"
+msgstr ""
+
+msgid "Finish"
+msgstr ""
+
+msgid "Step %s of %s: %s"
+msgstr ""
+
+msgid "New Project Wizard"
+msgstr ""
+
+msgid "Setup Wizard"
+msgstr ""
+
+msgid "What do you want to create or build?"
+msgstr ""
+
+msgid "What do you want to create or build"
+msgstr ""
+
+msgid "Focus questions"
+msgstr ""
+
+msgid "Your goal"
+msgstr ""
+
+msgid "No fixed answer"
+msgstr ""
+
+msgid "No goal to report."
+msgstr ""
+
+msgid "%s: goal set — %s.%s %s slider%s pinned for this kind of project.%s%s"
+msgstr ""
+
+msgid "Element Wizard"
+msgstr ""
+
+msgid "Stack: what sits on what"
+msgstr ""
+
+msgid "The stack"
+msgstr ""
+
+msgid "Edit"
+msgstr ""
+
+msgid "Opacity"
+msgstr ""
+
+msgid "%s percent opaque"
+msgstr ""
+
+msgid "corners %s percent"
+msgstr ""
+
+msgid "Roundedness applies to rectangles; this is a %s, so opacity is its only slider here."
+msgstr ""
+
+msgid "Review"
+msgstr ""
+
+msgid "Element wizard finished: the element's opacity is now %s percent opaque%s."
+msgstr ""
+
+msgid "PNG picture"
+msgstr ""
+
+msgid "HTML page"
+msgstr ""
+
+msgid "Raised-line SVG"
+msgstr ""
+
+msgid "Description (recreation file)"
+msgstr ""
+
+msgid "Animated GIF"
+msgstr ""
+
+msgid "A separate file on its own"
+msgstr ""
+
+msgid "Inline in an HTML page"
+msgstr ""
+
+msgid "With caption text alongside"
+msgstr ""
+
+msgid "Export Wizard"
+msgstr ""
+
+msgid "Format"
+msgstr ""
+
+msgid "Export format"
+msgstr ""
+
+msgid "Embedding"
+msgstr ""
+
+msgid "How it will be embedded or accompanied"
+msgstr ""
+
+msgid "Confirm"
+msgstr ""
+
+msgid "Confirm the export"
+msgstr ""
+
+msgid "A description is words already: embedding changes nothing, and only the description file is written."
+msgstr ""
+
+msgid "One file, on its own."
+msgstr ""
+
+msgid "An HTML page is inline by nature: the design's shapes are the page. Only the page is written."
+msgstr ""
+
+msgid "SVG is a text format pages embed as it is: only the SVG file is written."
+msgstr ""
+
+msgid "The picture file, plus an HTML page beside it that shows the picture inline."
+msgstr ""
+
+msgid "The main file, plus the caption sheet as a text file beside it."
+msgstr ""
+
+msgid ""
+"Format: %s.\n"
+"Embedding: %s.\n"
+"%s\n"
+"Press Finish to choose the file name and write it."
+msgstr ""
+
+msgid "Exported %s to %s"
+msgstr ""
+
+msgid "Export of %s failed: %s"
+msgstr ""
+
+msgid "Export wizard: PNG picture"
+msgstr ""
+
+msgid "PNG image (*.png)"
+msgstr ""
+
+msgid "Exported PNG to %s"
+msgstr ""
+
+msgid "Export failed: %s"
+msgstr ""
+
+msgid ""
+"<!DOCTYPE html>\n"
+"<html lang=\"en\">\n"
+"<head><meta charset=\"utf-8\"><title>Blind Designer design</title></head>\n"
+"<body>\n"
+"<img src=\"%s\" alt=\"A design exported from Blind Designer\">\n"
+"</body>\n"
+"</html>\n"
+msgstr ""
+
+msgid "inline page"
+msgstr ""
+
+msgid "captions"
+msgstr ""
+
+msgid "Export wizard: HTML page"
+msgstr ""
+
+msgid "HTML page (*.html)"
+msgstr ""
+
+msgid "Blind Designer design"
+msgstr ""
+
+msgid "Export wizard: raised-line SVG"
+msgstr ""
+
+msgid "SVG drawing (*.svg)"
+msgstr ""
+
+msgid "raised-line SVG"
+msgstr ""
+
+msgid "Export wizard: description (recreation file)"
+msgstr ""
+
+msgid "Text file (*.txt)"
+msgstr ""
+
+msgid "description"
+msgstr ""
+
+msgid "Export wizard: animated GIF"
+msgstr ""
+
+msgid "GIF image (*.gif)"
+msgstr ""
+
+msgid "Exported GIF to %s"
+msgstr ""
+
+msgid ""
+"<!DOCTYPE html>\n"
+"<html lang=\"en\">\n"
+"<head><meta charset=\"utf-8\"><title>Blind Designer animation</title></head>\n"
+"<body>\n"
+"<img src=\"%s\" alt=\"An animation exported from Blind Designer\">\n"
+"</body>\n"
+"</html>\n"
+msgstr ""
+
+msgid "Recognizability"
+msgstr ""
+
+msgid "How recognizable this design is, per its project type"
+msgstr ""
+
+msgid "Layer: %s"
+msgstr ""
+
+msgid "Depth: %s"
+msgstr ""
+
+msgid "Apply Colour Treatment"
+msgstr ""
+
+msgid "Give the grayscale shapes in this scope the palette colours, in paint order"
+msgstr ""
+
+msgid "Colour treatment scope"
+msgstr ""
+
+msgid "Apply Treatment"
+msgstr ""
+
+msgid "Colour treatment takes colours from the palette, and the palette is empty: add colours or load the starter colours first."
+msgstr ""
+
+msgid "Colour treatment on %s: no grayscale shapes to colour%s."
+msgstr ""
+
+msgid "Scheme Settings"
+msgstr ""
+
+msgid "Harmony wheel"
+msgstr ""
+
+msgid "Screen wheel (RGB hues)"
+msgstr ""
+
+msgid "Paint wheel (RYB: red is opposite green)"
+msgstr ""
+
+msgid "Analogous spread in degrees"
+msgstr ""
+
+msgid "Scheme settings saved: %s wheel, analogous spread %s degrees."
+msgstr ""
+
+msgid "Color Tools"
+msgstr ""
+
+msgid "First color"
+msgstr ""
+
+msgid "Second color"
+msgstr ""
+
+msgid "Blend: percent of the second color"
+msgstr ""
+
+msgid "Blend percent of second color"
+msgstr ""
+
+msgid "50 percent"
+msgstr ""
+
+msgid "Blend"
+msgstr ""
+
+msgid "Subtract Second from First"
+msgstr ""
+
+msgid "Gradient…"
+msgstr ""
+
+msgid "Contrast Check"
+msgstr ""
+
+msgid "Dominant Wavelength"
+msgstr ""
+
+msgid "Random Color"
+msgstr ""
+
+msgid "Frequency to Color (experimental)…"
+msgstr ""
+
+msgid "Result"
+msgstr ""
+
+msgid "Pick a first and a second color from the palette first."
+msgstr ""
+
+msgid "blend of %s and %s"
+msgstr ""
+
+msgid "Blend at %s percent of the second color: %s. Added to the palette."
+msgstr ""
+
+msgid "%s minus %s"
+msgstr ""
+
+msgid "Subtraction, each channel of the second taken from the first: %s. Added to the palette."
+msgstr ""
+
+msgid "Gradient steps"
+msgstr ""
+
+msgid "Steps in the ramp, both end colors included"
+msgstr ""
+
+msgid "gradient from %s to %s"
+msgstr ""
+
+msgid "Gradient of %s steps from %s to %s added to the palette."
+msgstr ""
+
+msgid "%s against %s: contrast %s to 1 — %s."
+msgstr ""
+
+msgid "Pick a first color from the palette first."
+msgstr ""
+
+msgid "%s has no dominant wavelength: it is achromatic, a gray with no hue direction."
+msgstr ""
+
+msgid "Random color: %s. Added to the palette."
+msgstr ""
+
+msgid "Frequency to color (experimental)"
+msgstr ""
+
+msgid "Sound frequency in hertz"
+msgstr ""
+
+msgid "That frequency could not be folded into the visible band."
+msgstr ""
+
+msgid "frequency %s hertz (experimental)"
+msgstr ""
+
+msgid "Experimental: %s hertz folded up by octaves lands at %s nanometres: %s. Added to the palette. Octaves of sound are mapped to octaves of light by convention, not by physics."
+msgstr ""
+
+msgid "%s: %s elements on an 800 by 600 canvas"
+msgstr ""
+
+msgid "New from Template"
+msgstr ""
+
+msgid "Templates"
+msgstr ""
+
+msgid "Load Template"
+msgstr ""
+
+msgid "Started a new design from the %s template. It is a normal design now: edit it, then Save Design to keep it."
+msgstr ""
+
+msgid "Add Symbol"
+msgstr ""
+
+msgid "Symbols"
+msgstr ""
+
+msgid "Add %s symbol"
+msgstr ""
+
+msgid "One of those fields did not parse. Position and size take numbers or plain words; color takes a name like sky blue or a hex code."
+msgstr ""
+
+msgid "Added %s symbol (%s stroke%s)."
+msgstr ""
+
+msgid "Choose an image to extract colors from"
+msgstr ""
+
+msgid "Image files (*.png;*.jpg;*.jpeg;*.webp)"
+msgstr ""
+
+msgid "How many colors to extract"
+msgstr ""
+
+msgid "Number of colors"
+msgstr ""
+
+msgid "Extracted %s colors from %s.%s"
+msgstr ""
+
+msgid "Could not open that image: %s"
+msgstr ""
+
+msgid "This design uses no replacement variables. Write a token like {name} in a text element or a caption, and it will be fillable here."
+msgstr ""
+
+msgid "Replacement Variables"
+msgstr ""
+
+msgid "Give each variable a value. Leave a field empty to leave that token as it is."
+msgstr ""
+
+msgid "Value for {%s}"
+msgstr ""
+
+msgid "Value for %s"
+msgstr ""
+
+msgid "Substitute in This Project"
+msgstr ""
+
+msgid "Substitute in a Copy and Save As…"
+msgstr ""
+
+msgid "Nothing was substituted: no value matched a token in this design."
+msgstr ""
+
+msgid "Substitution done, with tokens left unfilled"
+msgstr ""
+
+msgid ""
+"%s values substituted in %s elements.\n"
+"Still in the words, unfilled: %s."
+msgstr ""
+
+msgid "Nothing was substituted, so no copy was saved: no value matched a token in this design."
+msgstr ""
+
+msgid "Save substituted copy"
+msgstr ""
+
+msgid "Saved a substituted copy to %s: %s values substituted in %s elements. This project is unchanged."
+msgstr ""
+
+msgid " Still unfilled in the copy: %s."
+msgstr ""
+
+msgid "Focus: %s"
+msgstr ""
+
+msgid "Focus: whole project"
+msgstr ""
+
+msgid "Focus — Blind Designer"
+msgstr ""
+
+msgid "Current focus"
+msgstr ""
+
+msgid "What you have built, and what is not built yet"
+msgstr ""
+
+msgid "Close Focus Window"
+msgstr ""
+
+msgid "Draw with Pointer"
+msgstr ""
+
+msgid "Press and drag to draw one stroke. Keys: 1 to 9 set the brush width, C cycles the brush colour, Escape cancels."
+msgstr ""
+
+msgid "Drawing surface: the %s by %s canvas"
+msgstr ""
+
+msgid "Brush width %s pixels. Colour %s. No points yet."
+msgstr ""
+
+msgid "Draw status"
+msgstr ""
+
+msgid "Brush width %s pixels. Colour %s. %s"
+msgstr ""
+
+msgid "No points yet."
+msgstr ""
+
+msgid "%s: \"%s\"%s — %s"
+msgstr ""
+
+msgid "Text Studio"
+msgstr ""
+
+msgid "Text elements"
+msgstr ""
+
+msgid "Words of the selected element (one line per row)"
+msgstr ""
+
+msgid "Bold"
+msgstr ""
+
+msgid "Italic (spoken and exported; the picture font has no slanted letters)"
+msgstr ""
+
+msgid "Underline"
+msgstr ""
+
+msgid "Heading level"
+msgstr ""
+
+msgid "Alignment in its box"
+msgstr ""
+
+msgid "Apply Words and Style"
+msgstr ""
+
+msgid "Sort Lines A to Z"
+msgstr ""
+
+msgid "Sort Lines Z to A"
+msgstr ""
+
+msgid "Spread every text element into this many columns, in reading order"
+msgstr ""
+
+msgid "Spread into Columns"
+msgstr ""
+
+msgid "Build a text grid from a pasted table (tabs between columns)"
+msgstr ""
+
+msgid "Grid font size in points"
+msgstr ""
+
+msgid "Build Text Grid"
+msgstr ""
+
+msgid "That element has fewer than two lines; there is nothing to sort."
+msgstr ""
+
+msgid "This design has no text elements to spread."
+msgstr ""
+
+msgid "No words in that table; nothing was built. Paste rows with tabs between the columns."
+msgstr ""
+
+msgid "Embed feed snapshot"
+msgstr ""
+
+msgid "Feed address (an RSS or Atom URL)"
+msgstr ""
+
+msgid "How many of the latest items (1 to 50)"
+msgstr ""
+
+msgid "No feed address given; nothing was embedded."
+msgstr ""
+
+msgid "That feed could not be fetched: %s. Check the address and your connection, then try again."
+msgstr ""
+
+msgid "No items were found at that address. It may not be a feed, or the feed may be empty."
+msgstr ""
+
+msgid "Feed snapshot: %s items from %s"
+msgstr ""
+
+msgid "Embed Pasted Post"
+msgstr ""
+
+msgid "Paste the post or text here"
+msgstr ""
+
+msgid "Embed"
+msgstr ""
+
+msgid "Nothing was pasted; nothing was embedded."
+msgstr ""
+
+msgid "pasted post: %s"
+msgstr ""
+
+msgid "A second Blind Designer window opened: it starts its own project, and each window saves its own design."
+msgstr ""
+
+msgid "A second window could not be opened: %s"
+msgstr ""
+
+msgid "Sound cues on: drawing changes play a pitch and position tone."
+msgstr ""
+
+msgid "Sound cues off. Spoken readouts are unchanged."
+msgstr ""
+
+msgid "About Blind Designer"
+msgstr ""
+
+msgid "Focus mode on: the Focus window shows the current focus, the statistics, and what is built and not built yet."
+msgstr ""
+
+msgid "Focus mode off: the Focus window is closed."
+msgstr ""
+
+msgid "Slider announcements on: moving a slider says what changed and that everything else stayed the same."
+msgstr ""
+
+msgid "Slider announcements off: moving a slider says only its name and value."
+msgstr ""
+
+msgid "Open design"
+msgstr ""
+
+msgid "Open cancelled: the current project is unchanged."
+msgstr ""
+
+msgid "Opened design from %s: %s layers, %s shapes, %s palette colors. It replaces the previous design."
+msgstr ""
+
+msgid "That file could not be opened as a design: %s"
+msgstr ""
+
+msgid "Could not read that file: %s"
+msgstr ""
+
+msgid "Color values now shown as %s, for example %s."
+msgstr ""
+
+msgid "Color values now shown as %s."
+msgstr ""
+
+msgid "Export design as PNG"
+msgstr ""
+
+msgid "Export caption sheet"
+msgstr ""
+
+msgid "Exported captions to %s"
+msgstr ""
+
+msgid "Export palette as CSS"
+msgstr ""
+
+msgid "CSS file (*.css)"
+msgstr ""
+
+msgid "Exported CSS to %s"
+msgstr ""
+
+msgid "Export recreation file (step-by-step summary)"
+msgstr ""
+
+msgid "Exported recreation file to %s"
+msgstr ""
+
+msgid "Export design as an HTML page"
+msgstr ""
+
+msgid "Exported HTML page to %s"
+msgstr ""
+
+msgid "Export animation as a GIF"
+msgstr ""
+
+msgid "Exported animated GIF (%s frames) to %s"
+msgstr ""
+
+msgid "Export animation as an HTML page"
+msgstr ""
+
+msgid "Blind Designer animation"
+msgstr ""
+
+msgid "Exported animated HTML page to %s"
+msgstr ""
+
+msgid "Export animation description (frame by frame)"
+msgstr ""
+
+msgid "Exported animation description to %s"
+msgstr ""
+
+msgid "Import colors from a CSS file"
+msgstr ""
+
+msgid "No colors found in that CSS file."
+msgstr ""
+
+msgid "Imported %s colors from CSS: %s"
+msgstr ""
+
+msgid "Could not read that CSS file: %s"
+msgstr ""
+
+msgid "Import an HTML page as a design"
+msgstr ""
+
+msgid "HTML file (*.html;*.htm)"
+msgstr ""
+
+msgid "Imported %s: %s shapes on the canvas, %s colors in the palette. The imported design replaces the previous one."
+msgstr ""
+
+msgid "Could not read that HTML file: %s"
+msgstr ""
+
+msgid "Type a hex value in the Hex value field, then press Apply Hex to add the color."
+msgstr ""
+
+msgid "Project statistics"
+msgstr ""
+
+msgid "What is in this project"
+msgstr ""
+
+msgid "Text Readability"
+msgstr ""
+
+msgid "How readable each text element is"
+msgstr ""
+
+msgid "Select a palette color first."
+msgstr ""
+
+msgid "analogous (%s degrees)"
+msgstr ""
+
+msgid "%s (paint wheel)"
+msgstr ""
+
+msgid "%s of %s"
+msgstr ""
+
+msgid "Removed %s"
+msgstr ""
+
+msgid "Canvas size"
+msgstr ""
+
+msgid "Width in pixels"
+msgstr ""
+
+msgid "Height in pixels"
+msgstr ""
+
+msgid "Select a palette color to fill the shape first."
+msgstr ""
+
+msgid "Add %s filled with %s"
+msgstr ""
+
+msgid "Add text"
+msgstr ""
+
+msgid "Text to place in the design"
+msgstr ""
+
+msgid "The text was empty; nothing was added."
+msgstr ""
+
+msgid "Font name"
+msgstr ""
+
+msgid "Font size in points"
+msgstr ""
+
+msgid "Add text \"%s\""
+msgstr ""
+
+msgid "Choose an image to place in the design"
+msgstr ""
+
+msgid "Add stroke"
+msgstr ""
+
+msgid "Points as x,y pairs, separated by spaces (for example: 10,20 100,20 100,80)"
+msgstr ""
+
+msgid "Points need to be x,y pairs, at least two of them, whole numbers."
+msgstr ""
+
+msgid "Stroke brush"
+msgstr ""
+
+msgid "Brush width in pixels"
+msgstr ""
+
+msgid "Pattern: solid, dashed or dotted"
+msgstr ""
+
+msgid "The brush width needs to be a whole number from %s to %s."
+msgstr ""
+
+msgid "The pattern needs to be solid, dashed or dotted."
+msgstr ""
+
+msgid "Select a shape first."
+msgstr ""
+
+msgid "Slide mode: adjust %s on the Sliders tab."
+msgstr ""
+
+msgid "Move shape"
+msgstr ""
+
+msgid "Rotate shape"
+msgstr ""
+
+msgid "Angle in degrees, clockwise"
+msgstr ""
+
+msgid "Slide mode: adjust Width on the Sliders tab."
+msgstr ""
+
+msgid "Resize shape"
+msgstr ""
+
+msgid "Select a shape and a palette color first."
+msgstr ""
+
+msgid "Inspector: layer"
+msgstr ""
+
+msgid "Layer inspector"
+msgstr ""
+
+msgid "Element locked: bulk changes will skip it; direct edits still work."
+msgstr ""
+
+msgid "Element unlocked: bulk changes reach it again."
+msgstr ""
+
+msgid "Palette and Elements now sit side by side on the Lists page."
+msgstr ""
+
+msgid "Palette and Elements are back on their own tabs."
+msgstr ""
+
+msgid "Save scene (a design file other designs can insert)"
+msgstr ""
+
+msgid "Blind Designer scene (*.bdd)"
+msgstr ""
+
+msgid "Saved scene to %s"
+msgstr ""
+
+msgid "Insert a scene file"
+msgstr ""
+
+msgid "Scene"
+msgstr ""
+
+msgid "Inserted scene \"%s\": %s elements onto layer \"%s\", captioned as one group."
+msgstr ""
+
+msgid "That scene has no painted elements to insert."
+msgstr ""
+
+msgid "That file could not be opened as a scene: %s"
+msgstr ""
+
+msgid "Describe area"
+msgstr ""
+
+msgid "Area: a name like top left, center, bottom right — or a box as across, down, width, height"
+msgstr ""
+
+msgid "Elements in the %s area"
+msgstr ""
+
+msgid "I could not understand that area. Name a part of the canvas, like top left or center, or give a box as four numbers."
+msgstr ""
+
+msgid "Export raised-line SVG (one line style per layer)"
+msgstr ""
+
+msgid "Exported raised-line SVG to %s"
+msgstr ""
+
+msgid "Export tactile sheet (element by element, in reading order)"
+msgstr ""
+
+msgid "Exported tactile sheet to %s"
+msgstr ""
+
+msgid "Export braille labels (Grade 1)"
+msgstr ""
+
+msgid "Braille labels (*.brf)"
+msgstr ""
+
+msgid "Exported braille labels to %s"
+msgstr ""
+
+msgid "Save practice sheet"
+msgstr ""
+
+msgid "Text files (*.txt)"
+msgstr ""
+
+msgid "Saved the practice sheet to %s"
+msgstr ""
+
+msgid "Could not save the practice sheet: %s"
+msgstr ""
+
+msgid "Save PDF"
+msgstr ""
+
+msgid "PDF documents (*.pdf)"
+msgstr ""
+
+msgid "Saved the PDF to %s: page 1 is the picture, page 2 is the design's words as text."
+msgstr ""
+
+msgid "Could not save the PDF: %s"
+msgstr ""
+
+msgid "Save presentation"
+msgstr ""
+
+msgid "Web pages (*.html)"
+msgstr ""
+
+msgid "Blind Designer presentation"
+msgstr ""
+
+msgid "Saved the presentation to %s"
+msgstr ""
+
+msgid "Could not save the presentation: %s"
+msgstr ""
+
+msgid "Save document"
+msgstr ""
+
+msgid "Markdown documents (*.md)"
+msgstr ""
+
+msgid "Blind Designer document"
+msgstr ""
+
+msgid "Saved the document to %s and its picture to %s. Keep the two together."
+msgstr ""
+
+msgid "Could not save the document: %s"
+msgstr ""
+
+msgid "Could not save the document's picture: %s"
+msgstr ""
+
+msgid "Opened %s in your PDF viewer. Print from the viewer — Blind Designer does not drive the printer itself."
+msgstr ""
+
+msgid "The PDF is saved at %s, but the viewer could not be opened: %s. Open the file and print from there."
+msgstr ""
+
+msgid "Could not write the print PDF: %s"
+msgstr ""
+
+msgid "Choose the first image"
+msgstr ""
+
+msgid "Choose the second image"
+msgstr ""
+
+msgid "Image comparison"
+msgstr ""
+
+msgid "How the two images compare"
+msgstr ""
+
+msgid "One of those files could not be read as an image."
+msgstr ""
+
+msgid "Choose an image to feel as a tactile grid"
+msgstr ""
+
+msgid "Tactile grid size"
+msgstr ""
+
+msgid "Columns"
+msgstr ""
+
+msgid "Rows"
+msgstr ""
+
+msgid "Tactile grid"
+msgstr ""
+
+msgid "The picture as a grid of shades"
+msgstr ""
+
+msgid "My brush"
+msgstr ""
+
+msgid "Save current brush"
+msgstr ""
+
+msgid "Name for this brush (%s pixel, %s, %s pattern)"
+msgstr ""
+
+msgid "The brush was not saved: it needs a name."
+msgstr ""
+
+msgid "Saved brush: %s."
+msgstr ""
+
+msgid "&Open Image…\tCtrl+O"
+msgstr ""
+
+msgid "Open an image: its colors replace the palette and its largest color becomes the background."
+msgstr ""
+
+msgid "&Extract Colors from Image…"
+msgstr ""
+
+msgid "Add an image's colors to the palette, leaving the design untouched."
+msgstr ""
+
+msgid "&CSS Colors…"
+msgstr ""
+
+msgid "Add every color found in a CSS file to the palette."
+msgstr ""
+
+msgid "&HTML Design…"
+msgstr ""
+
+msgid "Turn a simple HTML page (inline styles) into a design."
+msgstr ""
+
+msgid "Compare I&mages…"
+msgstr ""
+
+msgid "Compare two images: their sizes, shared colors, which is brighter, which is blurrier."
+msgstr ""
+
+msgid "Describe Image as &Tactile Grid…"
+msgstr ""
+
+msgid "Describe any image as a grid of shades, in braille patterns and in words."
+msgstr ""
+
+msgid "Embed Feed &Snapshot…"
+msgstr ""
+
+msgid "Fetch a feed (RSS or Atom) and place its latest item titles in the design as one text element — a snapshot: it changes only when you embed again."
+msgstr ""
+
+msgid "Embed &Pasted Post…"
+msgstr ""
+
+msgid "Paste text copied from anywhere — a Facebook post, another Serrebi tool — and place it in the design as a text element captioned as pasted."
+msgstr ""
+
+msgid "Export &Wizard…"
+msgstr ""
+
+msgid "Step through the export: choose the format, how it will be embedded or accompanied, and confirm what will be written before anything is."
+msgstr ""
+
+msgid "&PNG…\tCtrl+E"
+msgstr ""
+
+msgid "Save the design as a PNG picture."
+msgstr ""
+
+msgid "&Captions…"
+msgstr ""
+
+msgid "Save a text sheet describing every shape in words."
+msgstr ""
+
+msgid "C&SS…"
+msgstr ""
+
+msgid "Save the palette as CSS variables, ready for a web page."
+msgstr ""
+
+msgid "&Summary (recreation file)…"
+msgstr ""
+
+msgid "Save the step-by-step log that recreates this design exactly."
+msgstr ""
+
+msgid "HT&ML Page…"
+msgstr ""
+
+msgid "Save the design as a standalone web page whose shapes carry their captions as accessible names."
+msgstr ""
+
+msgid "Animated &GIF…"
+msgstr ""
+
+msgid "Save the animation as a looping GIF; with no frames, the design as one still picture."
+msgstr ""
+
+msgid "Animated HTML…"
+msgstr ""
+
+msgid "Save the animation as a web page that steps through the frames."
+msgstr ""
+
+msgid "Animation &Description…"
+msgstr ""
+
+msgid "Save the film as words: every frame, its duration, and what changed."
+msgstr ""
+
+msgid "&Raised-Line SVG…"
+msgstr ""
+
+msgid "Save the design as outlines for swell paper or an embosser, one line style per layer."
+msgstr ""
+
+msgid "Tactile &Sheet…"
+msgstr ""
+
+msgid "Save the design as a text walk, element by element in reading order, with braille labels."
+msgstr ""
+
+msgid "&Braille Labels…"
+msgstr ""
+
+msgid "Save the elements' captions as Grade 1 braille labels."
+msgstr ""
+
+msgid "Print-Writing &Practice Sheet…"
+msgstr ""
+
+msgid "Save a practice sheet: every text element printed large as block letters to trace or copy, with a legibility line for each."
+msgstr ""
+
+msgid "P&DF…"
+msgstr ""
+
+msgid "Save a two-page PDF: the design as a picture, then its text elements as real, readable text."
+msgstr ""
+
+msgid "Presen&tation HTML…"
+msgstr ""
+
+msgid "Save the design as presentation slides — one per animation frame — each laying the picture and its words side by side."
+msgstr ""
+
+msgid "&Document (Markdown)…"
+msgstr ""
+
+msgid "Save a Markdown document: the design's PNG written beside it and referenced, then the design's words with their styles, then every element's caption."
+msgstr ""
+
+msgid "Open &Design…"
+msgstr ""
+
+msgid "Open a saved design file, replacing the current design."
+msgstr ""
+
+msgid "&Save Design…"
+msgstr ""
+
+msgid "Save the whole design — canvas, layers, palette and log — to a file."
+msgstr ""
+
+msgid "Save Sc&ene…"
+msgstr ""
+
+msgid "Save the current design as a scene file, ready to insert into other designs as a group."
+msgstr ""
+
+msgid "Insert &Scene…"
+msgstr ""
+
+msgid "Insert a saved scene's elements onto the current layer, captioned as one group under the scene's name."
+msgstr ""
+
+msgid "New from &Template…"
+msgstr ""
+
+msgid "Start a new design from a built-in layout: birthday card, house, face, chart, portrait or landscape."
+msgstr ""
+
+msgid "New with &Wizard…"
+msgstr ""
+
+msgid "Start a new project through the setup wizard: say what you want to create or build, answer its focus questions (any may be left with no fixed answer), and the goal is set and the canvas seeded for that kind."
+msgstr ""
+
+msgid "New from &Pattern…"
+msgstr ""
+
+msgid "Start a new design as a two-color pattern — checkerboard, stripes or dots — woven from two palette colors you pick."
+msgstr ""
+
+msgid "New &Window"
+msgstr ""
+
+msgid "Open a second Blind Designer window — a separate copy of the app — so two projects can be open at once; each window keeps and saves its own design."
+msgstr ""
+
+msgid "&Import"
+msgstr ""
+
+msgid "Bring images, colors and designs in."
+msgstr ""
+
+msgid "&Export"
+msgstr ""
+
+msgid "Write the design out: pictures, pages, text and touch."
+msgstr ""
+
+msgid "&Print via PDF…"
+msgstr ""
+
+msgid "Write the design's PDF to a temporary file and open it in your PDF viewer; print from the viewer. (Blind Designer does not drive the printer itself.)"
+msgstr ""
+
+msgid "E&xit"
+msgstr ""
+
+msgid "Close Blind Designer."
+msgstr ""
+
+msgid "&Complementary (hue + 180)"
+msgstr ""
+
+msgid "Add the color opposite the selected one on the hue circle."
+msgstr ""
+
+msgid "&Split Complementary (hue ± 150)"
+msgstr ""
+
+msgid "Add the two colors 150 degrees either side of the selected one."
+msgstr ""
+
+msgid "&Analogous (hue ± spread)"
+msgstr ""
+
+msgid "Add the two neighboring colors, the Scheme Settings spread either side (30 degrees to start)."
+msgstr ""
+
+msgid "&Triadic (hue ± 120)"
+msgstr ""
+
+msgid "Add the two colors a third of the circle away, either side."
+msgstr ""
+
+msgid "T&etradic"
+msgstr ""
+
+msgid "Add the three colors that complete a rectangle on the hue circle."
+msgstr ""
+
+msgid "Scheme &Settings…"
+msgstr ""
+
+msgid "Choose the harmony wheel (screen or paint) and the analogous spread in degrees."
+msgstr ""
+
+msgid "Add 4 S&hades (lightness down)"
+msgstr ""
+
+msgid "Add four darker versions of the selected color."
+msgstr ""
+
+msgid "Add 4 &Tints (lightness up)"
+msgstr ""
+
+msgid "Add four lighter versions of the selected color."
+msgstr ""
+
+msgid "Add 4 Tone&s (chroma down)"
+msgstr ""
+
+msgid "Add four softer, less saturated versions of the selected color."
+msgstr ""
+
+msgid "&Schemes"
+msgstr ""
+
+msgid "New colors computed from the selected color."
+msgstr ""
+
+msgid "&Shades, Tints and Tones"
+msgstr ""
+
+msgid "Darker, lighter and softer versions of the selected color."
+msgstr ""
+
+msgid "Color &Tools…"
+msgstr ""
+
+msgid "Blend, subtract and gradient between two palette colors, random colors, contrast checks, dominant wavelength, and sound frequency to color."
+msgstr ""
+
+msgid "Te&xt Readability…"
+msgstr ""
+
+msgid "How readable every text element in the design is against its background."
+msgstr ""
+
+msgid "&Load Starter Colors"
+msgstr ""
+
+msgid "Add the starter colors to the palette. A new palette starts empty; these join only when you ask."
+msgstr ""
+
+msgid "&Remove Selected Color"
+msgstr ""
+
+msgid "Take the selected color out of the palette."
+msgstr ""
+
+msgid "Set &Background to Selected Color"
+msgstr ""
+
+msgid "Make the selected palette color the design's background."
+msgstr ""
+
+msgid "&Rectangle…"
+msgstr ""
+
+msgid "Place a rectangle, by numbers or in plain words."
+msgstr ""
+
+msgid "&Ellipse…"
+msgstr ""
+
+msgid "Place an ellipse; equal width and height make a circle."
+msgstr ""
+
+msgid "Stro&ke…"
+msgstr ""
+
+msgid "Draw a line through points you list, with the current brush."
+msgstr ""
+
+msgid "&Text…"
+msgstr ""
+
+msgid "Place words in the design, in a named font at a chosen size."
+msgstr ""
+
+msgid "&Image…"
+msgstr ""
+
+msgid "Place an image file in the design, scaled into a box you give it."
+msgstr ""
+
+msgid "S&ymbol…"
+msgstr ""
+
+msgid "Stamp a ready-made symbol: star, heart, arrow, check, cross, sun or moon."
+msgstr ""
+
+msgid "&Move…"
+msgstr ""
+
+msgid "Move the selected element, by numbers or in plain words."
+msgstr ""
+
+msgid "R&otate…"
+msgstr ""
+
+msgid "Turn the selected element by an angle in degrees."
+msgstr ""
+
+msgid "Resi&ze…"
+msgstr ""
+
+msgid "Change the selected element's size, by numbers or in plain words."
+msgstr ""
+
+msgid "Set to Palette &Color"
+msgstr ""
+
+msgid "Give the selected element the selected palette color."
+msgstr ""
+
+msgid "Remove Sha&pe"
+msgstr ""
+
+msgid "Delete the selected element from the design."
+msgstr ""
+
+msgid "Text &Studio…"
+msgstr ""
+
+msgid "The project's text elements as an editor: rewrite their words, set bold, italic, underline, heading level and alignment, sort their lines, spread them into columns, and build text grids from pasted tables."
+msgstr ""
+
+msgid "Replacement &Variables…"
+msgstr ""
+
+msgid "Fill in the {name} tokens written in text elements and captions: give each a value, then substitute in this project or in a saved copy."
+msgstr ""
+
+msgid "In&spect Selected…"
+msgstr ""
+
+msgid "The inspector: what the selected element is, where it is used, what can change it and what happens if it is left alone. Enter on the Elements list does the same."
+msgstr ""
+
+msgid "&Viewability…"
+msgstr ""
+
+msgid "Report how the design reads from a viewing angle: what is viewable, what is hidden behind something else, what is turned away, per depth."
+msgstr ""
+
+msgid "&Recognizability…"
+msgstr ""
+
+msgid "How clearly someone else would recognize what you are creating, judged for this project's type: a rough guide from element counts, contrast and depth layering, not a measurement."
+msgstr ""
+
+msgid "&Project Statistics…"
+msgstr ""
+
+msgid "How many layers, elements, palette colors and animation frames this project has."
+msgstr ""
+
+msgid "Canvas &Size…"
+msgstr ""
+
+msgid "Change the canvas width and height in pixels."
+msgstr ""
+
+msgid "&Add"
+msgstr ""
+
+msgid "Add a new element to the design."
+msgstr ""
+
+msgid "A&rrange Selected Shape"
+msgstr ""
+
+msgid "Move, turn, resize, recolor or remove the selected element."
+msgstr ""
+
+msgid "E&lements…"
+msgstr ""
+
+msgid "Every element in plain language, with rename, describe, move, resize, recolor and delete."
+msgstr ""
+
+msgid "&Text"
+msgstr ""
+
+msgid "The project's words: the text editor, and the replacement variables that fill its tokens."
+msgstr ""
+
+msgid "&Review"
+msgstr ""
+
+msgid "Look at the design: inspect the selection, judge its viewability and recognizability, and read its statistics."
+msgstr ""
+
+msgid "Element &Wizard…"
+msgstr ""
+
+msgid "The wizard scoped to the selected element: its stack (what sits on it, what it sits on), slider edits, and the inspector's review."
+msgstr ""
+
+msgid "&Lock/Unlock Selected"
+msgstr ""
+
+msgid "Lock the selected element so bulk changes skip it, or unlock it so they reach it again. Direct edits work either way."
+msgstr ""
+
+msgid "&Search and Insert…\tCtrl+F"
+msgstr ""
+
+msgid "Search palette colors, starter colors, elements, symbols and templates by name, and insert what you find at the cursor."
+msgstr ""
+
+msgid "&Layers…"
+msgstr ""
+
+msgid "Add, rename, reorder, show or hide layers, and choose where new shapes land."
+msgstr ""
+
+msgid "Anim&ation…"
+msgstr ""
+
+msgid "Build a film from frames of the canvas, each with its own duration."
+msgstr ""
+
+msgid "&Describe Area…"
+msgstr ""
+
+msgid "Hear only the elements inside one part of the canvas."
+msgstr ""
+
+msgid "Project &Options…"
+msgstr ""
+
+msgid "Choose which sliders this project pins to its Sliders tab, what the color adjustments act on, how far Page Up and Page Down jump, grayscale start, and load the starter colors or the gray ramp."
+msgstr ""
+
+msgid "Setup &Wizard…"
+msgstr ""
+
+msgid "State (or restate) this project's goal through the wizard: what you want to create or build, and its focus questions — any answer may be left with no fixed answer."
+msgstr ""
+
+msgid "Apply Colour &Treatment…"
+msgstr ""
+
+msgid "Grayscale start's second half: give the grayscale shapes of one layer, or of a whole depth, the palette colours in paint order. Locked shapes stay grayscale."
+msgstr ""
+
+msgid "Draw with &Pointer…"
+msgstr ""
+
+msgid "Draw one stroke with the mouse or touch: press and drag on the surface, release, Finish. Keys 1 to 9 set the brush width while you draw; C cycles the brush colour."
+msgstr ""
+
+msgid "Recognize Shape from &Stroke"
+msgstr ""
+
+msgid "Read the selected stroke's path and replace it with the known shape it traces — a line, a rectangle, an ellipse or a triangle — in the same color and brush width. A stroke that matches nothing known stays exactly as drawn."
+msgstr ""
+
+msgid "Save Current Br&ush…"
+msgstr ""
+
+msgid "Keep the current brush — width, color, pattern — in the brush library under a name."
+msgstr ""
+
+msgid "Brush Li&brary…"
+msgstr ""
+
+msgid "The saved brushes; apply one to make it current for new strokes."
+msgstr ""
+
+msgid "Color Values as &Hex"
+msgstr ""
+
+msgid "Show and speak color values as hex codes, like #3A7CA5."
+msgstr ""
+
+msgid "Color Values as &RGB"
+msgstr ""
+
+msgid "Show and speak color values as red, green and blue numbers, 0 to 255."
+msgstr ""
+
+msgid "Color Values as HS&L"
+msgstr ""
+
+msgid "Show and speak color values as hue, saturation and lightness."
+msgstr ""
+
+msgid "Color Values as HS&V"
+msgstr ""
+
+msgid "Show and speak color values as hue, saturation and value."
+msgstr ""
+
+msgid "Color Values as CM&YK"
+msgstr ""
+
+msgid "Show and speak color values as cyan, magenta, yellow and black ink percents."
+msgstr ""
+
+msgid "Color Values as CIE &XYZ"
+msgstr ""
+
+msgid "Show and speak color values as CIE XYZ tristimulus numbers."
+msgstr ""
+
+msgid "Color Values as x&yY"
+msgstr ""
+
+msgid "Show and speak color values as chromaticity x and y plus luminance Y."
+msgstr ""
+
+msgid "Color Values as CIE L&ab"
+msgstr ""
+
+msgid "Show and speak color values as CIE lightness and the a and b opponent axes."
+msgstr ""
+
+msgid "Color Values as CIE LC&H"
+msgstr ""
+
+msgid "Show and speak color values as CIE lightness, chroma and hue."
+msgstr ""
+
+msgid "Color Values as CIE LU&V"
+msgstr ""
+
+msgid "Show and speak color values as CIE lightness and the u and v axes."
+msgstr ""
+
+msgid "Color Values as &Hunter Lab"
+msgstr ""
+
+msgid "Show and speak color values in the 1948 Hunter Lab system (different numbers from CIE Lab)."
+msgstr ""
+
+msgid "Color Values as &Decimal"
+msgstr ""
+
+msgid "Show and speak color values as one decimal number, 0 to 16777215."
+msgstr ""
+
+msgid "Color Values as &Web Safe"
+msgstr ""
+
+msgid "Show and speak each color snapped to the nearest web-safe color."
+msgstr ""
+
+msgid "Color Values as &Binary"
+msgstr ""
+
+msgid "Show and speak color values as a 24-bit binary string."
+msgstr ""
+
+msgid "Color &Format"
+msgstr ""
+
+msgid "How color values are shown and spoken across the app; exactly one format is ticked at a time."
+msgstr ""
+
+msgid "&Announce Slider Changes"
+msgstr ""
+
+msgid "Moving a slider says what changed and that everything else stayed the same. Off: only the slider's name and new value are said."
+msgstr ""
+
+msgid "Lists &Side by Side"
+msgstr ""
+
+msgid "Show the Palette and Elements lists side by side on one Lists page instead of on separate tabs. This session only."
+msgstr ""
+
+msgid "&Focus Mode"
+msgstr ""
+
+msgid "Open the Focus window: only the current focus, the statistics, and what you have built against your goal — and what is not built yet. This session only."
+msgstr ""
+
+msgid "&Dictionary…"
+msgstr ""
+
+msgid "Plain-language definitions of the color and design terms the app uses."
+msgstr ""
+
+msgid "&Help and Worked Examples…"
+msgstr ""
+
+msgid "How the app works, what every setting changes, and step-by-step examples."
+msgstr ""
+
+msgid "&Sound Cues"
+msgstr ""
+
+msgid "Play a tone for each drawing change: pitch says height, stereo says left or right, length says size."
+msgstr ""
+
+msgid "&About Blind Designer"
+msgstr ""
+
+msgid "What Blind Designer is."
+msgstr ""
+
+msgid "&File"
+msgstr ""
+
+msgid "&Color"
+msgstr ""
+
+msgid "&Design"
+msgstr ""
+
+msgid "&View"
+msgstr ""
+
+msgid "&Help"
+msgstr ""
+
+msgid "Blind Designer"
+msgstr ""
+
+msgid "Selected color"
+msgstr ""
+
+msgid "No color selected yet. Open an image, or add a color by hex."
+msgstr ""
+
+msgid "Hex value"
+msgstr ""
+
+msgid "Apply Hex"
+msgstr ""
+
+msgid "Lightness (0 to 1)"
+msgstr ""
+
+msgid "Chroma (0 to 0.4)"
+msgstr ""
+
+msgid "Hue (0 to 360 degrees)"
+msgstr ""
+
+msgid "Apply L C H"
+msgstr ""
+
+msgid "Draw mode: the pointer drawing tools lead. Everything else waits in the menus."
+msgstr ""
+
+msgid "Draw with Pointer…"
+msgstr ""
+
+msgid "Status"
+msgstr ""
+
+msgid "A new project: the setup wizard opens with the app — it states the goal, seeds the canvas, and pins the sliders for the kind you choose. Grayscale start is on: colors come later, per part, layer, or depth."
+msgstr ""
+
+msgid "That is not a hex color. Use RRGGBB, like 3A7CA5."
+msgstr ""
+
+msgid "Animation description: %s frame%s, total running time %s milliseconds (%s seconds).\n"
+msgstr ""
+
+msgid "Frame %s (%s milliseconds): %s\n"
+msgstr ""
+
+msgid "the GIF would not start looping: %s"
+msgstr ""
+
+msgid "a frame would not encode as GIF: %s"
+msgstr ""
+
+msgid "a blank %s canvas"
+msgstr ""
+
+msgid "%s on a %s background"
+msgstr ""
+
+msgid "text \"%s\""
+msgstr ""
+
+msgid "image %s"
+msgstr ""
+
+msgid "the %s is replaced by a %s"
+msgstr ""
+
+msgid "right %s pixels"
+msgstr ""
+
+msgid "left %s pixels"
+msgstr ""
+
+msgid "down %s pixels"
+msgstr ""
+
+msgid "up %s pixels"
+msgstr ""
+
+msgid "moves %s"
+msgstr ""
+
+msgid "is redrawn along a new path"
+msgstr ""
+
+msgid "resizes to %s by %s pixels"
+msgstr ""
+
+msgid "rotates to %s degrees"
+msgstr ""
+
+msgid "changes color to %s"
+msgstr ""
+
+msgid "now reads \"%s\""
+msgstr ""
+
+msgid "gets a new caption"
+msgstr ""
+
+msgid "the %s changes: now %s"
+msgstr ""
+
+msgid "the %s %s"
+msgstr ""
+
+msgid "the background changes from %s to %s"
+msgstr ""
+
+msgid "layer \"%s\" is added with %s shapes"
+msgstr ""
+
+msgid "layer \"%s\" is renamed to \"%s\""
+msgstr ""
+
+msgid "layer \"%s\" is %s"
+msgstr ""
+
+msgid "a new shape appears on layer \"%s\": %s"
+msgstr ""
+
+msgid "the %s on layer \"%s\" disappears"
+msgstr ""
+
+msgid "layer \"%s\" is removed"
+msgstr ""
+
+msgid "no change from the previous frame"
+msgstr ""
+
+msgid "%s: %s pixel brush, %s, %s pattern"
+msgstr ""
+
+msgid "brush %s %s %s %s\n"
+msgstr ""
+
+msgid "empty brush file"
+msgstr ""
+
+msgid "not a Blind Designer brush file"
+msgstr ""
+
+msgid "a brush needs 5 fields, got %s"
+msgstr ""
+
+msgid "bad brush width: %s"
+msgstr ""
+
+msgid "bad brush color: %s"
+msgstr ""
+
+msgid "unknown line in brush file: %s"
+msgstr ""
+
+msgid "brush file ends before the end marker"
+msgstr ""
+
+msgid "rectangle"
+msgstr ""
+
+msgid "ellipse"
+msgstr ""
+
+msgid "stroke"
+msgstr ""
+
+msgid "text"
+msgstr ""
+
+msgid "image"
+msgstr ""
+
+msgid "body text"
+msgstr ""
+
+msgid "heading 1"
+msgstr ""
+
+msgid "heading 2"
+msgstr ""
+
+msgid "heading 3"
+msgstr ""
+
+msgid "left"
+msgstr ""
+
+msgid "centered"
+msgstr ""
+
+msgid "right-aligned"
+msgstr ""
+
+msgid "Left"
+msgstr ""
+
+msgid "Center"
+msgstr ""
+
+msgid "Right"
+msgstr ""
+
+msgid "bold"
+msgstr ""
+
+msgid "italic"
+msgstr ""
+
+msgid "underlined"
+msgstr ""
+
+msgid "same hue as"
+msgstr ""
+
+msgid "analogous to"
+msgstr ""
+
+msgid "triadic with"
+msgstr ""
+
+msgid "complementary to"
+msgstr ""
+
+msgid "image from file %s, %s by %s pixels at %s, %s"
+msgstr ""
+
+msgid "stroke through %s points with a %s pixel brush, in %s"
+msgstr ""
+
+msgid "%s filled with %s, %s by %s pixels at %s, %s"
+msgstr ""
+
+msgid "; rotated %s degrees"
+msgstr ""
+
+msgid "; %s the background %s"
+msgstr ""
+
+msgid "; contrast against background %s to 1"
+msgstr ""
+
+msgid "Design %s by %s pixels, background %s.\n"
+msgstr ""
+
+msgid "top left"
+msgstr ""
+
+msgid "top center"
+msgstr ""
+
+msgid "top right"
+msgstr ""
+
+msgid "middle left"
+msgstr ""
+
+msgid "center"
+msgstr ""
+
+msgid "middle right"
+msgstr ""
+
+msgid "bottom left"
+msgstr ""
+
+msgid "bottom center"
+msgstr ""
+
+msgid "bottom right"
+msgstr ""
+
+msgid "single brush dot at %s, %s"
+msgstr ""
+
+msgid "%s %s stroke from %s to %s, %s"
+msgstr ""
+
+msgid ", %s pattern"
+msgstr ""
+
+msgid "the default font"
+msgstr ""
+
+msgid "%s font"
+msgstr ""
+
+msgid "text \"%s\" in %s at %s point%s, at %s, %s"
+msgstr ""
+
+msgid "image %s at %s (%s by %s pixels)"
+msgstr ""
+
+msgid "rounded rectangle"
+msgstr ""
+
+msgid ", corners %s percent"
+msgstr ""
+
+msgid "%s %s %s at %s (%s by %s pixels)%s"
+msgstr ""
+
+msgid ", %s percent opaque"
+msgstr ""
+
+msgid "AA"
+msgstr ""
+
+msgid "The standard WCAG contrast level. Normal text passes at a contrast ratio of 4.5 to 1 or more, large text at 3 to 1."
+msgstr ""
+
+msgid "AAA"
+msgstr ""
+
+msgid "The stricter WCAG contrast level. Normal text passes at a contrast ratio of 7 to 1 or more against its background."
+msgstr ""
+
+msgid "achromatic"
+msgstr ""
+
+msgid "Having no hue at all: black, white, and the grays between them. In OKLCH an achromatic color has chroma at or near zero, so its hue number means nothing."
+msgstr ""
+
+msgid "analogous"
+msgstr ""
+
+msgid "A color scheme of neighbors: colors whose hues sit close together, classically within about 30 degrees either side of the base color. Calm and unified, because the hues barely change."
+msgstr ""
+
+msgid "brightness"
+msgstr ""
+
+msgid "See value. In this app, lightness in OKLCH is the precise measure; brightness is the everyday word for the same idea."
+msgstr ""
+
+msgid "brush"
+msgstr ""
+
+msgid "The width, in pixels, that a stroke is painted with. A wider brush makes a thicker line along the stroke's points."
+msgstr ""
+
+msgid "canvas"
+msgstr ""
+
+msgid "The whole picture area, measured in pixels wide by pixels high. Every shape's position is counted from the canvas's top-left corner."
+msgstr ""
+
+msgid "caption"
+msgstr ""
+
+msgid "A short spoken-style description of a shape or a whole design: what it is, its color in words and numbers, and how it contrasts with the background. A shape with no caption of its own gets one generated; a written caption is never overwritten."
+msgstr ""
+
+msgid "chroma"
+msgstr ""
+
+msgid "How colorful a color is, apart from how light or what hue it is. Zero chroma is gray; higher chroma is more vivid. In OKLCH, chroma runs from 0 to about 0.4."
+msgstr ""
+
+msgid "color name"
+msgstr ""
+
+msgid "A plain word for a color family by its hue angle, like teal or magenta. This app names hues by their OKLCH angle, which sits differently from HSL: pure blue is 264 degrees here."
+msgstr ""
+
+msgid "complementary"
+msgstr ""
+
+msgid "The color exactly opposite on the hue wheel: the base hue plus 180 degrees, with the same lightness and chroma. Complementary pairs have the strongest hue contrast there is."
+msgstr ""
+
+msgid "contrast ratio"
+msgstr ""
+
+msgid "How strongly two colors differ in luminance, from 1 to 1 (identical) up to 21 to 1 (black against white). It is the number WCAG pass and fail levels are judged by."
+msgstr ""
+
+msgid "cool color"
+msgstr ""
+
+msgid "A color whose hue leans toward green, blue, or purple. Cool colors tend to feel calm and distant."
+msgstr ""
+
+msgid "CSS variables"
+msgstr ""
+
+msgid "Named values in a stylesheet, written like --color-1: #3A7CA5;. Exporting a palette as CSS variables hands the exact hex values to a web page, each with its spoken caption as a comment."
+msgstr ""
+
+msgid "An oval shape, set by the position of its top-left corner and its width and height. Equal width and height make a circle."
+msgstr ""
+
+msgid "event log"
+msgstr ""
+
+msgid "The numbered list of every change made to a drawing, in order: canvas set, layer added, shape shifted, and so on. Read top to bottom, the log is the recipe that recreates the image exactly."
+msgstr ""
+
+msgid "gamut"
+msgstr ""
+
+msgid "The full set of colors a system can actually show. A color outside the sRGB gamut cannot be displayed exactly; this app reduces its chroma, holding lightness and hue exact, until it fits."
+msgstr ""
+
+msgid "gray"
+msgstr ""
+
+msgid "An achromatic color between black and white. Also spelled grey. A color whose chroma is under 0.02 reads as gray whatever its hue number says."
+msgstr ""
+
+msgid "hex code"
+msgstr ""
+
+msgid "A color written as six hexadecimal digits, like #3A7CA5: red, green, and blue brightness, two digits each, from 00 to FF. A leading # is customary but optional."
+msgstr ""
+
+msgid "hue"
+msgstr ""
+
+msgid "Which color family a color belongs to, as an angle in degrees from 0 to 360 around the wheel. In OKLCH the pure colors sit at: red 29, orange 57, yellow 110, green 142, teal 195, blue 264, magenta 328."
+msgstr ""
+
+msgid "image element"
+msgstr ""
+
+msgid "A shape that holds an image file placed in the design, drawn scaled into its box. The project file stores the file's path, not its pixels; if the file is missing when the design is drawn, a framed placeholder in the shape's color shows where it belongs."
+msgstr ""
+
+msgid "layer"
+msgstr ""
+
+msgid "A named sheet of shapes within a drawing. Layers paint in order, first layer at the back. A hidden layer paints nothing. New shapes land on the current layer."
+msgstr ""
+
+msgid "lightness"
+msgstr ""
+
+msgid "How light or dark a color is, from 0 (black) to 1 (white), independent of its hue and chroma. In spoken captions it is reported as a percentage."
+msgstr ""
+
+msgid "luminance"
+msgstr ""
+
+msgid "The measured brightness of a color as screens emit it, from 0.0 for black to 1.0 for white. Contrast ratios are computed from the luminance of the two colors."
+msgstr ""
+
+msgid "monochrome"
+msgstr ""
+
+msgid "A scheme or image built from one hue, varied only by lightness and chroma: shades, tints, and tones of a single color."
+msgstr ""
+
+msgid "muted"
+msgstr ""
+
+msgid "A color with low-to-moderate chroma (about 0.02 to 0.06 in OKLCH): softened, grayish, not vivid."
+msgstr ""
+
+msgid "OKLCH"
+msgstr ""
+
+msgid "The color space this app works in natively: lightness, chroma, and hue angle, designed so equal number steps look like equal color steps. Colors here are never mixed; they are computed by changing these numbers."
+msgstr ""
+
+msgid "palette"
+msgstr ""
+
+msgid "The working set of colors for a design. Colors enter the palette by hex value, by LCH numbers, by scheme generation from a selected color, or by extraction from an image."
+msgstr ""
+
+msgid "palette extraction"
+msgstr ""
+
+msgid "Reading an image and reporting its dominant colors as a palette, each with the share of the image it covers. This app quantizes in OKLab space so the split follows perceived differences."
+msgstr ""
+
+msgid "pastel"
+msgstr ""
+
+msgid "A light, soft color: high lightness with low-to-moderate chroma. Pastels are tints that kept some color."
+msgstr ""
+
+msgid "position cue"
+msgstr ""
+
+msgid "A sound that tells you where something is: stereo pan follows left-to-right position, pitch follows top-to-bottom position (top of the canvas sounds highest), and a longer tone means a bigger shape."
+msgstr ""
+
+msgid "primary colors"
+msgstr ""
+
+msgid "In paint, red, yellow, and blue; in light and on screens, red, green, and blue. Screens mix light, so this app's hex values are red-green-blue."
+msgstr ""
+
+msgid "provenance"
+msgstr ""
+
+msgid "The recorded memory of how a color entered a palette and where it was used: extracted from an image, generated as a complement, typed as hex, and so on."
+msgstr ""
+
+msgid "recreation file"
+msgstr ""
+
+msgid "The primary export: a step-by-step document generated from the event log that rebuilds the exact image from nothing, followed by the final state's shape list as a check."
+msgstr ""
+
+msgid "A four-sided shape with right-angle corners, set by its top-left corner position, width, and height. Equal width and height make a square."
+msgstr ""
+
+msgid "rotation"
+msgstr ""
+
+msgid "Turning a shape around its own center, in degrees clockwise. Rectangles and ellipses rotate; a stroke's points turn with it."
+msgstr ""
+
+msgid "saturation"
+msgstr ""
+
+msgid "The everyday word for how colorful a color is. In this app chroma is the precise measure; saturation belongs to the HSL and HSV spaces."
+msgstr ""
+
+msgid "saved brush"
+msgstr ""
+
+msgid "A stroke brush kept under a name in the brush library: its width, its color, and its stamp pattern. Saving a brush means a favorite pen can be applied to new strokes in one choice instead of setting the three values again."
+msgstr ""
+
+msgid "scheme"
+msgstr ""
+
+msgid "A set of colors derived from one base color by known hue angles: complementary, split complementary, analogous, triadic, tetradic. Because the angles are fixed, every color in a scheme is predictable before it is made."
+msgstr ""
+
+msgid "shade"
+msgstr ""
+
+msgid "A darker version of a color: same hue and chroma, lightness stepped down toward black."
+msgstr ""
+
+msgid "shape"
+msgstr ""
+
+msgid "One drawn thing on a layer: a rectangle, an ellipse, or a stroke, with a position, a size, a fill color, and an optional caption and rotation."
+msgstr ""
+
+msgid "split complementary"
+msgstr ""
+
+msgid "A scheme of the base color plus the two colors 150 degrees either side of its complement: nearly opposite, but with more variety and less tension than a direct complementary pair."
+msgstr ""
+
+msgid "sRGB"
+msgstr ""
+
+msgid "The standard color system of screens and the web. Every color this app exports is an sRGB color, written as a hex code."
+msgstr ""
+
+msgid "A drawn line through a list of points, painted with a brush of a set width. A stroke's size is its points; it is resized by moving or redrawing, not by width and height."
+msgstr ""
+
+msgid "tetradic"
+msgstr ""
+
+msgid "A four-color scheme: the base hue plus 60, 180, and 240 degrees — two complementary pairs forming a rectangle on the hue wheel."
+msgstr ""
+
+msgid "text element"
+msgstr ""
+
+msgid "A shape that holds a phrase of text, placed by measurement like any other shape: a position, a box, a font name, and a point size. Its caption is the phrase itself unless you write a different one. In an exported web page the phrase is real text a screen reader reads."
+msgstr ""
+
+msgid "tint"
+msgstr ""
+
+msgid "A lighter version of a color: same hue and chroma, lightness stepped up toward white."
+msgstr ""
+
+msgid "tone"
+msgstr ""
+
+msgid "A softer version of a color: same hue and lightness, chroma scaled down toward gray."
+msgstr ""
+
+msgid "triadic"
+msgstr ""
+
+msgid "A three-color scheme: the base hue plus 120 and 240 degrees, evenly spaced around the wheel. Bold and balanced at once."
+msgstr ""
+
+msgid "value"
+msgstr ""
+
+msgid "How light or dark a color is, in painters' language. In this app the precise measure is OKLCH lightness."
+msgstr ""
+
+msgid "vivid"
+msgstr ""
+
+msgid "A color with high chroma (about 0.12 to 0.20 in OKLCH): strong and saturated-looking. Above that, electric."
+msgstr ""
+
+msgid "warm color"
+msgstr ""
+
+msgid "A color whose hue leans toward red, orange, or yellow. Warm colors tend to feel close and energetic."
+msgstr ""
+
+msgid "WCAG"
+msgstr ""
+
+msgid "The Web Content Accessibility Guidelines: the standard behind contrast levels AA and AAA for text against its background."
+msgstr ""
+
+msgid "unassigned"
+msgstr ""
+
+msgid "background"
+msgstr ""
+
+msgid "midground"
+msgstr ""
+
+msgid "foreground"
+msgstr ""
+
+msgid "sideground"
+msgstr ""
+
+msgid "Set the canvas to %s by %s pixels."
+msgstr ""
+
+msgid "Set the background to %s (%s)."
+msgstr ""
+
+msgid "Add layer \"%s\"."
+msgstr ""
+
+msgid "Rename layer \"%s\" to \"%s\"."
+msgstr ""
+
+msgid "Remove layer \"%s\" and its shapes."
+msgstr ""
+
+msgid "%s layer \"%s\"."
+msgstr ""
+
+msgid "On layer \"%s\", add %s."
+msgstr ""
+
+msgid "On layer \"%s\", remove %s."
+msgstr ""
+
+msgid "On layer \"%s\", shift shape %s by %s across and %s down."
+msgstr ""
+
+msgid "On layer \"%s\", resize shape %s to %s by %s pixels."
+msgstr ""
+
+msgid "On layer \"%s\", rotate shape %s to %s degrees."
+msgstr ""
+
+msgid "On layer \"%s\", recolor shape %s to %s (%s)."
+msgstr ""
+
+msgid "On layer \"%s\", set the caption of shape %s."
+msgstr ""
+
+msgid "On layer \"%s\", set shape %s to %s percent opaque."
+msgstr ""
+
+msgid "On layer \"%s\", set the brush width of shape %s to %s pixels."
+msgstr ""
+
+msgid "On layer \"%s\", adjust the color of shape %s: %s."
+msgstr ""
+
+msgid "Adjust the colors of all %s elements on layer \"%s\": %s."
+msgstr ""
+
+msgid "Add animation frame %s: a copy of the canvas as it is now, shown for %s milliseconds."
+msgstr ""
+
+msgid "Duplicate animation frame %s."
+msgstr ""
+
+msgid "Remove animation frame %s."
+msgstr ""
+
+msgid "Move animation frame %s to position %s."
+msgstr ""
+
+msgid "Set animation frame %s to show for %s milliseconds."
+msgstr ""
+
+msgid "Set all %s animation frames to show for %s milliseconds each."
+msgstr ""
+
+msgid "Clear the depth role of layer \"%s\"."
+msgstr ""
+
+msgid "Set layer \"%s\" as %s."
+msgstr ""
+
+msgid "Adjust the colors of all %s elements on %s layers: %s."
+msgstr ""
+
+msgid "On layer \"%s\", set shape %s's corners to %s percent rounded."
+msgstr ""
+
+msgid "On layer \"%s\", %s shape %s: bulk changes %s it."
+msgstr ""
+
+msgid "On layer \"%s\", rewrite text shape %s in the Text Studio: its words and its style."
+msgstr ""
+
+msgid "On layer \"%s\", sort the lines of text shape %s %s."
+msgstr ""
+
+msgid "Arrange %s text elements into %s column%s in reading order."
+msgstr ""
+
+msgid "Build a text grid from pasted data: %s text elements in %s rows and %s columns."
+msgstr ""
+
+msgid "Insert scene \"%s\": %s elements, captioned as part of the scene."
+msgstr ""
+
+msgid "Colour treatment on %s: %s grayscale shapes took palette colours in paint order, %s locked stayed grayscale."
+msgstr ""
+
+msgid "Colour treatment on %s: %s grayscale shapes took palette colours in paint order."
+msgstr ""
+
+msgid "Fill in the replacement variables: %s values substituted."
+msgstr ""
+
+msgid "Load animation frame %s onto the canvas for editing."
+msgstr ""
+
+msgid "Replace animation frame %s with the canvas as it is now."
+msgstr ""
+
+msgid "%s changed"
+msgstr ""
+
+msgid "%s changed, %s locked stayed the same"
+msgstr ""
+
+msgid "layer \"%s\""
+msgstr ""
+
+msgid "the %s depth"
+msgstr ""
+
+msgid "%s: %s"
+msgstr ""
+
+msgid ""
+"\n"
+"Final state: %s layer%s, %s shape%s, canvas %s by %s pixels, background %s (%s).\n"
+msgstr ""
+
+msgid "Layer \"%s\"%s: %s shape%s.\n"
+msgstr ""
+
+msgid "no dominant wavelength (purple family); complementary wavelength %s nanometres"
+msgstr ""
+
+msgid "dominant wavelength %s nanometres, excitation purity %s percent"
+msgstr ""
+
+msgid "excellent contrast, readable at any text size"
+msgstr ""
+
+msgid "good contrast, readable as normal text"
+msgstr ""
+
+msgid "fair contrast, readable only as large text"
+msgstr ""
+
+msgid "poor contrast, hard to read at any size"
+msgstr ""
+
+msgid "easy to read"
+msgstr ""
+
+msgid "hard to read"
+msgstr ""
+
+msgid "unreadable"
+msgstr ""
+
+msgid "This design has no text elements to check."
+msgstr ""
+
+msgid "%s. \"%s\" in %s: contrast %s to 1 against the background, %s.\n"
+msgstr ""
+
+msgid "Hex red first digit"
+msgstr ""
+
+msgid "Hex red second digit"
+msgstr ""
+
+msgid "Hex green first digit"
+msgstr ""
+
+msgid "Hex green second digit"
+msgstr ""
+
+msgid "Hex blue first digit"
+msgstr ""
+
+msgid "Hex blue second digit"
+msgstr ""
+
+msgid "HSL saturation"
+msgstr ""
+
+msgid "HSL lightness"
+msgstr ""
+
+msgid "HSV saturation"
+msgstr ""
+
+msgid "HSV value"
+msgstr ""
+
+msgid "CMYK cyan"
+msgstr ""
+
+msgid "CMYK magenta"
+msgstr ""
+
+msgid "CMYK yellow"
+msgstr ""
+
+msgid "CMYK black"
+msgstr ""
+
+msgid "XYZ x"
+msgstr ""
+
+msgid "XYZ y"
+msgstr ""
+
+msgid "XYZ z"
+msgstr ""
+
+msgid "xyY x"
+msgstr ""
+
+msgid "xyY y"
+msgstr ""
+
+msgid "xyY luminance"
+msgstr ""
+
+msgid "Lab a"
+msgstr ""
+
+msgid "Lab b"
+msgstr ""
+
+msgid "LCH chroma"
+msgstr ""
+
+msgid "LCH hue"
+msgstr ""
+
+msgid "LUV u"
+msgstr ""
+
+msgid "LUV v"
+msgstr ""
+
+msgid "Hunter Lab a"
+msgstr ""
+
+msgid "Hunter Lab b"
+msgstr ""
+
+msgid "Decimal red byte"
+msgstr ""
+
+msgid "Decimal green byte"
+msgstr ""
+
+msgid "Decimal blue byte"
+msgstr ""
+
+msgid "Binary is a readout, not an editing system: it writes the color out as bits, and bits are not values you can slide. Choose another color format to edit its channels."
+msgstr ""
+
+msgid "RGB red"
+msgstr ""
+
+msgid "RGB green"
+msgstr ""
+
+msgid "RGB blue"
+msgstr ""
+
+msgid "Web safe red"
+msgstr ""
+
+msgid "Web safe green"
+msgstr ""
+
+msgid "Web safe blue"
+msgstr ""
+
+msgid "HSL hue"
+msgstr ""
+
+msgid "HSV hue"
+msgstr ""
+
+msgid "Lab lightness"
+msgstr ""
+
+msgid "LCH lightness"
+msgstr ""
+
+msgid "LUV lightness"
+msgstr ""
+
+msgid "Hunter Lab lightness"
+msgstr ""
+
+msgid "a writing project (mostly typing)"
+msgstr ""
+
+msgid "an image project (cosmetic work on a picture)"
+msgstr ""
+
+msgid "creating an image (shapes and colours)"
+msgstr ""
+
+msgid "a mixed project (words and pictures together)"
+msgstr ""
+
+msgid "an accessibility review"
+msgstr ""
+
+msgid "a conversion (one form into another)"
+msgstr ""
+
+msgid "What will the writing be?"
+msgstr ""
+
+msgid "A document or letter"
+msgstr ""
+
+msgid "A sign or label"
+msgstr ""
+
+msgid "Words inside a picture"
+msgstr ""
+
+msgid "How will it be read?"
+msgstr ""
+
+msgid "On screen"
+msgstr ""
+
+msgid "In print"
+msgstr ""
+
+msgid "Both on screen and in print"
+msgstr ""
+
+msgid "What is the picture of?"
+msgstr ""
+
+msgid "A scene or place"
+msgstr ""
+
+msgid "An object"
+msgstr ""
+
+msgid "A person or character"
+msgstr ""
+
+msgid "A pattern or decoration"
+msgstr ""
+
+msgid "What should stand out most?"
+msgstr ""
+
+msgid "The foreground"
+msgstr ""
+
+msgid "The colours"
+msgstr ""
+
+msgid "The shapes themselves"
+msgstr ""
+
+msgid "What are you improving?"
+msgstr ""
+
+msgid "A photo or picture"
+msgstr ""
+
+msgid "A palette or colour scheme"
+msgstr ""
+
+msgid "A design made here"
+msgstr ""
+
+msgid "What matters most?"
+msgstr ""
+
+msgid "The contrast"
+msgstr ""
+
+msgid "The balance of light and dark"
+msgstr ""
+
+msgid "How will it be presented?"
+msgstr ""
+
+msgid "As a picture"
+msgstr ""
+
+msgid "As a document"
+msgstr ""
+
+msgid "As a web page"
+msgstr ""
+
+msgid "As slides"
+msgstr ""
+
+msgid "How will people use it?"
+msgstr ""
+
+msgid "Just look at it or read it"
+msgstr ""
+
+msgid "Hear it described"
+msgstr ""
+
+msgid "Feel it (tactile)"
+msgstr ""
+
+msgid "What are you reviewing?"
+msgstr ""
+
+msgid "An imported design"
+msgstr ""
+
+msgid "A picture"
+msgstr ""
+
+msgid "Who is it for?"
+msgstr ""
+
+msgid "Blind readers"
+msgstr ""
+
+msgid "Low-vision readers"
+msgstr ""
+
+msgid "Everyone"
+msgstr ""
+
+msgid "What are you converting from?"
+msgstr ""
+
+msgid "A picture file"
+msgstr ""
+
+msgid "A web page"
+msgstr ""
+
+msgid "Another design"
+msgstr ""
+
+msgid "What should it become?"
+msgstr ""
+
+msgid "A tactile design"
+msgstr ""
+
+msgid "A described design (words)"
+msgstr ""
+
+msgid "Goal match %s percent. Creation %s percent."
+msgstr ""
+
+msgid ""
+"Goal: %s.\n"
+"Goal match: %s percent of the settled criteria the design meets.\n"
+"\t\t\t Creation: %s percent of all criteria, open answers counted as not yet.\n"
+msgstr ""
+
+msgid "%s %s.\n"
+msgstr ""
+
+msgid "%s No fixed answer — left open.\n"
+msgstr ""
+
+msgid "Suggested improvements:\n"
+msgstr ""
+
+msgid "%s: %s."
+msgstr ""
+
+msgid "Met: %s."
+msgstr ""
+
+msgid "Open: %s — that answer has no fixed answer yet."
+msgstr ""
+
+msgid "the design has at least one text element"
+msgstr ""
+
+msgid "Add a text element: Design, Add, Text."
+msgstr ""
+
+msgid "every text element is readable against the background (none unreadable)"
+msgstr ""
+
+msgid "Raise the contrast of the unreadable words: Color, Text Readability names them."
+msgstr ""
+
+msgid "you have said what the writing will be"
+msgstr ""
+
+msgid "the design has at least one shape"
+msgstr ""
+
+msgid "Add a shape: Design, Add offers rectangles, ellipses, strokes and symbols."
+msgstr ""
+
+msgid "the design has a background (a chosen background colour, or a layer with the background depth role)"
+msgstr ""
+
+msgid "Set a background colour from the palette, or give a layer the background depth role in Design, Layers."
+msgstr ""
+
+msgid "you have said what the picture is of"
+msgstr ""
+
+msgid "the project has an image element, or at least two palette colours to work between"
+msgstr ""
+
+msgid "Bring a picture in (File, Import, Open Image) or add a second palette colour."
+msgstr ""
+
+msgid "you have said what you are improving"
+msgstr ""
+
+msgid "you have said how it will be presented"
+msgstr ""
+
+msgid "the design has at least one element"
+msgstr ""
+
+msgid "Add the first element: Design, Add."
+msgstr ""
+
+msgid "the design has at least one element to review"
+msgstr ""
+
+msgid "Bring in or draw the design to review: File, Import, or Design, Add."
+msgstr ""
+
+msgid "no text element is unreadable against the background"
+msgstr ""
+
+msgid "at least one element stands out from the background (contrast 3 to 1 or more)"
+msgstr ""
+
+msgid "Give one element a colour at least 3 to 1 against the background."
+msgstr ""
+
+msgid "you have said what you are reviewing"
+msgstr ""
+
+msgid "the design has at least one element (something arrived to convert)"
+msgstr ""
+
+msgid "Bring the source in: File, Import."
+msgstr ""
+
+msgid "the project has at least one palette colour"
+msgstr ""
+
+msgid "Add a colour by hex, or load the starter colours."
+msgstr ""
+
+msgid "you have said what it should become"
+msgstr ""
+
+msgid "There are no words in the design yet, so there is nothing for a reader to recognize.\n"
+msgstr ""
+
+msgid "Some words would be hard to recognize: %s of %s text elements sit under 3 to 1 contrast against the background.\n"
+msgstr ""
+
+msgid "The words are recognizable; %s of %s read best at large sizes (between 3 and 4.5 to 1 contrast), the rest stand out clearly.\n"
+msgstr ""
+
+msgid "Every text element stands out clearly (4.5 to 1 contrast or more): a reader would recognize the words at once.\n"
+msgstr ""
+
+msgid "The design is empty: there is nothing here to recognize or review yet.\n"
+msgstr ""
+
+msgid "%s of %s elements stand out from the background at 3 to 1 contrast or more.\n"
+msgstr ""
+
+msgid "There are no text elements, so word recognition has nothing to check.\n"
+msgstr ""
+
+msgid "Every text element is readable against the background (3 to 1 or more).\n"
+msgstr ""
+
+msgid "%s of %s text elements are unreadable against the background (under 3 to 1).\n"
+msgstr ""
+
+msgid "The canvas is empty: there is nothing to recognize yet.\n"
+msgstr ""
+
+msgid "Only %s element%s so far: a viewer would recognize the pieces, but they do not yet add up to a whole picture.\n"
+msgstr ""
+
+msgid "%s elements: enough pieces on the canvas to form a recognizable whole.\n"
+msgstr ""
+
+msgid "No element reaches 3 to 1 contrast against the background: the picture would read as a wash of similar tones.\n"
+msgstr ""
+
+msgid "Every element stands out from the background at 3 to 1 or more.\n"
+msgstr ""
+
+msgid "%s of %s elements stand out from the background at 3 to 1 or more; the rest sit close to it in tone.\n"
+msgstr ""
+
+msgid "Layers carry depth roles, which give a viewer near and far to read: the picture has structure.\n"
+msgstr ""
+
+msgid "No layer carries a depth role: the picture reads flat — fine for a pattern or a chart, harder for a scene.\n"
+msgstr ""
+
+msgid "Its caption: \"%s\".\n"
+msgstr ""
+
+msgid "It is element %s of %s on layer \"%s\", %s by %s pixels at %s, %s.\n"
+msgstr ""
+
+msgid "It is turned %s degrees.\n"
+msgstr ""
+
+msgid "Its corners are %s percent rounded (0 is sharp, 50 is fully rounded).\n"
+msgstr ""
+
+msgid "It is drawn with a %s pixel brush%s."
+msgstr ""
+
+msgid "The words are set in %s at %s points.\n"
+msgstr ""
+
+msgid "The picture comes from the file %s.\n"
+msgstr ""
+
+msgid "It paints %s percent opaque, so what is beneath it shows through.\n"
+msgstr ""
+
+msgid "Layer \"%s\" is layer %s of %s%s.\n"
+msgstr ""
+
+msgid ", the %s of the design"
+msgstr ""
+
+msgid "The layer is shown, so every export includes this element.\n"
+msgstr ""
+
+msgid "The layer is hidden, so the exports leave this element out until the layer is shown.\n"
+msgstr ""
+
+msgid "The design is a still picture; it has no animation frames.\n"
+msgstr ""
+
+msgid "It appears in %s of the animation's %s %s (frames are snapshots: a frame counts when its copy of this layer holds the same element in the same place).\n"
+msgstr ""
+
+msgid "It is LOCKED: the layer-wide and depth-wide color adjustments skip it, and bulk changes count it as stayed-the-same. Direct edits to it alone — move, resize, recolor, rename — still work.\n"
+msgstr ""
+
+msgid "It is dynamic (not locked): a color adjustment aimed at layer \"%s\" changes its color along with the layer's other unlocked elements"
+msgstr ""
+
+msgid ", and an adjustment aimed at the %s depth reaches it the same way"
+msgstr ""
+
+msgid "Left alone, it stays exactly as it is: nothing in Blind Designer changes an element by itself.\n"
+msgstr ""
+
+msgid "Layer %s of %s: \"%s\", %s element%s.\n"
+msgstr ""
+
+msgid "It holds %s.\n"
+msgstr ""
+
+msgid "It is the only layer; everything paints on it.\n"
+msgstr ""
+
+msgid "It paints first: everything else stands on it.\n"
+msgstr ""
+
+msgid "It paints last: nothing covers it.\n"
+msgstr ""
+
+msgid "It paints over layer \"%s\" and under layer \"%s\".\n"
+msgstr ""
+
+msgid "It has no depth role, so the depth-wide adjustments do not reach it.\n"
+msgstr ""
+
+msgid "It is the %s of the design: an adjustment aimed at the %s depth changes this layer's unlocked elements along with every other %s layer's.\n"
+msgstr ""
+
+msgid "%s of its elements are locked: bulk color changes skip them and count them as stayed-the-same.\n"
+msgstr ""
+
+msgid "It is shown, so its elements are in every export.\n"
+msgstr ""
+
+msgid "It is hidden, so its elements are left out of every export until it is shown.\n"
+msgstr ""
+
+msgid "Left alone, it stays exactly as it is: hiding, renaming, a depth role or a bulk color change are the things that can touch a whole layer, and each one is a step you take.\n"
+msgstr ""
+
+msgid "It came from %s.\n"
+msgstr ""
+
+msgid "It covered %s percent of the image it was extracted from.\n"
+msgstr ""
+
+msgid "No element uses it yet, and it is not the background.\n"
+msgstr ""
+
+msgid "%s element%s use%s it:\n"
+msgstr ""
+
+msgid "  and %s more.\n"
+msgstr ""
+
+msgid "It is the design's background color.\n"
+msgstr ""
+
+msgid "Left alone, it stays in the palette. Removing a palette color never recolors an element: elements keep their own colors, and the palette is a working set you pick from.\n"
+msgstr ""
+
+msgid "hex"
+msgstr ""
+
+msgid "RGB"
+msgstr ""
+
+msgid "HSL"
+msgstr ""
+
+msgid "HSV"
+msgstr ""
+
+msgid "CMYK"
+msgstr ""
+
+msgid "CIE XYZ"
+msgstr ""
+
+msgid "xyY"
+msgstr ""
+
+msgid "CIE Lab"
+msgstr ""
+
+msgid "CIE LCH"
+msgstr ""
+
+msgid "CIE LUV"
+msgstr ""
+
+msgid "Hunter Lab"
+msgstr ""
+
+msgid "decimal"
+msgstr ""
+
+msgid "web safe"
+msgstr ""
+
+msgid "binary"
+msgstr ""
+
+msgid "rgb(%s, %s, %s)"
+msgstr ""
+
+msgid "hsl(%s, %s%, %s%)"
+msgstr ""
+
+msgid "hsv(%s, %s%, %s%)"
+msgstr ""
+
+msgid "cmyk(%s%, %s%, %s%, %s%)"
+msgstr ""
+
+msgid "xyz(%s, %s, %s)"
+msgstr ""
+
+msgid "xyY(%s, %s, %s)"
+msgstr ""
+
+msgid "lab(%s, %s, %s)"
+msgstr ""
+
+msgid "lch(%s, %s, %s)"
+msgstr ""
+
+msgid "luv(%s, %s, %s)"
+msgstr ""
+
+msgid "hunter lab(%s, %s, %s)"
+msgstr ""
+
+msgid "decimal %s"
+msgstr ""
+
+msgid "web safe %s"
+msgstr ""
+
+msgid "binary %s"
+msgstr ""
+
+msgid "red"
+msgstr ""
+
+msgid "orange"
+msgstr ""
+
+msgid "yellow"
+msgstr ""
+
+msgid "yellow-green"
+msgstr ""
+
+msgid "green"
+msgstr ""
+
+msgid "teal"
+msgstr ""
+
+msgid "blue"
+msgstr ""
+
+msgid "purple"
+msgstr ""
+
+msgid "magenta"
+msgstr ""
+
+msgid "near-black"
+msgstr ""
+
+msgid "very dark"
+msgstr ""
+
+msgid "dark"
+msgstr ""
+
+msgid "medium"
+msgstr ""
+
+msgid "light"
+msgstr ""
+
+msgid "very light"
+msgstr ""
+
+msgid "near-white"
+msgstr ""
+
+msgid "moderate"
+msgstr ""
+
+msgid "electric"
+msgstr ""
+
+msgid "%s gray (%s), lightness %s percent"
+msgstr ""
+
+msgid "%s %s %s (%s), lightness %s percent, chroma %s, hue %s degrees"
+msgstr ""
+
+msgid "black"
+msgstr ""
+
+msgid "white"
+msgstr ""
+
+msgid "very dark gray"
+msgstr ""
+
+msgid "dark gray"
+msgstr ""
+
+msgid "medium gray"
+msgstr ""
+
+msgid "light gray"
+msgstr ""
+
+msgid "very light gray"
+msgstr ""
+
+msgid "%s %s"
+msgstr ""
+
+msgid "the color Blind Designer starts with"
+msgstr ""
+
+msgid "typed in by hand"
+msgstr ""
+
+msgid "extracted from image %s"
+msgstr ""
+
+msgid "generated as %s"
+msgstr ""
+
+msgid "imported from %s"
+msgstr ""
+
+msgid "the grayscale start ramp"
+msgstr ""
+
+msgid ", covers %s percent of the image"
+msgstr ""
+
+msgid "Text in this design"
+msgstr ""
+
+msgid "(This design has no text elements.)"
+msgstr ""
+
+msgid "(... and %s more lines in the design.)"
+msgstr ""
+
+msgid "Draw"
+msgstr ""
+
+msgid "Slide"
+msgstr ""
+
+msgid "Type"
+msgstr ""
+
+msgid "no elements"
+msgstr ""
+
+msgid "rectangles"
+msgstr ""
+
+msgid "ellipses"
+msgstr ""
+
+msgid "strokes"
+msgstr ""
+
+msgid "text elements"
+msgstr ""
+
+msgid "image elements"
+msgstr ""
+
+msgid "no animation frames"
+msgstr ""
+
+msgid "animation frame"
+msgstr ""
+
+msgid "animation frames"
+msgstr ""
+
+msgid "layers"
+msgstr ""
+
+msgid "element"
+msgstr ""
+
+msgid "elements"
+msgstr ""
+
+msgid "palette color"
+msgstr ""
+
+msgid "palette colors"
+msgstr ""
+
+msgid ""
+"Project statistics\n"
+"Canvas: %s by %s pixels\n"
+"Layers: %s\n"
+"Elements: %s (%s)\n"
+"Palette colors: %s\n"
+"Animation frames: %s"
+msgstr ""
+
+msgid "unterminated string in line: %s"
+msgstr ""
+
+msgid "dangling escape in line: %s"
+msgstr ""
+
+msgid "Palette color: %s"
+msgstr ""
+
+msgid "starter %s %s"
+msgstr ""
+
+msgid "Starter color: %s"
+msgstr ""
+
+msgid "Element: %s: %s"
+msgstr ""
+
+msgid "Symbol: %s"
+msgstr ""
+
+msgid "%s template"
+msgstr ""
+
+msgid "Template: %s"
+msgstr ""
+
+msgid "%s pattern"
+msgstr ""
+
+msgid "Pattern: %s"
+msgstr ""
+
+msgid "1 pixel"
+msgstr ""
+
+msgid "%s of 255"
+msgstr ""
+
+msgid "one slider per channel of the current color format"
+msgstr ""
+
+msgid "sharp corners"
+msgstr ""
+
+msgid "fully rounded"
+msgstr ""
+
+msgid "%s milliseconds"
+msgstr ""
+
+msgid "1 color"
+msgstr ""
+
+msgid "%s colors"
+msgstr ""
+
+msgid "%s columns"
+msgstr ""
+
+msgid "%s rows"
+msgstr ""
+
+msgid "silent"
+msgstr ""
+
+msgid "full volume"
+msgstr ""
+
+msgid "no darkening"
+msgstr ""
+
+msgid "%s percent darker"
+msgstr ""
+
+msgid "no lightening"
+msgstr ""
+
+msgid "%s percent lighter"
+msgstr ""
+
+msgid "no softening"
+msgstr ""
+
+msgid "%s percent softer"
+msgstr ""
+
+msgid "no change"
+msgstr ""
+
+msgid "%s percent more vivid"
+msgstr ""
+
+msgid "no shift"
+msgstr ""
+
+msgid "neutral"
+msgstr ""
+
+msgid "%s percent warmer"
+msgstr ""
+
+msgid "%s percent cooler"
+msgstr ""
+
+msgid "%s percent more vibrant"
+msgstr ""
+
+msgid "%s percent duller"
+msgstr ""
+
+msgid "%s percent brighter"
+msgstr ""
+
+msgid "%s percent clearer"
+msgstr ""
+
+msgid "%s percent flatter"
+msgstr ""
+
+msgid "no fog"
+msgstr ""
+
+msgid "%s percent foggier"
+msgstr ""
+
+msgid "%s percent less fog"
+msgstr ""
+
+msgid "%s percent harder"
+msgstr ""
+
+msgid "fully opaque"
+msgstr ""
+
+msgid "fully transparent"
+msgstr ""
+
+msgid "Brush width"
+msgstr ""
+
+msgid "Color red"
+msgstr ""
+
+msgid "Color green"
+msgstr ""
+
+msgid "Color blue"
+msgstr ""
+
+msgid "Color channels (always on the Sliders tab)"
+msgstr ""
+
+msgid "Transparency"
+msgstr ""
+
+msgid "Element transparency"
+msgstr ""
+
+msgid "Element scale"
+msgstr ""
+
+msgid "Stroke width"
+msgstr ""
+
+msgid "Extract colors count"
+msgstr ""
+
+msgid "Tactile grid columns"
+msgstr ""
+
+msgid "Tactile grid rows"
+msgstr ""
+
+msgid "Sound cue volume"
+msgstr ""
+
+msgid "Shade"
+msgstr ""
+
+msgid "Tint"
+msgstr ""
+
+msgid "Tone"
+msgstr ""
+
+msgid "Chroma"
+msgstr ""
+
+msgid "Undertone"
+msgstr ""
+
+msgid "Temperature"
+msgstr ""
+
+msgid "Vibrancy"
+msgstr ""
+
+msgid "Brightness"
+msgstr ""
+
+msgid "Clarity"
+msgstr ""
+
+msgid "Fogginess"
+msgstr ""
+
+msgid "Hardness"
+msgstr ""
+
+msgid "%s %s. Everything else unchanged."
+msgstr ""
+
+msgid "Current color"
+msgstr ""
+
+msgid "Selected element"
+msgstr ""
+
+msgid "Current layer"
+msgstr ""
+
+msgid "Background layers"
+msgstr ""
+
+msgid "Midground layers"
+msgstr ""
+
+msgid "Foreground layers"
+msgstr ""
+
+msgid "no adjustment"
+msgstr ""
+
+msgid "shaded %s percent"
+msgstr ""
+
+msgid "tinted %s percent"
+msgstr ""
+
+msgid "toned down %s percent"
+msgstr ""
+
+msgid "chroma raised %s percent"
+msgstr ""
+
+msgid "undertone shifted %s degrees"
+msgstr ""
+
+msgid "warmed %s percent"
+msgstr ""
+
+msgid "cooled %s percent"
+msgstr ""
+
+msgid "made %s percent more vibrant"
+msgstr ""
+
+msgid "dulled %s percent"
+msgstr ""
+
+msgid "brightened %s percent"
+msgstr ""
+
+msgid "darkened %s percent"
+msgstr ""
+
+msgid "clarity raised %s percent"
+msgstr ""
+
+msgid "contrast flattened %s percent"
+msgstr ""
+
+msgid "fogged %s percent"
+msgstr ""
+
+msgid "defogged %s percent"
+msgstr ""
+
+msgid "hardened %s percent"
+msgstr ""
+
+msgid "softened %s percent"
+msgstr ""
+
+msgid "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"%s\" height=\"%s\" viewBox=\"0 0 %s %s\" role=\"img\" aria-label=\"Raised-line drawing, %s by %s pixels\">\n"
+msgstr ""
+
+msgid "<title>Raised-line drawing, %s by %s pixels, background %s</title>\n"
+msgstr ""
+
+msgid "<rect x=\"0\" y=\"0\" width=\"%s\" height=\"%s\" fill=\"white\" stroke=\"black\" stroke-width=\"2\"/>\n"
+msgstr ""
+
+msgid " stroke-dasharray=\"%s\""
+msgstr ""
+
+msgid "<g data-layer=\"%s\" fill=\"none\" stroke=\"black\"%s>\n"
+msgstr ""
+
+msgid "<rect x=\"%s\" y=\"%s\" width=\"%s\" height=\"%s\" stroke-width=\"2\"><title>%s</title></rect>\n"
+msgstr ""
+
+msgid "<ellipse cx=\"%s\" cy=\"%s\" rx=\"%s\" ry=\"%s\" stroke-width=\"2\"><title>%s</title></ellipse>\n"
+msgstr ""
+
+msgid "<circle cx=\"%s\" cy=\"%s\" r=\"%s\" stroke-width=\"2\"><title>%s</title></circle>\n"
+msgstr ""
+
+msgid "<polyline points=\"%s\" stroke-width=\"%s\"><title>%s</title></polyline>\n"
+msgstr ""
+
+msgid "<text x=\"%s\" y=\"%s\" font-size=\"%s\" fill=\"black\" stroke=\"none\">%s</text>\n"
+msgstr ""
+
+msgid ""
+"<line x1=\"%s\" y1=\"%s\" x2=\"%s\" y2=\"%s\" stroke-width=\"1\"/>\n"
+"<line x1=\"%s\" y1=\"%s\" x2=\"%s\" y2=\"%s\" stroke-width=\"1\"/>\n"
+msgstr ""
+
+msgid ""
+"Tactile sheet for a design %s by %s pixels, background %s (%s).\n"
+"\t\t\t %s elements. The walk goes depth by depth — the background \t\t\t first, as the base — and inside a layer, top to bottom, left to \t\t\t right — the order a hand reads.\n"
+msgstr ""
+
+msgid ""
+"\n"
+"Layer \"%s\" is hidden; it is not part of the tactile design.\n"
+msgstr ""
+
+msgid ", the background — the base the rest stands on"
+msgstr ""
+
+msgid ", the %s"
+msgstr ""
+
+msgid ""
+"\n"
+"Layer \"%s\"%s (%s lines in the raised-line version), %s elements:\n"
+msgstr ""
+
+msgid "%s. %s. Caption: %s. Braille label: %s\n"
+msgstr ""
+
+msgid "Braille labels (Grade 1, uncontracted)\n"
+msgstr ""
+
+msgid "No elements to label.\n"
+msgstr ""
+
+msgid "The %s area (%s to %s across, %s to %s down) holds %s element%s.\n"
+msgstr ""
+
+msgid " (partly in this area)"
+msgstr ""
+
+msgid "box at %s, %s"
+msgstr ""
+
+msgid "Comparing %s with %s.\n"
+msgstr ""
+
+msgid "Same size: %s by %s pixels.\n"
+msgstr ""
+
+msgid "Different sizes: %s is %s by %s pixels; %s is %s by %s pixels.\n"
+msgstr ""
+
+msgid "They share %s palette color%s: %s.\n"
+msgstr ""
+
+msgid "Only in %s: %s.\n"
+msgstr ""
+
+msgid "About the same brightness overall (both %s).\n"
+msgstr ""
+
+msgid "%s is brighter overall (%s against %s).\n"
+msgstr ""
+
+msgid "%s is sharper and clearer; %s is blurrier.\n"
+msgstr ""
+
+msgid ""
+"Tactile grid of %s: %s columns by %s rows. Each cell is the average shade of that part of the picture.\n"
+"\t\t\t Shade scale, lightest to darkest: %s\n"
+"\n"
+msgstr ""
+
+msgid "column %s %s"
+msgstr ""
+
+msgid "columns %s to %s %s"
+msgstr ""
+
+msgid "Row %s: %s.\n"
+msgstr ""
+
+msgid "Darkest part: %s. Brightest part: %s.\n"
+msgstr ""
+
+msgid "solid"
+msgstr ""
+
+msgid "long dashes"
+msgstr ""
+
+msgid "short dashes"
+msgstr ""
+
+msgid "dots"
+msgstr ""
+
+msgid "dash and dot"
+msgstr ""
+
+msgid "long and short dashes"
+msgstr ""
+
+msgid "Birthday card"
+msgstr ""
+
+msgid "Simple house"
+msgstr ""
+
+msgid "Face"
+msgstr ""
+
+msgid "Chart"
+msgstr ""
+
+msgid "Portrait"
+msgstr ""
+
+msgid "Landscape"
+msgstr ""
+
+msgid "Checkerboard"
+msgstr ""
+
+msgid "Stripes"
+msgstr ""
+
+msgid "Dots"
+msgstr ""
+
+msgid "Legibility (rough guide): %s letters at %s point; contrast %s to 1 against the background, %s."
+msgstr ""
+
+msgid ""
+"\n"
+"This design has no text elements to practise with.\n"
+msgstr ""
+
+msgid "All depths"
+msgstr ""
+
+msgid "Background only"
+msgstr ""
+
+msgid "Midground only"
+msgstr ""
+
+msgid "Foreground only"
+msgstr ""
+
+msgid "all depths"
+msgstr ""
+
+msgid "the %s only"
+msgstr ""
+
+msgid ""
+"Viewability from %s degrees, %s.\n"
+"\t\t\t Judged by each element's box and rotation: elements count as their \t\t\t boxes, so curves, holes and see-through parts are not taken into \t\t\t account.\n"
+msgstr ""
+
+msgid "There are no elements on visible layers to check.\n"
+msgstr ""
+
+msgid "no depth role"
+msgstr ""
+
+msgid "- %s (layer \"%s\", %s)"
+msgstr ""
+
+msgid "%s: outside the chosen depth.\n"
+msgstr ""
+
+msgid "%s: turned away at %s degrees.\n"
+msgstr ""
+
+msgid "%s: hidden behind %s.\n"
+msgstr ""
+
+msgid "%s: partly hidden behind %s (about %s percent covered).\n"
+msgstr ""
+
+msgid "%s: viewable.\n"
+msgstr ""
+
+msgid "%s elements: %s viewable, %s hidden or partly hidden, %s turned away, %s outside the chosen depth.\n"
+msgstr ""
+
+msgid "%s on layer \"%s\".\n"
+msgstr ""
+
+msgid "%sLayer \"%s\" is hidden, so this element does not paint: nothing is stacked over or under it until the layer is shown.\n"
+msgstr ""
+
+msgid "%s (covers about %s percent of it)"
+msgstr ""
+
+msgid "%s (it covers about %s percent of that)"
+msgstr ""
+
+msgid "Painted over it: nothing — it is on top of everything it touches.\n"
+msgstr ""
+
+msgid "Painted over it: %s.\n"
+msgstr ""
+
+msgid "Painted under it: nothing — beneath it is the design background itself.\n"
+msgstr ""
+
+msgid "Painted under it: %s.\n"
+msgstr ""
+
+msgid "It is element %s of %s in the painting order.\n"
+msgstr ""

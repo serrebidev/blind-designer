@@ -18,6 +18,8 @@
 //! description. An empty query matches everything: the dialog
 //! opens as a browser, not a blank stare.
 
+use patois::t;
+
 use crate::palette::starter_palette;
 use crate::project::Project;
 use crate::symbols::SYMBOL_NAMES;
@@ -34,7 +36,11 @@ pub enum CatalogHit {
 	StarterColor { color: Srgb, label: String },
 	/// An element already in the design, by (layer, shape):
 	/// inserting it copies it to the cursor.
-	Element { layer: usize, index: usize, label: String },
+	Element {
+		layer: usize,
+		index: usize,
+		label: String,
+	},
 	/// A symbol from the library, by name.
 	Symbol { name: &'static str, label: String },
 	/// A whole-design template, by name.
@@ -79,17 +85,27 @@ pub fn search_catalog(project: &Project, query: &str) -> Vec<CatalogHit> {
 		if hits(&q, &text) {
 			out.push(CatalogHit::PaletteColor {
 				index: i,
-				label: format!("Palette color: {}", pc.spoken(ColorFormat::Hex)),
+				label: t("Palette color: %s").replacen(
+					"%s",
+					&(pc.spoken(ColorFormat::Hex)).to_string(),
+					1,
+				),
 			});
 		}
 	}
 	// The starter colors, by the same words.
 	for pc in starter_palette() {
-		let text = format!("starter {} {}", describe(pc.color), pc.color.to_hex());
+		let text = t("starter %s %s")
+			.replacen("%s", &(describe(pc.color)).to_string(), 1)
+			.replacen("%s", &(pc.color.to_hex()).to_string(), 1);
 		if hits(&q, &text) {
 			out.push(CatalogHit::StarterColor {
 				color: pc.color,
-				label: format!("Starter color: {}", pc.spoken(ColorFormat::Hex)),
+				label: t("Starter color: %s").replacen(
+					"%s",
+					&(pc.spoken(ColorFormat::Hex)).to_string(),
+					1,
+				),
 			});
 		}
 	}
@@ -106,36 +122,42 @@ pub fn search_catalog(project: &Project, query: &str) -> Vec<CatalogHit> {
 				layer.name
 			);
 			if hits(&q, &text) {
-				let mut label = format!("Element: {}: {}", layer.name, plain);
+				let mut label = t("Element: %s: %s")
+					.replacen("%s", &(layer.name).to_string(), 1)
+					.replacen("%s", &(plain).to_string(), 1);
 				if let Some(c) = &shape.caption {
-					label.push_str(&format!(" Caption: {c}"));
+					label.push_str(&t(" Caption: %s").replacen("%s", &(c).to_string(), 1));
 				}
-				out.push(CatalogHit::Element { layer: li, index: si, label });
+				out.push(CatalogHit::Element {
+					layer: li,
+					index: si,
+					label,
+				});
 			}
 		}
 	}
 	// Symbols, templates, patterns: by name.
 	for name in SYMBOL_NAMES {
-		if hits(&q, &format!("{name} symbol")) {
+		if hits(&q, &t("%s symbol").replacen("%s", (name).as_ref(), 1)) {
 			out.push(CatalogHit::Symbol {
 				name,
-				label: format!("Symbol: {name}"),
+				label: t("Symbol: %s").replacen("%s", (name).as_ref(), 1),
 			});
 		}
 	}
 	for name in TEMPLATE_NAMES {
-		if hits(&q, &format!("{name} template")) {
+		if hits(&q, &t("%s template").replacen("%s", (name).as_ref(), 1)) {
 			out.push(CatalogHit::Template {
 				name,
-				label: format!("Template: {name}"),
+				label: t("Template: %s").replacen("%s", (name).as_ref(), 1),
 			});
 		}
 	}
 	for name in PATTERN_NAMES {
-		if hits(&q, &format!("{name} pattern")) {
+		if hits(&q, &t("%s pattern").replacen("%s", (name).as_ref(), 1)) {
 			out.push(CatalogHit::Pattern {
 				name,
-				label: format!("Pattern: {name}"),
+				label: t("Pattern: %s").replacen("%s", (name).as_ref(), 1),
 			});
 		}
 	}
@@ -156,7 +178,17 @@ mod tests {
 		let mut lamp = Shape::new(ShapeKind::Ellipse, 100, 100, 40, 60, Srgb::new(255, 205, 0));
 		lamp.caption = Some("the lighthouse lamp".to_string());
 		d.add_shape(0, lamp);
-		d.add_shape(0, Shape::new(ShapeKind::Rectangle, 300, 300, 80, 80, Srgb::new(58, 124, 165)));
+		d.add_shape(
+			0,
+			Shape::new(
+				ShapeKind::Rectangle,
+				300,
+				300,
+				80,
+				80,
+				Srgb::new(58, 124, 165),
+			),
+		);
 		Project {
 			drawing: d,
 			palette: vec![PaletteColor::typed(Srgb::new(58, 124, 165))],
@@ -177,19 +209,25 @@ mod tests {
 		let first = words.split_whitespace().last().unwrap().to_lowercase();
 		let found = search_catalog(&p, &first);
 		assert!(
-			found.iter().any(|h| matches!(h, CatalogHit::PaletteColor { index: 0, .. })),
+			found
+				.iter()
+				.any(|h| matches!(h, CatalogHit::PaletteColor { index: 0, .. })),
 			"word {first:?} in {found:?}"
 		);
 		// By a hex fragment, without the # and in lower case.
 		let found = search_catalog(&p, "3a7c");
 		assert!(
-			found.iter().any(|h| matches!(h, CatalogHit::PaletteColor { index: 0, .. })),
+			found
+				.iter()
+				.any(|h| matches!(h, CatalogHit::PaletteColor { index: 0, .. })),
 			"{found:?}"
 		);
 		// The starter blue is the same color: it is found too,
 		// as a starter color, and can still be inserted.
 		assert!(
-			found.iter().any(|h| matches!(h, CatalogHit::StarterColor { .. })),
+			found
+				.iter()
+				.any(|h| matches!(h, CatalogHit::StarterColor { .. })),
 			"{found:?}"
 		);
 	}
@@ -199,13 +237,28 @@ mod tests {
 		let p = project();
 		let found = search_catalog(&p, "lighthouse");
 		assert_eq!(found.len(), 1, "{found:?}");
-		assert!(matches!(found[0], CatalogHit::Element { layer: 0, index: 0, .. }));
+		assert!(matches!(
+			found[0],
+			CatalogHit::Element {
+				layer: 0,
+				index: 0,
+				..
+			}
+		));
 		// By kind word: both shapes are found, the ellipse first.
 		let found = search_catalog(&p, "rectangle");
-		assert!(found.iter().any(|h| matches!(h, CatalogHit::Element { index: 1, .. })), "{found:?}");
+		assert!(
+			found
+				.iter()
+				.any(|h| matches!(h, CatalogHit::Element { index: 1, .. })),
+			"{found:?}"
+		);
 		let found = search_catalog(&p, "layer 1");
 		assert_eq!(
-			found.iter().filter(|h| matches!(h, CatalogHit::Element { .. })).count(),
+			found
+				.iter()
+				.filter(|h| matches!(h, CatalogHit::Element { .. }))
+				.count(),
 			2,
 			"{found:?}"
 		);
@@ -226,11 +279,17 @@ mod tests {
 		));
 		assert!(matches!(
 			search_catalog(&p, "portrait").as_slice(),
-			[CatalogHit::Template { name: "Portrait", .. }]
+			[CatalogHit::Template {
+				name: "Portrait",
+				..
+			}]
 		));
 		assert!(matches!(
 			search_catalog(&p, "checker").as_slice(),
-			[CatalogHit::Pattern { name: "Checkerboard", .. }]
+			[CatalogHit::Pattern {
+				name: "Checkerboard",
+				..
+			}]
 		));
 	}
 

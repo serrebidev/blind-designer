@@ -1,2 +1,5 @@
 /target
 /dist
+# Compiled gettext catalogs: built from po/ by patois-build, embedded
+# in the binary, never committed.
+/crates/blind-designer/locale/

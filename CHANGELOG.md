@@ -4,6 +4,31 @@ Readable release history for Blind Designer (renamed from Transversion at 0.2.0)
 section is its GitHub release note, taken from this file by the release
 workflow.
 
+## 0.20.0
+
+- Blind Designer can now be translated. Every label,
+  menu, dialog, announcement and report in the app —
+  and the color and design descriptions the core speaks —
+  is marked for translation with gettext, using Quin's
+  patois crates, the same system Paperback uses. The
+  translation template (po/blind-designer.pot, about
+  1,470 strings) is in the repository, so translators
+  can work in Poedit or any gettext tool; a finished
+  translation is compiled into the app itself, with no
+  locale folder to ship, and the app picks the language
+  that best fits the system. The stock dialogs from the
+  interface library follow the same language. Until a
+  translation exists, everything stays in English,
+  exactly as before.
+- Two checks now run in the test suite so translation
+  stays safe as the app changes: no marked string may
+  be built by joining pieces (only the first piece
+  would reach translators), and the slider names,
+  channel labels, dictionary entries and template
+  names kept in data tables are verified against the
+  template, so a renamed label cannot silently lose
+  its translation.
+
 ## 0.19.0
 
 - No more "debugging check" dialogs. The interface library

@@ -1,8 +1,20 @@
 # Changelog
 
 Readable release history for Blind Designer (renamed from Transversion at 0.2.0), newest first. Each release's
-section is its GitHub release note, taken from this file by the release
+section is its Forgejo release note, taken from this file by the release
 workflow.
+
+## 0.21.0
+
+- Blind Designer now updates itself. Help, Check for
+  Updates asks the Forgejo releases for a newer version,
+  and the app checks quietly on launch too (silence
+  means up to date). Every download is verified against
+  this release's own signing key before it installs, so
+  a tampered file never runs.
+- Releases and updates moved from GitHub to Forgejo
+  (git.serrebiradio.com/serrebi/blind-designer), with
+  the other apps.
 
 ## 0.20.0
 

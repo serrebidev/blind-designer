@@ -52,6 +52,8 @@ use wxdragon::prelude::*;
 
 // The compiled gettext catalogs from po/, baked in by patois-build,
 // plus wxWidgets' own stock-dialog translations on the same language.
+mod update;
+
 patois::embed_domain!();
 patois::embed_wx_translations!();
 
@@ -138,6 +140,7 @@ const ID_ABOUT: Id = 401;
 const ID_DICTIONARY: Id = 402;
 const ID_HELP_FILE: Id = 403;
 const ID_SOUND_CUES: Id = 404;
+const ID_CHECK_UPDATES: Id = 405;
 const ID_FORMAT_HEX: Id = 501;
 const ID_FORMAT_RGB: Id = 502;
 const ID_FORMAT_HSL: Id = 503;
@@ -274,6 +277,7 @@ const MENU_IDS: &[Id] = &[
 	ID_DICTIONARY,
 	ID_HELP_FILE,
 	ID_SOUND_CUES,
+	ID_CHECK_UPDATES,
 	ID_FORMAT_HEX,
 	ID_FORMAT_RGB,
 	ID_FORMAT_HSL,
@@ -7616,6 +7620,7 @@ fn dispatch(win: &Rc<Win>, shared: &Shared, id: Id) {
 				0,
 			);
 		}
+		ID_CHECK_UPDATES => update::check(&frame, ship_shape::ui::CheckTrigger::Manual),
 		ID_ABOUT => {
 			MessageDialog::builder(
 				&frame,
@@ -9430,6 +9435,12 @@ fn build_menus(frame: &Frame) {
 		ItemKind::Normal,
 	);
 	help.append(ID_SOUND_CUES, &t("&Sound Cues"), &t("Play a tone for each drawing change: pitch says height, stereo says left or right, length says size."), ItemKind::Check);
+	help.append(
+		ID_CHECK_UPDATES,
+		&t("&Check for Updates"),
+		&t("Check the Forgejo releases for a newer Blind Designer."),
+		ItemKind::Normal,
+	);
 	help.append_separator();
 	help.append(
 		ID_ABOUT,
@@ -9843,6 +9854,8 @@ fn main() {
 		// front. Cancelling leaves the blank project exactly as
 		// it is.
 		setup_wizard(&win, &shared, true);
+		// The launch update check: silent unless a newer release waits.
+		update::check(&frame, ship_shape::ui::CheckTrigger::Automatic);
 	});
 }
 

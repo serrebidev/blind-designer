@@ -1,7 +1,12 @@
 [workspace]
 resolver = "2"
-members = ["crates/chroma-core", "crates/blind-designer"]
+members = ["crates/chroma-core", "crates/blind-designer", "crates/xtask"]
 
 [workspace.package]
 edition = "2021"
 license = "MIT"
+
+[patch.crates-io]
+# ship-shape fork: configurable API base URL for
+# Forgejo-hosted releases (upstream: accessware/ship-shape).
+ship-shape = { git = "https://git.serrebiradio.com/serrebi/ship-shape", rev = "cff6bdb5596676723b3a0890b1b030c8edac0d28" }

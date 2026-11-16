@@ -4,6 +4,12 @@ An accessible multispectral color creator for web design, built for screen
 reader users first. Free: palette extraction costs nothing, and no color is
 ever guessed.
 
+[![Join SerrebiProjects on Telegram](https://img.shields.io/badge/Telegram-SerrebiProjects-2CA5E0?style=for-the-badge&logo=telegram&logoColor=white)](https://t.me/SerrebiProjects)
+
+**Questions, bugs, or release news?** Join the [SerrebiProjects Telegram group](https://t.me/SerrebiProjects), the fastest place to get help.
+
+More serrebi projects: [projects.serrebiradio.com](https://projects.serrebiradio.com)
+
 Colors live in OKLCH, a perceptual color space. Nothing is mixed or blended:
 complementary colors are a hue rotation of exactly 180 degrees, shades are
 lightness steps, tints are lightness steps up, tones are chroma steps down.
@@ -59,3 +65,7 @@ Silverheart.
 ## License
 
 MIT.
+
+## Credits
+
+See [CREDITS.md](CREDITS.md) for where the ideas behind this project came from, and the third-party projects it builds on.

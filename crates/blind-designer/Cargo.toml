@@ -1,6 +1,6 @@
 [package]
 name = "blind-designer"
-version = "0.21.0"
+version = "0.21.2"
 edition.workspace = true
 license.workspace = true
 
@@ -37,7 +37,7 @@ ureq = "3"
 # feature also translates wxWidgets' own stock dialog strings.
 patois = { version = "0.3", features = ["wx"] }
 # Self-updates from Forgejo releases, verified with minisign (same as BlindRadio).
-ship-shape = "0.5"
+ship-shape = "0.6"
 
 [dev-dependencies]
 patois-build = "0.1"

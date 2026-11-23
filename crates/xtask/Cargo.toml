@@ -5,16 +5,20 @@ license.workspace = true
 version = "0.1.0"
 publish = false
 
+[features]
+default = ["update-check"]
+update-check = ["dep:ship-shape", "dep:wxdragon"]
+
 [dependencies]
 minisign = "0.10"
 # The check the updater itself makes on a download.
-minisign-verify = "0.2"
+minisign-verify = "0.3"
 # update-check drives the same updater config the app uses
 # (resolved to the Forgejo fork by [patch.crates-io]).
-ship-shape = "0.5"
+ship-shape = { version = "0.6", optional = true }
 # Unused here: keeps wxdragon's features the same as the app's. ship-shape alone asks for
 # fewer, that build shares target/debug's CMake folder with the app's, and the features it
 # turns off stay off in the CMake cache: the app stops linking (wxd_PrintData_* unresolved).
 # The feature list mirrors the app's exactly, including default-features = false (wx-asserts
 # off — see the app manifest). Same comment as BlindRadio's xtask.
-wxdragon = { version = "*", default-features = false, features = ["wx-printing", "wx-tiff", "wx-jpeg", "wx-tango-icons", "wx-extra-image-formats", "wx-regex", "appindicator"] }
+wxdragon = { version = "*", optional = true, default-features = false, features = ["wx-printing", "wx-tiff", "wx-jpeg", "wx-tango-icons", "wx-extra-image-formats", "wx-regex", "appindicator"] }

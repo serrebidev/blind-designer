@@ -1,14 +1,10 @@
 name: Release (cloud)
 
-# Builds the Windows app in Actions and publishes a GitHub release with
-# the zipped executable. Dispatch with a version whose `## <version>`
-# section is already in CHANGELOG.md.
-
 on:
   workflow_dispatch:
     inputs:
-      version:
-        description: "Version to release, such as 0.1.0"
+      tag:
+        description: Existing release tag, such as v0.21.2
         required: true
         type: string
 
@@ -17,7 +13,7 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -28,99 +24,97 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7.0.1
         with:
-          ref: main
-
+          ref: ${{ inputs.tag }}
       - uses: dtolnay/rust-toolchain@stable
-
-      - name: Test
-        run: cargo test --workspace
-
-      - name: Cargo clean (free disk)
-        if: always()
-        continue-on-error: true
-        run: cargo clean
+      - uses: Swatinem/rust-cache@v2.9.3
+      - run: cargo test --locked --workspace
 
   windows:
-    name: Windows build and release
-    needs: gate
+    name: Windows package
     runs-on: windows-latest
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7.0.1
         with:
-          ref: main
-          fetch-depth: 0
-
+          ref: ${{ inputs.tag }}
       - uses: dtolnay/rust-toolchain@stable
-
-      - name: Prepare the release
-        id: prep
-        env:
-          VERSION: ${{ inputs.version }}
-          GH_TOKEN: ${{ github.token }}
-        shell: pwsh
-        run: |
-          $tag = "v$env:VERSION"
-          $existing = gh release view $tag --json isDraft 2>$null
-          if ($existing) {
-            if (($existing | ConvertFrom-Json).isDraft) {
-              Write-Host "Resuming ${tag}: tag and unpublished draft already exist."
-              "tag=$tag" >> $env:GITHUB_OUTPUT
-              exit 0
-            }
-            throw "release $tag already published; refusing to re-release"
-          }
-          if (git ls-remote --tags origin $tag) {
-            throw "tag $tag exists without a draft release; refusing"
-          }
-          $notes = @()
-          $inside = $false
-          foreach ($line in Get-Content CHANGELOG.md) {
-            if ($line -match '^## ') {
-              $inside = ($line.Trim() -eq "## $env:VERSION")
-              if (-not $inside -and $notes) { break }
-              continue
-            }
-            if ($inside) { $notes += $line }
-          }
-          $notesText = ($notes -join "`n").Trim()
-          if (-not $notesText) { throw "no ## $env:VERSION section in CHANGELOG.md" }
-          Set-Content -Path "$env:RUNNER_TEMP\notes.md" -Value $notesText -Encoding utf8
-          $toml = Get-Content crates\blind-designer\Cargo.toml -Raw
-          $toml = $toml -replace '(?m)^version = "[^"]+"', "version = `"$env:VERSION`""
-          Set-Content -Path crates\blind-designer\Cargo.toml -Value $toml -Encoding utf8 -NoNewline
-          cargo metadata --format-version 1 > $null
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add crates/blind-designer/Cargo.toml Cargo.lock
-          git commit -m "chore: release $env:VERSION"
-          git tag $tag
-          git push origin main $tag
-          gh release create $tag --draft --title "Blind Designer $env:VERSION" --notes-file "$env:RUNNER_TEMP\notes.md"
-          "tag=$tag" >> $env:GITHUB_OUTPUT
-
+      - uses: Swatinem/rust-cache@v2.9.3
       - name: Build the release executable
-        run: cargo build --release -p blind-designer
-
-      - name: Zip and upload
         env:
-          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force dist | Out-Null
-          Copy-Item target\release\blind-designer.exe dist\
-          Copy-Item README.md dist\
-          Compress-Archive -Path dist\* -DestinationPath BlindDesigner.zip
-          gh release upload "${{ steps.prep.outputs.tag }}" BlindDesigner.zip --clobber
+          $manifest = Get-Content -Raw crates/blind-designer/Cargo.toml
+          if ($env:TAG -notmatch '^v\d+\.\d+\.\d+$' -or $manifest -notmatch "(?m)^version = `"$($env:TAG.Substring(1))`"\r?$") {
+            throw "Release tag $env:TAG does not match the package version"
+          }
+          cargo build --release --locked -p blind-designer
+      - name: Archive and verify signature
+        env:
+          MINISIGN_KEY: ${{ secrets.MINISIGN_KEY }}
+          MINISIGN_PASSWORD: ${{ secrets.MINISIGN_PASSWORD }}
+        shell: pwsh
+        run: |
+          Compress-Archive -LiteralPath target/release/blind-designer.exe, README.md -DestinationPath BlindDesigner.zip
+          cargo run --locked -p xtask --no-default-features -- sign BlindDesigner.zip
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cargo run --locked -p xtask --no-default-features -- verify BlindDesigner.zip
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: BlindDesigner
+          path: |
+            BlindDesigner.zip
+            BlindDesigner.zip.minisig
+          if-no-files-found: error
+          compression-level: 0
 
+  publish:
+    name: Publish signed package on Forgejo
+    needs: [gate, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ inputs.tag }}
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          name: BlindDesigner
       - name: Publish
         env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release edit "${{ steps.prep.outputs.tag }}" --draft=false --latest
+          TAG: ${{ inputs.tag }}
+          FORGEJO_TOKEN: ${{ secrets.FORGEJO_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          api="https://git.serrebiradio.com/api/v1/repos/elshara/blind-designer"
+          auth="Authorization: token $FORGEJO_TOKEN"
+          version="${TAG#v}"
+          awk -v header="## $version" '$0 == header { inside=1; next } /^## / { if (inside) exit } inside {print}' CHANGELOG.md > notes.md
+          grep -q '[^[:space:]]' notes.md
+          test -s BlindDesigner.zip
+          test -s BlindDesigner.zip.minisig
 
-      - name: Cargo clean (free disk)
-        if: always()
-        continue-on-error: true
-        run: cargo clean
+          releases="$(curl -fsS -H "$auth" "$api/releases?limit=50")"
+          release="$(jq -c --arg tag "$TAG" '.[] | select(.tag_name == $tag)' <<< "$releases")"
+          if [[ -n "$release" ]]; then
+            jq -e '.draft == true' <<< "$release" > /dev/null
+          else
+            release="$(jq -n --arg tag "$TAG" --rawfile notes notes.md \
+              '{tag_name: $tag, name: ("Blind Designer " + $tag), body: $notes, draft: true}' |
+              curl -fsS -H "$auth" -H 'Content-Type: application/json' -d @- "$api/releases")"
+          fi
+          id="$(jq -er '.id' <<< "$release")"
+          for file in BlindDesigner.zip BlindDesigner.zip.minisig; do
+            old="$(jq -r --arg name "$file" '.assets[]? | select(.name == $name) | .id' <<< "$release")"
+            if [[ -n "$old" ]]; then
+              curl -fsS -o /dev/null -X DELETE -H "$auth" "$api/releases/$id/assets/$old"
+            fi
+            echo "Uploading $file ($(stat -c %s "$file") bytes)"
+            curl -fsS -o /dev/null -w 'Upload finished in %{time_total}s\n' \
+              -H "$auth" -F "attachment=@$file" "$api/releases/$id/assets?name=$file"
+          done
+          jq -n --rawfile notes notes.md '{body: $notes, draft: false, prerelease: false}' |
+            curl -fsS -o /dev/null -X PATCH -H "$auth" -H 'Content-Type: application/json' -d @- "$api/releases/$id"
+          curl -fsS "$api/releases/latest" | jq -e --arg tag "$TAG" '.tag_name == $tag'

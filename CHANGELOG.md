@@ -4,6 +4,12 @@ Readable release history for Blind Designer (renamed from Transversion at 0.2.0)
 section is its Forgejo release note, taken from this file by the release
 workflow.
 
+## 0.21.2
+
+- Updated desktop and networking dependencies.
+- Windows release builds and tests run in parallel. Forgejo receives the
+  signed portable ZIP after both pass.
+
 ## 0.21.0
 
 - Blind Designer now updates itself. Help, Check for

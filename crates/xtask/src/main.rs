@@ -22,6 +22,7 @@ fn main() {
     let result = match args.first().map(String::as_str) {
         Some("sign") => sign_assets(&args[1..]),
         Some("verify") => verify_assets(&args[1..]),
+        #[cfg(feature = "update-check")]
         Some("update-check") => update_check(&args[1..]),
         _ => Err(
             "usage: cargo xtask sign <file>... | cargo xtask verify <file>... | cargo xtask update-check <version>"
@@ -138,6 +139,7 @@ fn verify_assets(args: &[String]) -> Result<(), String> {
 /// `cargo xtask update-check <version>`: asks Forgejo what a copy
 /// running `version` would be offered, downloads that asset and
 /// verifies it, exactly as the app does.
+#[cfg(feature = "update-check")]
 fn update_check(args: &[String]) -> Result<(), String> {
     let Some(current) = args.first() else {
         return Err("usage: cargo xtask update-check <version>".to_string());
